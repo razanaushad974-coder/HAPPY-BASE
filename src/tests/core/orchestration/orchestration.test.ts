@@ -329,19 +329,35 @@ async function main(): Promise<void> {
                 )
             : undefined;
 
-    type PersistedExecutionTarget = {
-        targetReference?: {
-            entityId?: string;
-            entityType?: string;
+    type PersistedExecutionRecord = {
+        data?: {
+            targetReference?: {
+                entityId?: string;
+                entityType?: string;
+            };
         };
     };
 
-    const restoredExecutionTarget =
-        restoredExecution as unknown as
-            PersistedExecutionTarget | undefined;
+    const restoredExecutionRecord =
+        restoredExecution as
+            PersistedExecutionRecord | undefined;
+    const executionTaskTargetPreserved =
+        restoredExecutionRecord?.data?.targetReference?.entityId ===
+            "project-happy";
+
+    assert(
+        executionTaskTargetPreserved,
+        "Execution task selection lost the resolved project target.",
+    );
+
+    console.log({
+        executionTaskTargetPreserved:
+            executionTaskTargetPreserved,
+    });
+
 
     const executionTargetPreserved =
-        restoredExecutionTarget?.targetReference?.entityId ===
+        restoredExecutionRecord?.data?.targetReference?.entityId ===
             "project-happy";
 
     assert(
@@ -523,6 +539,8 @@ main().catch(
         process.exitCode = 1;
     },
 );
+
+
 
 
 
