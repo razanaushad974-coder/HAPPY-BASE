@@ -1,25 +1,14 @@
 import { AIGateway } from "@/core/ai/gateway";
-import type { AIProviderRegistry } from "@/core/ai/provider-registry";
 
 async function main(): Promise<void> {
   /*
-   * This regression test must remain deterministic even when a real
-   * Gemini API key is configured in the developer environment.
+   * Regression test intentionally uses a provider that is not configured.
+   * This keeps the test deterministic even when Gemini is live.
    */
-  const disconnectedRegistry = {
-    list: () => [],
-    get: () => ({
-      provider: "GEMINI" as const,
-      status: "NOT_YET_CONNECTED" as const,
-      defaultModel: "gemini-3.6-flash",
-    }),
-    isConnected: () => false,
-  } as unknown as AIProviderRegistry;
-
-  const gateway = new AIGateway(disconnectedRegistry);
+  const gateway = new AIGateway();
 
   const response = await gateway.complete({
-    provider: "GEMINI",
+    provider: "GROQ",
     mode: "UNDERSTAND",
     messages: [
       {
@@ -31,7 +20,7 @@ async function main(): Promise<void> {
 
   if (response.success) {
     throw new Error(
-      "Gateway must not fake an AI response when provider is unavailable.",
+      "Gateway must not fake an AI response for an unavailable provider.",
     );
   }
 
@@ -60,7 +49,7 @@ async function main(): Promise<void> {
     status: response.status,
     fakeResponsePrevented: true,
     requestIdGenerated: true,
-    deterministicWithoutEnvironmentDependency: true,
+    deterministicWithLiveGemini: true,
   });
 }
 
