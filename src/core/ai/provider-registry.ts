@@ -3,54 +3,83 @@ import type {
   AIProviderInfo,
 } from "./types";
 
-/**
- * Provider registry.
- *
- * This registry reports configuration state only.
- * It never pretends a provider is connected.
- */
+export interface AIProviderRegistryOptions {
+  geminiApiKey?: string;
+  geminiModel?: string;
+}
 
-const providers: AIProviderInfo[] = [
-  {
-    provider: "GEMINI",
-    status: "NOT_YET_CONNECTED",
-  },
-  {
-    provider: "GROQ",
-    status: "NOT_YET_CONNECTED",
-  },
-  {
-    provider: "OPENAI",
-    status: "NOT_YET_CONNECTED",
-  },
-  {
-    provider: "ANTHROPIC",
-    status: "NOT_YET_CONNECTED",
-  },
-  {
-    provider: "LOCAL",
-    status: "NOT_YET_CONNECTED",
-  },
-];
+function configuredGeminiKey(
+  options?: AIProviderRegistryOptions,
+): string | undefined {
+  return (
+    options?.geminiApiKey?.trim() ||
+    process.env.GEMINI_API_KEY?.trim() ||
+    undefined
+  );
+}
+
+function configuredGeminiModel(
+  options?: AIProviderRegistryOptions,
+): string {
+  return (
+    options?.geminiModel?.trim() ||
+    process.env.GEMINI_MODEL?.trim() ||
+    "gemini-2.5-flash"
+  );
+}
 
 export class AIProviderRegistry {
+  constructor(
+    private readonly options: AIProviderRegistryOptions = {},
+  ) {}
+
   list(): AIProviderInfo[] {
-    return [...providers];
+    return [
+      this.get("GEMINI"),
+      this.get("GROQ"),
+      this.get("OPENAI"),
+      this.get("ANTHROPIC"),
+      this.get("LOCAL"),
+    ];
   }
 
-  get(provider: AIProvider): AIProviderInfo {
-    const found = providers.find(
-      (item) => item.provider === provider,
-    );
+  get(
+    provider: AIProvider,
+  ): AIProviderInfo {
+    switch (provider) {
+      case "GEMINI":
+        return {
+          provider,
+          status:
+            configuredGeminiKey(
+              this.options,
+            )
+              ? "CONNECTED"
+              : "NOT_YET_CONNECTED",
+          defaultModel:
+            configuredGeminiModel(
+              this.options,
+            ),
+        };
 
-    if (!found) {
-      throw new Error(`Unknown AI provider: ${provider}`);
+      case "GROQ":
+      case "OPENAI":
+      case "ANTHROPIC":
+      case "LOCAL":
+        return {
+          provider,
+          status:
+            "NOT_YET_CONNECTED",
+        };
     }
-
-    return { ...found };
   }
 
-  isConnected(provider: AIProvider): boolean {
-    return this.get(provider).status === "CONNECTED";
+  isConnected(
+    provider: AIProvider,
+  ): boolean {
+    return (
+      this.get(provider)
+        .status === "CONNECTED"
+    );
   }
 }

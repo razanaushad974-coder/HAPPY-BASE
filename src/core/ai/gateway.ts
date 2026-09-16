@@ -4,57 +4,110 @@ import type {
   AIProvider,
 } from "./types";
 
-import { AIProviderRegistry } from "./provider-registry";
+import {
+  AIProviderRegistry,
+  type AIProviderRegistryOptions,
+} from "./provider-registry";
+
+import {
+  GeminiAdapter,
+  type GeminiAdapterOptions,
+} from "./gemini-adapter";
 
 function createRequestId(): string {
   return `ai_${crypto.randomUUID()}`;
 }
 
-/**
- * Single AI boundary for HAPPY.
- *
- * Real provider adapters will be attached later.
- * Until a provider is actually configured, HAPPY
- * returns an explicit NOT_YET_CONNECTED state.
- */
-export class AIGateway {
-  constructor(
-    private readonly registry: AIProviderRegistry =
-      new AIProviderRegistry(),
-  ) {}
+export interface AIGatewayOptions {
+  providerRegistry?: AIProviderRegistry;
+  gemini?: GeminiAdapterOptions;
+}
 
-  async complete(request: AIRequest): Promise<AIResponse> {
+export class AIGateway {
+  private readonly registry: AIProviderRegistry;
+  private readonly gemini: GeminiAdapter;
+
+  constructor(
+    registryOrOptions:
+      | AIProviderRegistry
+      | AIGatewayOptions = {},
+    legacyOptions?: AIProviderRegistryOptions,
+  ) {
+    if (registryOrOptions instanceof AIProviderRegistry) {
+      this.registry = registryOrOptions;
+
+      this.gemini = new GeminiAdapter({
+        apiKey:
+          legacyOptions?.geminiApiKey,
+        defaultModel:
+          legacyOptions?.geminiModel,
+      });
+
+      return;
+    }
+
+    this.registry =
+      registryOrOptions.providerRegistry ??
+      new AIProviderRegistry();
+
+    this.gemini =
+      new GeminiAdapter(
+        registryOrOptions.gemini,
+      );
+  }
+
+  async complete(
+    request: AIRequest,
+  ): Promise<AIResponse> {
     const provider: AIProvider =
       request.provider ?? "GEMINI";
 
-    const requestId = createRequestId();
+    const requestId =
+      createRequestId();
 
-    const providerInfo = this.registry.get(provider);
+    const providerInfo =
+      this.registry.get(provider);
 
-    if (providerInfo.status !== "CONNECTED") {
+    if (
+      provider === "GEMINI" &&
+      providerInfo.status === "CONNECTED"
+    ) {
+      return this.gemini.complete(
+        request,
+        requestId,
+      );
+    }
+
+    if (
+      providerInfo.status !==
+      "CONNECTED"
+    ) {
       return {
         success: false,
         provider,
-        model: request.model ?? providerInfo.defaultModel,
+        model:
+          request.model ??
+          providerInfo.defaultModel,
         requestId,
-        status: "NOT_YET_CONNECTED",
-        errorCode: "AI_PROVIDER_NOT_CONNECTED",
+        status:
+          "NOT_YET_CONNECTED",
+        errorCode:
+          "AI_PROVIDER_NOT_CONNECTED",
         errorMessage:
           `AI provider ${provider} is not connected.`,
       };
     }
 
-    /*
-     * Real provider adapter execution will be added
-     * only after an actual provider integration exists.
-     */
     return {
       success: false,
       provider,
-      model: request.model ?? providerInfo.defaultModel,
+      model:
+        request.model ??
+        providerInfo.defaultModel,
       requestId,
       status: "FAILED",
-      errorCode: "AI_ADAPTER_NOT_IMPLEMENTED",
+      errorCode:
+        "AI_ADAPTER_NOT_IMPLEMENTED",
       errorMessage:
         `AI adapter for ${provider} is not implemented.`,
     };
