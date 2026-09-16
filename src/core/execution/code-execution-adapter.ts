@@ -5,6 +5,11 @@ import type {
   ExecutionResult,
 } from "./types";
 
+import {
+  WorkspaceCodeExecutor,
+  type WorkspaceFileChange,
+} from "./workspace-code-executor";
+
 function baseResult(
   request: ExecutionRequest,
   status: ExecutionResult["status"],
@@ -21,23 +26,74 @@ function baseResult(
   };
 }
 
-function extractCommand(
+function extractInput(
   input: unknown,
-): string {
+): {
+  command: string;
+  changes: WorkspaceFileChange[];
+} {
   if (
-    typeof input === "object" &&
-    input !== null &&
-    "command" in input
+    typeof input !== "object" ||
+    input === null
   ) {
-    const value =
-      (input as { command?: unknown }).command;
-
-    if (typeof value === "string") {
-      return value;
-    }
+    return {
+      command: "",
+      changes: [],
+    };
   }
 
-  return "";
+  const value =
+    input as {
+      command?: unknown;
+      changes?: unknown;
+      fileChanges?: unknown;
+    };
+
+  const command =
+    typeof value.command === "string"
+      ? value.command
+      : "";
+
+  const rawChanges =
+    Array.isArray(value.changes)
+      ? value.changes
+      : Array.isArray(value.fileChanges)
+        ? value.fileChanges
+        : [];
+
+  const changes: WorkspaceFileChange[] =
+    rawChanges.filter(
+      (
+        item,
+      ): item is WorkspaceFileChange =>
+        typeof item === "object" &&
+        item !== null &&
+        typeof (
+          item as {
+            action?: unknown;
+          }
+        ).action === "string" &&
+        (
+          item as {
+            action?: unknown;
+          }
+        ).action !== "DELETE" &&
+        typeof (
+          item as {
+            path?: unknown;
+          }
+        ).path === "string" &&
+        typeof (
+          item as {
+            content?: unknown;
+          }
+        ).content === "string",
+    ) as WorkspaceFileChange[];
+
+  return {
+    command,
+    changes,
+  };
 }
 
 export class CodeExecutionAdapter
@@ -45,14 +101,13 @@ export class CodeExecutionAdapter
 {
   public readonly capability = "CODE" as const;
 
+  constructor(
+    private readonly executor: WorkspaceCodeExecutor =
+      new WorkspaceCodeExecutor(),
+  ) {}
+
   status(): AdapterStatus {
-    /*
-     * CODE capability is connected at the planning/
-     * execution-contract level, but arbitrary workspace
-     * mutation and shell execution remain blocked until
-     * the safe workspace executor is connected.
-     */
-    return "NOT_YET_CONNECTED";
+    return "AVAILABLE";
   }
 
   canExecute(
@@ -63,8 +118,6 @@ export class CodeExecutionAdapter
       [
         "CREATE",
         "MODIFY",
-        "BUILD",
-        "TEST",
       ].includes(request.action)
     );
   }
@@ -102,30 +155,85 @@ export class CodeExecutionAdapter
       };
     }
 
-    const command =
-      extractCommand(request.input);
+    const input =
+      extractInput(request.input);
+
+    if (input.changes.length === 0) {
+      return {
+        ...baseResult(
+          request,
+          "BLOCKED",
+          startedAt,
+        ),
+        output: {
+          mode:
+            "SAFE_CODE_EXECUTION",
+          action:
+            request.action,
+          command:
+            input.command,
+          targetReference:
+            request.targetReference,
+          executionStarted:
+            false,
+        },
+        error:
+          "No approved workspace file changes were supplied.",
+      };
+    }
+
+    const result =
+      this.executor.execute(
+        input.changes,
+      );
+
+    if (result.status !== "COMPLETED") {
+      return {
+        ...baseResult(
+          request,
+          result.status === "BLOCKED"
+            ? "BLOCKED"
+            : "FAILED",
+          startedAt,
+        ),
+        output: {
+          mode:
+            "SAFE_CODE_EXECUTION",
+          action:
+            request.action,
+          changedFiles:
+            result.changedFiles,
+          executionStarted:
+            result.changedFiles.length > 0,
+        },
+        error:
+          result.errors.join("; ") ||
+          "Workspace code execution failed.",
+      };
+    }
 
     return {
       ...baseResult(
         request,
-        "NOT_YET_CONNECTED",
+        "COMPLETED",
         startedAt,
       ),
       output: {
         mode:
-          "SAFE_CODE_EXECUTION_CONTRACT",
+          "SAFE_CODE_EXECUTION",
         action:
           request.action,
-        command,
+        changedFiles:
+          result.changedFiles,
+        command:
+          input.command,
         targetReference:
           request.targetReference,
-        executionBlocked:
+        executionStarted:
           true,
-        reason:
-          "Workspace code executor is not connected. No files or shell commands were executed.",
+        shellExecuted:
+          false,
       },
-      error:
-        "CODE execution adapter is not yet connected to a real workspace executor.",
     };
   }
 }
