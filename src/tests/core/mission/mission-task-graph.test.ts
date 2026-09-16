@@ -3,6 +3,7 @@ import { MissionOrchestrator } from "../../../core/mission/orchestrator";
 import { TaskGraphEngine } from "../../../core/mission/task-graph";
 import { MissionEngine } from "../../../core/mission/mission-engine";
 import type { MissionTask } from "../../../core/mission/types";
+import type { ResolvedReference } from "../../../core/context/types";
 
 const reasoning = new ReasoningOrchestrator();
 const missions = new MissionOrchestrator();
@@ -13,6 +14,15 @@ const plan = reasoning.createExecutionPlan({
   goal: "Build a secure Founder Dashboard API for HAPPY.",
   contextSummary:
     "Founder Dashboard is the privileged control center.",
+  resolvedReferences: [
+    {
+      token: "this project",
+      entityType: "PROJECT",
+      entityId: "project-happy",
+      confidence: "HIGH",
+      source: "ACTIVE_CONTEXT",
+    },
+  ],
   constraints: [
     "Security and approval gates are mandatory.",
   ],
@@ -28,6 +38,23 @@ if (plan.status !== "WAITING_APPROVAL") {
 }
 
 const snapshot = missions.create(plan);
+    const buildTask =
+        snapshot.graph.tasks.find(
+            (task) =>
+                task.action ===
+                "BUILD",
+        );
+
+    const missionBuildTargetPreserved =
+        buildTask?.targetReference?.entityId ===
+            "project-happy";
+
+    if (!missionBuildTargetPreserved) {
+        throw new Error(
+            "Mission BUILD task lost the resolved project target.",
+        );
+    }
+
 
 if (snapshot.mission.status !== "WAITING_APPROVAL") {
   throw new Error("Mission approval state failed.");
@@ -192,3 +219,4 @@ console.log({
   progressAfterFirstTask: completed.mission.progressPercent,
   retryCount: retried.retryCount,
 });
+

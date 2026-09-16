@@ -32,6 +32,7 @@ export class MissionEngine {
         action: step.action,
         title: step.title,
         description: step.description,
+        targetReference: step.targetReference,
         status: "PENDING",
         dependencyIds:
           index === 0 ? [] : [taskIds[index - 1]],
@@ -181,3 +182,4 @@ export class MissionEngine {
     };
   }
 }
+

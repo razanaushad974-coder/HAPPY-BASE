@@ -25,6 +25,7 @@ export class MissionOrchestrator {
         action: step.action,
         title: step.title,
         description: step.description,
+        targetReference: step.targetReference,
         status: "PENDING",
         dependencyIds:
           index === 0
@@ -49,3 +50,4 @@ export class MissionOrchestrator {
     };
   }
 }
+

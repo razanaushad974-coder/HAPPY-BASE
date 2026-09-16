@@ -1,3 +1,4 @@
+import type { ResolvedReference } from "../context/types";
 export type MissionStatus =
   | "DRAFT"
   | "PLANNED"
@@ -54,6 +55,7 @@ export interface MissionTask {
   action: TaskAction;
   title: string;
   description: string;
+  targetReference?: ResolvedReference;
   status: TaskStatus;
   dependencyIds: string[];
   dependentTaskIds: string[];
@@ -77,3 +79,4 @@ export interface MissionSnapshot {
   mission: Mission;
   graph: TaskGraph;
 }
+

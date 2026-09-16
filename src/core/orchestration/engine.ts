@@ -307,7 +307,9 @@ export class HappyOrchestrationEngine {
             this.reasoning.createExecutionPlan({
                 goal:
                     request.command,
-                contextSummary:
+                resolvedReferences:
+                    contextResolution.resolvedReferences,
+contextSummary:
                     JSON.stringify({
                         context:
                             contextResolution,
@@ -493,6 +495,11 @@ export class HappyOrchestrationEngine {
         // ==================================================
 
         const firstTask =
+            missionSnapshot.graph.tasks.find(
+                (task) =>
+                    task.targetReference !==
+                    undefined,
+            ) ??
             missionSnapshot.graph.tasks[0];
 
         for (
@@ -588,16 +595,7 @@ export class HappyOrchestrationEngine {
                     request.command,
             },
             targetReference:
-                plan.steps.find(
-                    (step) =>
-                        step.id ===
-                        firstTask.id,
-                )?.targetReference ??
-                plan.steps.find(
-                    (step) =>
-                        step.action ===
-                        firstTask.action,
-                )?.targetReference,
+                firstTask.targetReference,
             requiresApproval:
                 approvalRequired,
             approved:
@@ -623,7 +621,12 @@ export class HappyOrchestrationEngine {
 
         await state.execution().update(
             executionRequest.id,
-            executionResult,
+            {
+                ...executionRequest,
+                ...executionResult,
+                targetReference:
+                    executionRequest.targetReference,
+            },
         );
 
         let executionStageStatus:
@@ -857,15 +860,4 @@ export class HappyOrchestrationEngine {
         return finalResult;
     }
 }
-
-
-
-
-
-
-
-
-
-
-
 
