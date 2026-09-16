@@ -34,6 +34,10 @@ import {
 } from "../execution/code-execution-adapter";
 
 import {
+    FileExecutionAdapter,
+} from "../execution/file-execution-adapter";
+
+import {
     VerificationEngine,
 } from "../verification/engine";
 
@@ -108,6 +112,10 @@ export class HappyOrchestrationEngine {
 
         registry.register(
             new CodeExecutionAdapter(),
+        );
+
+        registry.register(
+            new FileExecutionAdapter(),
         );
 
         this.execution =
@@ -609,6 +617,7 @@ contextSummary:
             capability:
                 resolveExecutionCapability(
                     firstTask.action,
+                    firstTask.targetReference,
                 ),
             action:
                 firstTask.action,

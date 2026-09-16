@@ -59,7 +59,8 @@ export interface ResolvedReference {
   entityType:
     | "PROJECT"
     | "MISSION"
-    | "TASK";
+    | "TASK"
+    | "FILE";
 
   entityId: string;
 

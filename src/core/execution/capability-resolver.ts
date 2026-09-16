@@ -1,4 +1,5 @@
 import type { ExecutionCapability } from "./types";
+import type { ResolvedReference } from "../context/types";
 
 export type ExecutionAction =
   | "UNDERSTAND"
@@ -15,7 +16,18 @@ export type ExecutionAction =
 
 export function resolveExecutionCapability(
   action: ExecutionAction | string,
+  targetReference?: ResolvedReference,
 ): ExecutionCapability {
+  if (
+    targetReference?.entityType === "FILE" &&
+    (
+      action === "CREATE" ||
+      action === "MODIFY"
+    )
+  ) {
+    return "FILE";
+  }
+
   switch (action) {
     case "UNDERSTAND":
     case "RESEARCH":
