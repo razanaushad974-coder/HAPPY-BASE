@@ -12,7 +12,7 @@ export class InMemoryEvidenceRepository implements EvidenceRepository {
   private readonly records = new Map<string, Evidence>();
 
   create(input: EvidenceInput): Evidence {
-    const id = `evidence-${this.records.size + 1}`;
+    const id = `evidence-${crypto.randomUUID()}`;
 
     const evidence: Evidence = {
       id,
@@ -55,3 +55,4 @@ export class InMemoryEvidenceRepository implements EvidenceRepository {
     return this.records.size;
   }
 }
+

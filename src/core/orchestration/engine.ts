@@ -725,10 +725,51 @@ contextSummary:
             request.userId,
         );
 
+        const executionEvidence =
+            evidenceService.capture({
+                verificationRequestId:
+                    verificationRequest.id,
+                executionRequestId:
+                    executionResult.requestId,
+                missionId:
+                    missionSnapshot.mission.id,
+                taskId:
+                    firstTask.id,
+                type:
+                    "COMMAND_OUTPUT" as const,
+                source:
+                    "EXECUTION" as const,
+                title:
+                    "Execution result evidence",
+                content:
+                    JSON.stringify({
+                        status:
+                            executionResult.status,
+                        output:
+                            executionResult.output,
+                        error:
+                            executionResult.error,
+                    }),
+                metadata: {
+                    capability:
+                        executionResult.capability,
+                    executionResultId:
+                        executionResult.id,
+                },
+                isPrimary:
+                    true,
+            });
+
+        await state.evidence().create(
+            executionEvidence.id,
+            executionEvidence,
+            request.userId,
+        );
+
         const verificationResult =
             verificationEngine.verify(
                 verificationRequest,
-                [],
+                [executionEvidence.id],
             );
 
         await state.verification().update(
@@ -860,4 +901,5 @@ contextSummary:
         return finalResult;
     }
 }
+
 
