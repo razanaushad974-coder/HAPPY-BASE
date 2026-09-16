@@ -7,7 +7,7 @@ import type {
 
 import {
   WorkspaceCodeExecutor,
-  type WorkspaceFileChange,
+  type WorkspaceFileOperationRequest,
 } from "./workspace-code-executor";
 
 function baseResult(
@@ -26,76 +26,104 @@ function baseResult(
   };
 }
 
-function extractChanges(
+function normalizeOperation(
+  value: Record<string, unknown>,
+): WorkspaceFileOperationRequest | null {
+  const action =
+    typeof value.operation === "string"
+      ? value.operation
+      : value.action;
+
+  if (
+    action !== "READ" &&
+    action !== "CREATE" &&
+    action !== "MODIFY" &&
+    action !== "COPY" &&
+    action !== "MOVE" &&
+    action !== "RENAME" &&
+    action !== "DELETE"
+  ) {
+    return null;
+  }
+
+  if (typeof value.path !== "string") {
+    return null;
+  }
+
+  return {
+    action,
+    path: value.path,
+    destinationPath:
+      typeof value.destinationPath === "string"
+        ? value.destinationPath
+        : undefined,
+    content:
+      typeof value.content === "string"
+        ? value.content
+        : undefined,
+    expectedPreviousContentHash:
+      typeof value.expectedPreviousContentHash === "string"
+        ? value.expectedPreviousContentHash
+        : undefined,
+  };
+}
+
+function extractOperation(
   input: unknown,
-): WorkspaceFileChange[] {
+): WorkspaceFileOperationRequest | null {
   if (
     typeof input !== "object" ||
     input === null
   ) {
-    return [];
+    return null;
   }
 
   const value =
     input as {
+      operation?: unknown;
+      action?: unknown;
+      path?: unknown;
+      destinationPath?: unknown;
+      content?: unknown;
+      expectedPreviousContentHash?: unknown;
       changes?: unknown;
       fileChanges?: unknown;
     };
 
-  const raw =
+  const direct = normalizeOperation(
+    value as Record<string, unknown>,
+  );
+
+  if (direct) {
+    return direct;
+  }
+
+  const candidates =
     Array.isArray(value.changes)
       ? value.changes
       : Array.isArray(value.fileChanges)
         ? value.fileChanges
         : [];
 
-  return raw.filter(
-    (
-      item,
-    ): item is WorkspaceFileChange =>
-      typeof item === "object" &&
-      item !== null &&
-      (
-        item as {
-          action?: unknown;
-        }
-      ).action !== undefined &&
-      (
-        item as {
-          action?: unknown;
-        }
-      ).action !== "DELETE" &&
-      (
-        item as {
-          action?: unknown;
-        }
-      ).action !== "RENAME" &&
-      (
-        item as {
-          action?: unknown;
-        }
-      ).action !== "MOVE" &&
-      (
-        item as {
-          action?: unknown;
-        }
-      ).action !== "COPY" &&
-      (
-        item as {
-          action?: unknown;
-        }
-      ).action !== "READ" &&
-      typeof (
-        item as {
-          path?: unknown;
-        }
-      ).path === "string" &&
-      typeof (
-        item as {
-          content?: unknown;
-        }
-      ).content === "string",
-  ) as WorkspaceFileChange[];
+  for (const candidate of candidates) {
+    if (
+      typeof candidate !== "object" ||
+      candidate === null
+    ) {
+      continue;
+    }
+
+    const normalized =
+      normalizeOperation(
+        candidate as Record<string, unknown>,
+      );
+
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return null;
 }
 
 export class FileExecutionAdapter
@@ -117,11 +145,16 @@ export class FileExecutionAdapter
   ): boolean {
     return (
       request.capability === "FILE" &&
-      (
-        request.action === "CREATE" ||
-        request.action === "MODIFY"
-      ) &&
-      request.targetReference?.entityType === "FILE"
+      request.targetReference?.entityType === "FILE" &&
+      [
+        "READ",
+        "CREATE",
+        "MODIFY",
+        "COPY",
+        "MOVE",
+        "RENAME",
+        "DELETE",
+      ].includes(request.action)
     );
   }
 
@@ -158,10 +191,10 @@ export class FileExecutionAdapter
       };
     }
 
-    const changes =
-      extractChanges(request.input);
+    const operation =
+      extractOperation(request.input);
 
-    if (changes.length === 0) {
+    if (!operation) {
       return {
         ...baseResult(
           request,
@@ -169,12 +202,14 @@ export class FileExecutionAdapter
           startedAt,
         ),
         error:
-          "No safe file changes were supplied.",
+          "No valid file operation was supplied.",
       };
     }
 
     const result =
-      this.executor.execute(changes);
+      this.executor.executeOperation(
+        operation,
+      );
 
     if (result.status !== "COMPLETED") {
       return {
@@ -188,6 +223,8 @@ export class FileExecutionAdapter
         output: {
           mode:
             "SAFE_FILE_EXECUTION",
+          operation:
+            result.action,
           entityType:
             request.targetReference?.entityType,
           entityId:
@@ -212,10 +249,18 @@ export class FileExecutionAdapter
       output: {
         mode:
           "SAFE_FILE_EXECUTION",
+        operation:
+          result.action,
         entityType:
           request.targetReference?.entityType,
         entityId:
           request.targetReference?.entityId,
+        path:
+          result.path,
+        destinationPath:
+          result.destinationPath,
+        content:
+          result.content,
         changedFiles:
           result.changedFiles,
         shellExecuted:

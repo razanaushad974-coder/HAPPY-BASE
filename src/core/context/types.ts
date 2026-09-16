@@ -82,4 +82,3 @@ export interface ContextResolution {
   requiresClarification:
     boolean;
 }
-
