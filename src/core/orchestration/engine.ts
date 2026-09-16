@@ -304,7 +304,7 @@ export class HappyOrchestrationEngine {
 
 
         const plan =
-            this.reasoning.createExecutionPlan({
+            await this.reasoning.createAIExecutionPlan({
                 goal:
                     request.command,
                 resolvedReferences:
@@ -901,5 +901,4 @@ contextSummary:
         return finalResult;
     }
 }
-
 
