@@ -30,6 +30,10 @@ import {
 } from "../execution/ai-execution-adapter";
 
 import {
+    CodeExecutionAdapter,
+} from "../execution/code-execution-adapter";
+
+import {
     VerificationEngine,
 } from "../verification/engine";
 
@@ -100,6 +104,10 @@ export class HappyOrchestrationEngine {
 
         registry.register(
             new AIExecutionAdapter(),
+        );
+
+        registry.register(
+            new CodeExecutionAdapter(),
         );
 
         this.execution =
