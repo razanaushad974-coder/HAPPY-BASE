@@ -38,6 +38,10 @@ import {
 } from "../execution/file-execution-adapter";
 
 import {
+    ApiExecutionAdapter,
+} from "../execution/api-execution-adapter";
+
+import {
     VerificationEngine,
 } from "../verification/engine";
 
@@ -116,6 +120,10 @@ export class HappyOrchestrationEngine {
 
         registry.register(
             new FileExecutionAdapter(),
+        );
+
+        registry.register(
+            new ApiExecutionAdapter(),
         );
 
         this.execution =

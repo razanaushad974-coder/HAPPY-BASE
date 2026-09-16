@@ -42,6 +42,13 @@ function isPlanStepAction(
     "MODIFY",
     "BUILD",
     "TEST",
+    "REQUEST",
+    "CALL",
+    "GET",
+    "POST",
+    "PUT",
+    "PATCH",
+    "DELETE",
     "VERIFY",
     "DEPLOY",
     "PUBLISH",
@@ -303,6 +310,7 @@ Required JSON:
 
 Allowed actions:
 UNDERSTAND, RESEARCH, CREATE, MODIFY, BUILD, TEST,
+REQUEST, CALL, GET, POST, PUT, PATCH, DELETE,
 VERIFY, DEPLOY, PUBLISH, AUTOMATE, CONTROL
 
 Allowed risks:

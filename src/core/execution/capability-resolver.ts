@@ -8,6 +8,13 @@ export type ExecutionAction =
   | "MODIFY"
   | "BUILD"
   | "TEST"
+  | "REQUEST"
+  | "CALL"
+  | "GET"
+  | "POST"
+  | "PUT"
+  | "PATCH"
+  | "DELETE"
   | "VERIFY"
   | "DEPLOY"
   | "PUBLISH"
@@ -29,6 +36,15 @@ export function resolveExecutionCapability(
   }
 
   switch (action) {
+    case "REQUEST":
+    case "CALL":
+    case "GET":
+    case "POST":
+    case "PUT":
+    case "PATCH":
+    case "DELETE":
+      return "API";
+
     case "UNDERSTAND":
     case "RESEARCH":
     case "VERIFY":

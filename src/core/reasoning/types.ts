@@ -30,6 +30,13 @@ export type PlanStepAction =
   | "MODIFY"
   | "BUILD"
   | "TEST"
+  | "REQUEST"
+  | "CALL"
+  | "GET"
+  | "POST"
+  | "PUT"
+  | "PATCH"
+  | "DELETE"
   | "VERIFY"
   | "DEPLOY"
   | "PUBLISH"
@@ -82,6 +89,4 @@ export interface ExecutionPlan {
   verificationRequirements: string[];
   createdAt: string;
 }
-
-
 
