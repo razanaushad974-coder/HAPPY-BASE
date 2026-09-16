@@ -26,6 +26,10 @@ import {
 } from "../execution/contract-adapter";
 
 import {
+    AIExecutionAdapter,
+} from "../execution/ai-execution-adapter";
+
+import {
     VerificationEngine,
 } from "../verification/engine";
 
@@ -93,6 +97,10 @@ export class HappyOrchestrationEngine {
                 ),
             );
         }
+
+        registry.register(
+            new AIExecutionAdapter(),
+        );
 
         this.execution =
             new ExecutionEngine(registry);
