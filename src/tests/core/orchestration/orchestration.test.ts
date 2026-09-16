@@ -377,6 +377,41 @@ async function main(): Promise<void> {
                     approvedCase.verificationRequestId,
                 )
             : undefined;
+    const restoredEvidence =
+        approvedCase.verificationRequestId
+            ? await restartedStore
+                .evidence()
+                .list()
+            : [];
+
+    type PersistedEvidenceRecord = {
+        data?: {
+            verificationRequestId?: string;
+            executionRequestId?: string;
+        };
+    };
+
+    const executionEvidenceRestored =
+        restoredEvidence
+            .map(
+                (record) =>
+                    record as PersistedEvidenceRecord,
+            )
+            .some(
+                (record) =>
+                    record.data?.verificationRequestId ===
+                        approvedCase.verificationRequestId &&
+                    record.data?.executionRequestId ===
+                        approvedCase.executionRequestId,
+            );
+
+    assert(
+        executionEvidenceRestored,
+        "Execution evidence was not restored after restart.",
+    );
+
+    const evidencePersisted =
+        restoredEvidence.length > 0;
 
     const restoredTasks =
         await restartedStore
@@ -508,6 +543,8 @@ async function main(): Promise<void> {
         verificationPersisted:
             restoredVerification !==
             undefined,
+        evidencePersisted:
+            evidencePersisted,
 
         auditPersisted:
             restoredAudits.length >= 1,
@@ -539,12 +576,4 @@ main().catch(
         process.exitCode = 1;
     },
 );
-
-
-
-
-
-
-
-
 
