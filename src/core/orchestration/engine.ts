@@ -18,6 +18,10 @@ import {
 } from "../execution/engine";
 
 import {
+    resolveExecutionCapability,
+} from "../execution/capability-resolver";
+
+import {
     ContractExecutionAdapter,
 } from "../execution/contract-adapter";
 
@@ -587,7 +591,9 @@ contextSummary:
             missionId:
                 missionSnapshot.mission.id,
             capability:
-                "AI" as const,
+                resolveExecutionCapability(
+                    firstTask.action,
+                ),
             action:
                 firstTask.action,
             input: {
