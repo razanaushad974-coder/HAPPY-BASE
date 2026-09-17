@@ -60,7 +60,8 @@ export interface ResolvedReference {
     | "PROJECT"
     | "MISSION"
     | "TASK"
-    | "FILE";
+    | "FILE"
+    | "DATABASE";
 
   entityId: string;
 

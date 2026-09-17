@@ -41,7 +41,13 @@ export type PlanStepAction =
   | "DEPLOY"
   | "PUBLISH"
   | "AUTOMATE"
-  | "CONTROL";
+  | "CONTROL"
+  | "DB_SELECT"
+  | "DB_QUERY"
+  | "DB_INSERT"
+  | "DB_UPDATE"
+  | "DB_DELETE"
+  | "DB_TRANSACTION";
 
 import type { ResolvedReference } from "../context/types";
 

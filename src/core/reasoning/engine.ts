@@ -54,6 +54,12 @@ function isPlanStepAction(
     "PUBLISH",
     "AUTOMATE",
     "CONTROL",
+    "DB_SELECT",
+    "DB_QUERY",
+    "DB_INSERT",
+    "DB_UPDATE",
+    "DB_DELETE",
+    "DB_TRANSACTION",
   ].includes(value as PlanStepAction);
 }
 
@@ -146,7 +152,7 @@ export class ReasoningEngine {
       .toLowerCase();
 
     if (
-      /payment|delete|security|credential|production|deploy|publish|admin/.test(
+      /payment|delete|security|credential|production|deploy|publish|admin|db_update|db_insert|db_delete|db_transaction/.test(
         text,
       )
     ) {
@@ -311,6 +317,7 @@ Required JSON:
 Allowed actions:
 UNDERSTAND, RESEARCH, CREATE, MODIFY, BUILD, TEST,
 REQUEST, CALL, GET, POST, PUT, PATCH, DELETE,
+DB_SELECT, DB_QUERY, DB_INSERT, DB_UPDATE, DB_DELETE, DB_TRANSACTION,
 VERIFY, DEPLOY, PUBLISH, AUTOMATE, CONTROL
 
 Allowed risks:

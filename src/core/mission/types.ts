@@ -39,7 +39,13 @@ export type TaskAction =
   | "DEPLOY"
   | "PUBLISH"
   | "AUTOMATE"
-  | "CONTROL";
+  | "CONTROL"
+  | "DB_SELECT"
+  | "DB_QUERY"
+  | "DB_INSERT"
+  | "DB_UPDATE"
+  | "DB_DELETE"
+  | "DB_TRANSACTION";
 
 export interface Mission {
   id: string;

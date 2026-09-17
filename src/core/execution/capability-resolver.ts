@@ -66,6 +66,14 @@ export function resolveExecutionCapability(
     case "AUTOMATE":
       return "AUTOMATION";
 
+    case "DB_SELECT":
+    case "DB_QUERY":
+    case "DB_INSERT":
+    case "DB_UPDATE":
+    case "DB_DELETE":
+    case "DB_TRANSACTION":
+      return "DATABASE";
+
     default:
       return "AI";
   }

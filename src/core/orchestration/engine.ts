@@ -46,6 +46,10 @@ import {
 } from "../execution/browser-execution-adapter";
 
 import {
+    DatabaseExecutionAdapter,
+} from "../execution/database-execution-adapter";
+
+import {
     VerificationEngine,
 } from "../verification/engine";
 
@@ -132,6 +136,10 @@ export class HappyOrchestrationEngine {
 
         registry.register(
             new BrowserExecutionAdapter(),
+        );
+
+        registry.register(
+            new DatabaseExecutionAdapter(),
         );
 
         this.execution =
