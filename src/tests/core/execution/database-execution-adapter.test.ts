@@ -230,6 +230,45 @@ async function main(): Promise<void> {
     );
   }
 
+  // A write must not bypass approval by setting requiresApproval=false.
+  const writeWithoutApprovalFlag =
+    await connected.execute(
+      request(
+        {
+          action: "DB_DELETE",
+          resource: "users",
+          scope: {
+            organizationId: "org-a",
+            workspaceId: "ws-a",
+          },
+          filter: {
+            id: "user-to-delete",
+          },
+        },
+        {
+          action: "DB_DELETE",
+          requiresApproval: false,
+          approved: false,
+          risk: "HIGH",
+        },
+      ),
+    );
+
+  if (
+    writeWithoutApprovalFlag.status !==
+    "WAITING_APPROVAL"
+  ) {
+    throw new Error(
+      "Database write must wait for approval even when requiresApproval is false.",
+    );
+  }
+
+  if (provider.executions.length !== 1) {
+    throw new Error(
+      "Unapproved database write reached the provider.",
+    );
+  }
+
   // --------------------------------------------------
   // BAD INPUT
   // --------------------------------------------------
@@ -289,6 +328,8 @@ async function main(): Promise<void> {
       missingTenant.status,
     writeApproval:
       writeWaiting.status,
+    writeWithoutApprovalFlag:
+      writeWithoutApprovalFlag.status,
     engineRouting:
       engineResult.status,
   });
