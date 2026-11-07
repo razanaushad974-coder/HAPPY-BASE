@@ -3,6 +3,8 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -84,6 +86,33 @@ function main(): void {
       "Path traversal was not blocked.",
     );
 
+    const outsideRoot = mkdtempSync(
+      join(tmpdir(), "happy-workspace-outside-"),
+    );
+    const outsideFile = join(outsideRoot, "protected.txt");
+    const symlinkPath = join(root, "linked-outside.txt");
+    try {
+      writeFileSync(outsideFile, "do-not-change", "utf8");
+      symlinkSync(outsideFile, symlinkPath, "file");
+      const symlinkEscape = executor.execute([
+        {
+          action: "MODIFY",
+          path: "linked-outside.txt",
+          content: "attacker-controlled",
+        },
+      ]);
+      assert(
+        symlinkEscape.status === "FAILED",
+        "Workspace symlink escape was not blocked.",
+      );
+      assert(
+        readFileSync(outsideFile, "utf8") === "do-not-change",
+        "Workspace symlink escape modified an outside file.",
+      );
+    } finally {
+      rmSync(outsideRoot, { recursive: true, force: true });
+    }
+
     const missingModify =
       executor.execute([
         {
@@ -106,6 +135,7 @@ function main(): void {
       createFile: true,
       safeRelativePaths: true,
       pathTraversalBlocked: true,
+      symlinkEscapeBlocked: true,
       missingModifyBlocked: true,
       noShellExecution: true,
     });
