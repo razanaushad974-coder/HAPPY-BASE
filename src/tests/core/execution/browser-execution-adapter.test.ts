@@ -204,6 +204,11 @@ async function main(): Promise<void> {
             value:
               "HAPPY",
           },
+          {
+            requiresApproval: true,
+            approved: true,
+            risk: "HIGH",
+          },
         ),
       );
 
@@ -222,6 +227,11 @@ async function main(): Promise<void> {
             selector:
               "#hello",
           },
+          {
+            requiresApproval: true,
+            approved: true,
+            risk: "HIGH",
+          },
         ),
       );
 
@@ -229,6 +239,25 @@ async function main(): Promise<void> {
       click.status ===
         "COMPLETED",
       "CLICK failed.",
+    );
+
+    const unapprovedClick =
+      await adapter.execute(
+        makeRequest(
+          "CLICK",
+          url,
+          { selector: "#hello" },
+          {
+            requiresApproval: false,
+            approved: false,
+            risk: "HIGH",
+          },
+        ),
+      );
+
+    assert(
+      unapprovedClick.status === "WAITING_APPROVAL",
+      "Browser CLICK bypassed approval when requiresApproval was false.",
     );
 
     const screenshot =
@@ -325,6 +354,8 @@ async function main(): Promise<void> {
       hostAllowlist:
         true,
       approvalGate:
+        true,
+      mutationApprovalRequired:
         true,
       noShellExecution:
         true,
