@@ -6,6 +6,7 @@ import type {
     HappyPipelineRequest,
     HappyPipelineResult,
     PipelineApprovalVerifier,
+    TrustedPipelineExecutionContext,
 } from "./types";
 
 export class HappyOrchestrator {
@@ -25,7 +26,8 @@ export class HappyOrchestrator {
 
     run(
         request: HappyPipelineRequest,
+        trustedContext?: TrustedPipelineExecutionContext,
     ): Promise<HappyPipelineResult> {
-        return this.engine.run(request);
+        return this.engine.run(request, trustedContext);
     }
 }
