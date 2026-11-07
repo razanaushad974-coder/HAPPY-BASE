@@ -1,5 +1,6 @@
 import {
   PersistedPipelineApprovalVerifier,
+  PipelineApprovalDecisionService,
   type AuthenticatedApprovalActor,
   type PersistedPipelineApproval,
 } from "../../../core/approval/pipeline-approval-verifier";
@@ -50,6 +51,11 @@ async function main(): Promise<void> {
         assert(requestId === context.requestId, "Approval lookup used the wrong request ID.");
         return stored;
       },
+      async approveIfPending(_scope, _requestId, decision) {
+        if (!stored || stored.status !== "PENDING") return false;
+        stored = { ...stored, status: "APPROVED", approverUserId: decision.approverUserId, decidedAt: decision.decidedAt };
+        return true;
+      },
     },
     { async hasRequiredRole() { return roleAllowed; } },
     () => now,
@@ -76,6 +82,30 @@ async function main(): Promise<void> {
 
   session = { ...actor, workspaceIds: ["other-workspace"] };
   assert(!(await verifier.verifyPersistedApproval(context)), "Actor outside workspace scope was accepted.");
+
+  session = actor;
+  stored = { ...approval, status: "PENDING", approverUserId: "", decidedAt: "" };
+  const decisions = new PipelineApprovalDecisionService(
+    { async getAuthenticatedActor() { return session; } },
+    {
+      async getByRequestId() { return stored; },
+      async approveIfPending(_scope, _requestId, decision) {
+        if (!stored || stored.status !== "PENDING") return false;
+        stored = { ...stored, status: "APPROVED", approverUserId: decision.approverUserId, decidedAt: decision.decidedAt };
+        return true;
+      },
+    },
+    { async hasRequiredRole() { return roleAllowed; } },
+    () => now,
+  );
+  assert(await decisions.approve({
+    requestId: context.requestId,
+    planId: context.planId,
+    organizationId: context.organizationId,
+    workspaceId: context.workspaceId,
+    requesterUserId: context.requesterUserId,
+  }), "Authenticated approval decision was not persisted.");
+  assert(stored?.status === "APPROVED" && stored.approverUserId === actor.userId, "Persisted approval decision lost authenticated approver identity.");
 
   console.log("Persisted pipeline approval verifier contract: PASS");
 }
