@@ -84,12 +84,20 @@ export interface HappyPipelineResult {
  * approval record, and verify request/plan/tenant binding, status, expiry,
  * and required approver role before returning true.
  */
+export interface TrustedPipelineExecutionContext {
+  /** Values must be derived from the authenticated server session, never request JSON. */
+  authenticatedActorUserId: string;
+  organizationId: string;
+  workspaceId: string;
+}
+
 export interface PipelineApprovalVerificationContext {
   requestId: string;
   planId: string;
   organizationId: string;
   workspaceId: string;
   requesterUserId: string;
+  authenticatedActorUserId: string;
 }
 
 export interface PipelineApprovalVerifier {
