@@ -211,7 +211,8 @@ async function main(): Promise<void> {
                 assert(
                     context.organizationId === "org-a" &&
                     context.workspaceId === "workspace-a" &&
-                    context.requesterUserId === "user-a",
+                    context.requesterUserId === "user-a" &&
+                    context.authenticatedActorUserId === "founder-001",
                     "Approval verifier received an incorrect tenant/requester scope.",
                 );
                 return true;
@@ -370,6 +371,7 @@ async function main(): Promise<void> {
 
     type PersistedExecutionRecord = {
         data?: {
+            approved?: boolean;
             targetReference?: {
                 entityId?: string;
                 entityType?: string;
@@ -383,6 +385,13 @@ async function main(): Promise<void> {
     const executionTaskTargetPreserved =
         restoredExecutionRecord?.data?.targetReference?.entityId ===
             "project-happy";
+    const verifiedApprovalReachedExecution =
+        restoredExecutionRecord?.data?.approved === true;
+
+    assert(
+        verifiedApprovalReachedExecution,
+        "Verified approval was not propagated to the downstream execution request.",
+    );
 
     assert(
         executionTaskTargetPreserved,
