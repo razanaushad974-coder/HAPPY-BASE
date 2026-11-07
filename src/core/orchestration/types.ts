@@ -76,3 +76,22 @@ export interface HappyPipelineResult {
     persisted: boolean;
 }
 
+
+
+/**
+ * Trusted server-side approval verification boundary. Implementations must
+ * use the authenticated actor from server session context, load the persisted
+ * approval record, and verify request/plan/tenant binding, status, expiry,
+ * and required approver role before returning true.
+ */
+export interface PipelineApprovalVerificationContext {
+  requestId: string;
+  planId: string;
+  organizationId: string;
+  workspaceId: string;
+  requesterUserId: string;
+}
+
+export interface PipelineApprovalVerifier {
+  verifyPersistedApproval(context: PipelineApprovalVerificationContext): Promise<boolean>;
+}
