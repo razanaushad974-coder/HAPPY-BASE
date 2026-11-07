@@ -143,6 +143,65 @@ function main(): void {
     );
   }
 
+  const forgedReady = {
+    ...ready,
+    approvalRequestId:
+      decision.request.id,
+  };
+
+  const missingApprovalGate =
+    new ApprovalGate().evaluate(
+      forgedReady,
+    );
+
+  if (missingApprovalGate.allowed) {
+    throw new Error(
+      "READY change set with a linked approval bypassed approval verification.",
+    );
+  }
+
+  const mismatchedApprovalGate =
+    new ApprovalGate().evaluate(
+      {
+        ...ready,
+        approvalRequestId: "approval_unrelated",
+      },
+      decision.request,
+    );
+
+  if (mismatchedApprovalGate.allowed) {
+    throw new Error(
+      "Change set accepted an unrelated approval request.",
+    );
+  }
+
+  const unapprovedRequestGate =
+    new ApprovalGate().evaluate(
+      {
+        ...ready,
+        approvalRequestId: request.id,
+      },
+      request,
+    );
+
+  if (unapprovedRequestGate.allowed) {
+    throw new Error(
+      "Change set accepted a pending approval request.",
+    );
+  }
+
+  const lowRiskReadyGate =
+    new ApprovalGate().evaluate({
+      ...ready,
+      approvalRequestId: undefined,
+    });
+
+  if (!lowRiskReadyGate.allowed) {
+    throw new Error(
+      "READY change set without an approval requirement was incorrectly blocked.",
+    );
+  }
+
   const audit =
     new AuditTrail();
 
