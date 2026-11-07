@@ -77,6 +77,7 @@ import type {
     HappyPipelineRequest,
     HappyPipelineResult,
     HappyPipelineStageResult,
+    PipelineApprovalVerifier,
 } from "./types";
 
 export class HappyOrchestrationEngine {
@@ -90,6 +91,7 @@ export class HappyOrchestrationEngine {
 
     constructor(
         persistenceFile?: string,
+        private readonly approvalVerifier?: PipelineApprovalVerifier,
     ) {
         this.reasoning = new ReasoningOrchestrator();
         this.mission = new MissionOrchestrator();
@@ -416,9 +418,25 @@ contextSummary:
                     step.requiresApproval,
             );
 
+        const verifiedApproval =
+            approvalRequired &&
+            request.userId !== undefined &&
+            this.approvalVerifier !== undefined
+                ? await this.approvalVerifier.verifyPersistedApproval({
+                    requestId: request.id,
+                    planId: plan.id,
+                    organizationId: request.organizationId,
+                    workspaceId: request.workspaceId,
+                    requesterUserId: request.userId,
+                })
+                : false;
+
+        // Caller-controlled request.approved is never proof of approval.
+        // Fail closed unless a trusted server verifier validates the persisted
+        // approval using the authenticated approver and tenant scope.
         if (
             approvalRequired &&
-            request.approved !== true
+            !verifiedApproval
         ) {
             const approvalRecord = {
                 requestId:
@@ -499,7 +517,7 @@ contextSummary:
             status: "COMPLETED",
             summary:
                 approvalRequired
-                    ? "Approval supplied by caller."
+                    ? "Persisted approval verified by trusted server authorization."
                     : "Approval gate not required.",
         });
 
