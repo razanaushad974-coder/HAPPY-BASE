@@ -5,6 +5,7 @@ import {
 import type {
     HappyPipelineRequest,
     HappyPipelineResult,
+    PipelineApprovalVerifier,
 } from "./types";
 
 export class HappyOrchestrator {
@@ -13,10 +14,12 @@ export class HappyOrchestrator {
 
     constructor(
         persistenceFile?: string,
+        approvalVerifier?: PipelineApprovalVerifier,
     ) {
         this.engine =
             new HappyOrchestrationEngine(
                 persistenceFile,
+                approvalVerifier,
             );
     }
 
