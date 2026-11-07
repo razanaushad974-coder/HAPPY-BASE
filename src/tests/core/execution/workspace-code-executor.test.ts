@@ -113,6 +113,28 @@ function main(): void {
       rmSync(outsideRoot, { recursive: true, force: true });
     }
 
+    const batchFirstPath = join(root, "batch-first.txt");
+    const rejectedBatch = executor.execute([
+      {
+        action: "CREATE",
+        path: "batch-first.txt",
+        content: "must-not-be-written",
+      },
+      {
+        action: "MODIFY",
+        path: "batch-missing.txt",
+        content: "preflight-failure",
+      },
+    ]);
+    assert(
+      rejectedBatch.status === "FAILED",
+      "Invalid multi-file batch was not rejected.",
+    );
+    assert(
+      !existsSync(batchFirstPath),
+      "Batch preflight failure left an earlier file written.",
+    );
+
     const missingModify =
       executor.execute([
         {
@@ -136,6 +158,7 @@ function main(): void {
       safeRelativePaths: true,
       pathTraversalBlocked: true,
       symlinkEscapeBlocked: true,
+      batchPreflightAtomicity: true,
       missingModifyBlocked: true,
       noShellExecution: true,
     });
