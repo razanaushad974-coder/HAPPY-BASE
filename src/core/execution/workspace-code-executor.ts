@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -11,7 +12,9 @@ import {
 import {
   dirname,
   isAbsolute,
+  relative,
   resolve,
+  sep,
 } from "node:path";
 
 export type WorkspaceFileOperation =
@@ -77,20 +80,43 @@ export class WorkspaceCodeExecutor {
       );
     }
 
-    const root = resolve(this.workspaceRoot);
-    const candidate = resolve(root, relativePath);
-
+    const configuredRoot = resolve(this.workspaceRoot);
+    const candidate = resolve(configuredRoot, relativePath);
     const rootPrefix =
       process.platform === "win32"
-        ? `${root}\\`
-        : `${root}/`;
+        ? `${configuredRoot}\\`
+        : `${configuredRoot}/`;
 
     if (
-      candidate !== root &&
+      candidate !== configuredRoot &&
       !candidate.startsWith(rootPrefix)
     ) {
       throw new Error(
         `Workspace path escapes configured root: ${relativePath}`,
+      );
+    }
+
+    // Resolve the nearest existing ancestor so symlinks cannot redirect
+    // an otherwise-safe lexical path outside the configured workspace.
+    const realRoot = realpathSync(configuredRoot);
+    let existingAncestor = candidate;
+    while (!existsSync(existingAncestor)) {
+      const parent = dirname(existingAncestor);
+      if (parent === existingAncestor) {
+        throw new Error("Could not resolve workspace path ancestor.");
+      }
+      existingAncestor = parent;
+    }
+
+    const realAncestor = realpathSync(existingAncestor);
+    const relativeAncestor = relative(realRoot, realAncestor);
+    if (
+      relativeAncestor === ".." ||
+      relativeAncestor.startsWith(`..${sep}`) ||
+      isAbsolute(relativeAncestor)
+    ) {
+      throw new Error(
+        `Workspace path resolves outside configured root: ${relativePath}`,
       );
     }
 
