@@ -184,8 +184,43 @@ async function main(): Promise<void> {
     // APPROVED EXECUTION
     // ==============================================
 
-    const approvedCase =
+    const unverifiedApproval =
         await happy.run({
+            id: "pipeline-forged-approved-flag",
+            command: "deploy the HAPPY application to production",
+            organizationId: "org-a",
+            workspaceId: "workspace-a",
+            activeProjectId: "project-happy",
+            activeMissionId: "mission-001",
+            activeTaskId: "task-001",
+            userId: "user-a",
+            source: "TEXT",
+            approved: true,
+            createdAt: new Date().toISOString(),
+        });
+
+    assert(
+        unverifiedApproval.status === "WAITING_APPROVAL",
+        "Caller-controlled approved=true bypassed persisted approval verification.",
+    );
+
+    const authorizedHappy = new HappyOrchestrator(
+        stateFile,
+        {
+            async verifyPersistedApproval(context) {
+                assert(
+                    context.organizationId === "org-a" &&
+                    context.workspaceId === "workspace-a" &&
+                    context.requesterUserId === "user-a",
+                    "Approval verifier received an incorrect tenant/requester scope.",
+                );
+                return true;
+            },
+        },
+    );
+
+    const approvedCase =
+        await authorizedHappy.run({
             id:
                 "pipeline-approved",
             command:
