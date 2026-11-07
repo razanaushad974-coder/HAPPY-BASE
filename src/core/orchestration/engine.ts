@@ -78,6 +78,7 @@ import type {
     HappyPipelineResult,
     HappyPipelineStageResult,
     PipelineApprovalVerifier,
+    TrustedPipelineExecutionContext,
 } from "./types";
 
 export class HappyOrchestrationEngine {
@@ -165,6 +166,7 @@ export class HappyOrchestrationEngine {
 
     async run(
         request: HappyPipelineRequest,
+        trustedContext?: TrustedPipelineExecutionContext,
     ): Promise<HappyPipelineResult> {
         const startedAt =
             new Date().toISOString();
@@ -418,16 +420,23 @@ contextSummary:
                     step.requiresApproval,
             );
 
+        const trustedContextMatchesRequest =
+            trustedContext !== undefined &&
+            trustedContext.organizationId === request.organizationId &&
+            trustedContext.workspaceId === request.workspaceId &&
+            request.userId !== undefined;
+
         const verifiedApproval =
             approvalRequired &&
-            request.userId !== undefined &&
+            trustedContextMatchesRequest &&
             this.approvalVerifier !== undefined
                 ? await this.approvalVerifier.verifyPersistedApproval({
                     requestId: request.id,
                     planId: plan.id,
-                    organizationId: request.organizationId,
-                    workspaceId: request.workspaceId,
+                    organizationId: trustedContext.organizationId,
+                    workspaceId: trustedContext.workspaceId,
                     requesterUserId: request.userId,
+                    authenticatedActorUserId: trustedContext.authenticatedActorUserId,
                 })
                 : false;
 
@@ -672,7 +681,7 @@ contextSummary:
             requiresApproval:
                 approvalRequired,
             approved:
-                request.approved === true,
+                !approvalRequired || verifiedApproval,
             risk:
                 approvalRequired
                     ? "HIGH" as const
