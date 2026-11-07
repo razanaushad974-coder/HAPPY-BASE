@@ -224,33 +224,6 @@ export class BrowserExecutionAdapter
     const startedAt =
       new Date().toISOString();
 
-    if (
-      request.requiresApproval &&
-      !request.approved
-    ) {
-      return {
-        ...baseResult(
-          request,
-          "WAITING_APPROVAL",
-          startedAt,
-        ),
-        error:
-          "Browser execution requires explicit approval.",
-      };
-    }
-
-    if (!this.canExecute(request)) {
-      return {
-        ...baseResult(
-          request,
-          "BLOCKED",
-          startedAt,
-        ),
-        error:
-          `BROWSER capability does not support action ${request.action}.`,
-      };
-    }
-
     const input = parseInput(
       request.input,
     );
@@ -264,6 +237,37 @@ export class BrowserExecutionAdapter
         ),
         error:
           "Invalid browser execution input.",
+      };
+    }
+
+    const mutatingAction =
+      input.action === "CLICK" ||
+      input.action === "FILL";
+
+    if (
+      mutatingAction &&
+      (!request.requiresApproval || !request.approved)
+    ) {
+      return {
+        ...baseResult(
+          request,
+          "WAITING_APPROVAL",
+          startedAt,
+        ),
+        error:
+          "Browser CLICK and FILL actions require an explicit approval decision.",
+      };
+    }
+
+    if (!this.canExecute(request)) {
+      return {
+        ...baseResult(
+          request,
+          "BLOCKED",
+          startedAt,
+        ),
+        error:
+          `BROWSER capability does not support action ${request.action}.`,
       };
     }
 
@@ -311,6 +315,20 @@ export class BrowserExecutionAdapter
       page.setDefaultTimeout(
         input.timeoutMs,
       );
+
+      await page.route("**/*", async (route) => {
+        const destination = validateUrl(
+          route.request().url(),
+          input.allowedHosts,
+        );
+
+        if (!destination.ok) {
+          await route.abort("blockedbyclient");
+          return;
+        }
+
+        await route.continue();
+      });
 
       await page.goto(
         parsedUrl.toString(),
