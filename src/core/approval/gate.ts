@@ -15,19 +15,31 @@ export class ApprovalGate {
     changeSet: ControlledChangeSet,
     approval?: ApprovalRequest,
   ): GateResult {
-    if (
-      changeSet.status === "READY"
-    ) {
+    if (changeSet.status !== "READY") {
       return {
-        allowed: true,
+        allowed: false,
         reason:
-          "Change set is ready for execution.",
+          "Change set is not ready for execution.",
       };
     }
 
-    if (
-      !approval
-    ) {
+    if (!changeSet.approvalRequestId) {
+      if (approval) {
+        return {
+          allowed: false,
+          reason:
+            "Unexpected approval was supplied for a change set without a linked approval request.",
+        };
+      }
+
+      return {
+        allowed: true,
+        reason:
+          "Change set is ready and does not require approval.",
+      };
+    }
+
+    if (!approval) {
       return {
         allowed: false,
         reason:
@@ -46,10 +58,7 @@ export class ApprovalGate {
       };
     }
 
-    if (
-      approval.status !==
-      "APPROVED"
-    ) {
+    if (approval.status !== "APPROVED") {
       return {
         allowed: false,
         reason:
@@ -60,7 +69,7 @@ export class ApprovalGate {
     return {
       allowed: true,
       reason:
-        "Valid approval is present.",
+        "Valid linked approval is present.",
     };
   }
 }
