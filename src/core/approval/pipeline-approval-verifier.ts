@@ -35,6 +35,92 @@ export interface PersistedPipelineApprovalStore {
     scope: { organizationId: string; workspaceId: string },
     requestId: string,
   ): Promise<PersistedPipelineApproval | null>;
+  /**
+   * Atomically changes only a PENDING record to APPROVED. Implementations
+   * must enforce tenant scope and return false on a stale/concurrent decision.
+   */
+  approveIfPending(
+    scope: { organizationId: string; workspaceId: string },
+    requestId: string,
+    decision: { approverUserId: string; decidedAt: string },
+  ): Promise<boolean>;
+}
+
+export interface PipelineApprovalDecisionCommand {
+  requestId: string;
+  planId: string;
+  organizationId: string;
+  workspaceId: string;
+  requesterUserId: string;
+}
+
+/**
+ * Server-side decision service. Call only from an authenticated server action
+ * or route; the actor is always read from the session provider, not the body.
+ */
+export class PipelineApprovalDecisionService {
+  constructor(
+    private readonly sessions: ApprovalSessionProvider,
+    private readonly approvals: PersistedPipelineApprovalStore,
+    private readonly roles: ApprovalRoleAuthorizer,
+    private readonly now: () => Date = () => new Date(),
+  ) {}
+
+  async approve(command: PipelineApprovalDecisionCommand): Promise<boolean> {
+    try {
+      const actor = await this.sessions.getAuthenticatedActor();
+      if (
+        !actor ||
+        !actor.userId.trim() ||
+        !actor.organizationIds.includes(command.organizationId) ||
+        !actor.workspaceIds.includes(command.workspaceId)
+      ) {
+        return false;
+      }
+
+      const scope = {
+        organizationId: command.organizationId,
+        workspaceId: command.workspaceId,
+      };
+      const approval = await this.approvals.getByRequestId(
+        scope,
+        command.requestId,
+      );
+      if (
+        !approval ||
+        approval.status !== "PENDING" ||
+        approval.requestId !== command.requestId ||
+        approval.planId !== command.planId ||
+        approval.organizationId !== command.organizationId ||
+        approval.workspaceId !== command.workspaceId ||
+        approval.requesterUserId !== command.requesterUserId
+      ) {
+        return false;
+      }
+
+      const expiry = Date.parse(approval.expiresAt);
+      const now = this.now().getTime();
+      if (!Number.isFinite(expiry) || expiry <= now) return false;
+
+      const authorized = await this.roles.hasRequiredRole(
+        actor,
+        approval.requiredRole,
+        scope,
+      );
+      if (!authorized) return false;
+
+      return await this.approvals.approveIfPending(
+        scope,
+        command.requestId,
+        {
+          approverUserId: actor.userId,
+          decidedAt: this.now().toISOString(),
+        },
+      );
+    } catch {
+      return false;
+    }
+  }
 }
 
 export interface ApprovalRoleAuthorizer {
