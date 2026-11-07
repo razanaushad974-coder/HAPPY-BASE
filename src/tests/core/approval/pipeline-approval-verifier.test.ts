@@ -2,8 +2,8 @@ import {
   PersistedPipelineApprovalVerifier,
   type AuthenticatedApprovalActor,
   type PersistedPipelineApproval,
-} from "../../core/approval/pipeline-approval-verifier";
-import type { PipelineApprovalVerificationContext } from "../../core/orchestration/types";
+} from "../../../core/approval/pipeline-approval-verifier";
+import type { PipelineApprovalVerificationContext } from "../../../core/orchestration/types";
 
 const now = new Date("2026-11-07T12:00:00.000Z");
 const context: PipelineApprovalVerificationContext = {
