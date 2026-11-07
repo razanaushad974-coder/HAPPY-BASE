@@ -29,6 +29,14 @@ function startServer(): Promise<{
             _req: IncomingMessage,
             res: ServerResponse,
           ) => {
+            if (_req.url === "/redirect") {
+              res.writeHead(302, {
+                location: `http://localhost${_req.headers.host ? ":" + _req.headers.host.split(":").pop() : ""}/landing`,
+              });
+              res.end();
+              return;
+            }
+
             res.writeHead(
               200,
               {
@@ -216,6 +224,51 @@ async function main(): Promise<void> {
       "API approval gate was bypassed.",
     );
 
+    const approvalFlagBypass =
+      await adapter.execute({
+        id: "api-approval-flag-bypass-test",
+        taskId: "api-task",
+        missionId: "api-mission",
+        capability: "API",
+        action: "POST",
+        input: {
+          method: "POST",
+          url: `http://127.0.0.1:${port}/write`,
+          allowedHosts: ["127.0.0.1"],
+        },
+        requiresApproval: false,
+        approved: false,
+        risk: "HIGH",
+        createdAt: new Date().toISOString(),
+      });
+
+    assert(
+      approvalFlagBypass.status === "WAITING_APPROVAL",
+      "Mutating API request bypassed approval when requiresApproval was false.",
+    );
+
+    const redirect = await adapter.execute({
+      id: "api-redirect-test",
+      taskId: "api-task",
+      missionId: "api-mission",
+      capability: "API",
+      action: "GET",
+      input: {
+        method: "GET",
+        url: `http://127.0.0.1:${port}/redirect`,
+        allowedHosts: ["127.0.0.1"],
+      },
+      requiresApproval: false,
+      approved: true,
+      risk: "LOW",
+      createdAt: new Date().toISOString(),
+    });
+
+    assert(
+      redirect.status === "BLOCKED",
+      "API adapter followed a redirect outside the allowlist.",
+    );
+
     console.log(
       "STEP 39 API execution adapter test: PASS",
     );
@@ -226,6 +279,8 @@ async function main(): Promise<void> {
       responseVerified: true,
       hostAllowlist: true,
       approvalGate: true,
+      approvalFlagBypassBlocked: true,
+      redirectBlocked: true,
       noShellExecution: true,
     });
   } finally {

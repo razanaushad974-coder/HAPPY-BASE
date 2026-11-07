@@ -151,33 +151,6 @@ export class ApiExecutionAdapter
     const startedAt =
       new Date().toISOString();
 
-    if (
-      request.requiresApproval &&
-      !request.approved
-    ) {
-      return {
-        ...baseResult(
-          request,
-          "WAITING_APPROVAL",
-          startedAt,
-        ),
-        error:
-          "API execution requires explicit approval.",
-      };
-    }
-
-    if (!this.canExecute(request)) {
-      return {
-        ...baseResult(
-          request,
-          "BLOCKED",
-          startedAt,
-        ),
-        error:
-          `API capability does not support action ${request.action}.`,
-      };
-    }
-
     const input =
       extractInput(request.input);
 
@@ -190,6 +163,39 @@ export class ApiExecutionAdapter
         ),
         error:
           "Invalid API execution input.",
+      };
+    }
+
+    const mutatingMethod = ![
+      "GET",
+      "HEAD",
+      "OPTIONS",
+    ].includes(input.method);
+
+    if (
+      mutatingMethod &&
+      (!request.requiresApproval || !request.approved)
+    ) {
+      return {
+        ...baseResult(
+          request,
+          "WAITING_APPROVAL",
+          startedAt,
+        ),
+        error:
+          "Mutating API requests require an explicit approval decision.",
+      };
+    }
+
+    if (!this.canExecute(request)) {
+      return {
+        ...baseResult(
+          request,
+          "BLOCKED",
+          startedAt,
+        ),
+        error:
+          `API capability does not support action ${request.action}.`,
       };
     }
 
@@ -279,8 +285,25 @@ export class ApiExecutionAdapter
                 : input.body,
             signal:
               controller.signal,
+            redirect:
+              "manual",
           },
         );
+
+      if (
+        response.status >= 300 &&
+        response.status < 400
+      ) {
+        return {
+          ...baseResult(
+            request,
+            "BLOCKED",
+            startedAt,
+          ),
+          error:
+            "API redirects are blocked; validate the destination and submit a new request.",
+        };
+      }
 
       const responseText =
         await response.text();
