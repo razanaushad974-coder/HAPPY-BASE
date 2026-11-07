@@ -172,15 +172,14 @@ export class DatabaseExecutionAdapter
 
     if (
       WRITE_ACTIONS.has(input.action) &&
-      request.requiresApproval &&
-      !request.approved
+      (!request.requiresApproval || !request.approved)
     ) {
       return result(
         request,
         "WAITING_APPROVAL",
         startedAt,
         undefined,
-        "Database write execution requires explicit approval.",
+        "Database write execution requires an explicit approval decision.",
       );
     }
 
