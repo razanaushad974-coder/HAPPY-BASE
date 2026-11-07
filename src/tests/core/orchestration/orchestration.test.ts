@@ -204,6 +204,39 @@ async function main(): Promise<void> {
         "Caller-controlled approved=true bypassed persisted approval verification.",
     );
 
+    const verifierFailureHappy = new HappyOrchestrator(
+        stateFile,
+        {
+            async verifyPersistedApproval() {
+                throw new Error("approval store unavailable");
+            },
+        },
+    );
+
+    const verifierFailure = await verifierFailureHappy.run({
+        id: "pipeline-verifier-failure",
+        command: "deploy the HAPPY application to production",
+        organizationId: "org-a",
+        workspaceId: "workspace-a",
+        userId: "user-a",
+        source: "TEXT",
+        approved: true,
+        createdAt: new Date().toISOString(),
+    }, {
+        authenticatedActorUserId: "founder-001",
+        organizationId: "org-a",
+        workspaceId: "workspace-a",
+    });
+
+    assert(
+        verifierFailure.status === "WAITING_APPROVAL",
+        "Approval verifier exception did not fail closed to WAITING_APPROVAL.",
+    );
+    assert(
+        !verifierFailure.trace.stages.some((stage) => stage.stage === "EXECUTION"),
+        "Execution proceeded after approval verifier failure.",
+    );
+
     const authorizedHappy = new HappyOrchestrator(
         stateFile,
         {
