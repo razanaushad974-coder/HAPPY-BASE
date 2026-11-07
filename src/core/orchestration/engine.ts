@@ -427,19 +427,28 @@ contextSummary:
             trustedContext.authenticatedActorUserId.trim().length > 0 &&
             request.userId !== undefined;
 
-        const verifiedApproval =
+        let verifiedApproval = false;
+
+        if (
             approvalRequired &&
             trustedContextMatchesRequest &&
             this.approvalVerifier !== undefined
-                ? await this.approvalVerifier.verifyPersistedApproval({
-                    requestId: request.id,
-                    planId: plan.id,
-                    organizationId: trustedContext.organizationId,
-                    workspaceId: trustedContext.workspaceId,
-                    requesterUserId: request.userId,
-                    authenticatedActorUserId: trustedContext.authenticatedActorUserId,
-                })
-                : false;
+        ) {
+            try {
+                verifiedApproval =
+                    await this.approvalVerifier.verifyPersistedApproval({
+                        requestId: request.id,
+                        planId: plan.id,
+                        organizationId: trustedContext.organizationId,
+                        workspaceId: trustedContext.workspaceId,
+                        requesterUserId: request.userId,
+                        authenticatedActorUserId: trustedContext.authenticatedActorUserId,
+                    });
+            } catch {
+                // A verifier outage or unexpected adapter error must fail closed.
+                verifiedApproval = false;
+            }
+        }
 
         // Caller-controlled request.approved is never proof of approval.
         // Fail closed unless a trusted server verifier validates the persisted
