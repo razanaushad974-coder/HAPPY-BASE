@@ -243,6 +243,10 @@ async function main(): Promise<void> {
                 true,
             createdAt:
                 new Date().toISOString(),
+        }, {
+            authenticatedActorUserId: "founder-001",
+            organizationId: "org-a",
+            workspaceId: "workspace-a",
         });
 
     assert(
