@@ -424,6 +424,7 @@ contextSummary:
             trustedContext !== undefined &&
             trustedContext.organizationId === request.organizationId &&
             trustedContext.workspaceId === request.workspaceId &&
+            trustedContext.authenticatedActorUserId.trim().length > 0 &&
             request.userId !== undefined;
 
         const verifiedApproval =
