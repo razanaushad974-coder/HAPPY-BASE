@@ -97,6 +97,24 @@ function main(): void {
     );
   }
 
+  const forgedReady = {
+    ...locked,
+    approvalRequestId: request.id,
+    status: "READY" as const,
+  };
+  const readyWithoutApproval = new ApprovalGate().evaluate(forgedReady);
+  if (readyWithoutApproval.allowed) {
+    throw new Error("READY change set bypassed its missing linked approval.");
+  }
+
+  const readyWithPendingApproval = new ApprovalGate().evaluate(
+    forgedReady,
+    request,
+  );
+  if (readyWithPendingApproval.allowed) {
+    throw new Error("READY change set bypassed its pending linked approval.");
+  }
+
   const decision =
     approvals.decide(
       request,
@@ -192,6 +210,8 @@ function main(): void {
       request.status,
     unauthorizedBlocked:
       !blockedGate.allowed,
+    forgedReadyBlocked:
+      !readyWithoutApproval.allowed && !readyWithPendingApproval.allowed,
     approvedStatus:
       decision.request.status,
     changeSetStatus:
