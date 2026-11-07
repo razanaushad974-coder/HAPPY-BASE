@@ -184,8 +184,77 @@ async function main(): Promise<void> {
     // APPROVED EXECUTION
     // ==============================================
 
-    const approvedCase =
+    const unverifiedApproval =
         await happy.run({
+            id: "pipeline-forged-approved-flag",
+            command: "deploy the HAPPY application to production",
+            organizationId: "org-a",
+            workspaceId: "workspace-a",
+            activeProjectId: "project-happy",
+            activeMissionId: "mission-001",
+            activeTaskId: "task-001",
+            userId: "user-a",
+            source: "TEXT",
+            approved: true,
+            createdAt: new Date().toISOString(),
+        });
+
+    assert(
+        unverifiedApproval.status === "WAITING_APPROVAL",
+        "Caller-controlled approved=true bypassed persisted approval verification.",
+    );
+
+    const verifierFailureHappy = new HappyOrchestrator(
+        stateFile,
+        {
+            async verifyPersistedApproval() {
+                throw new Error("approval store unavailable");
+            },
+        },
+    );
+
+    const verifierFailure = await verifierFailureHappy.run({
+        id: "pipeline-verifier-failure",
+        command: "deploy the HAPPY application to production",
+        organizationId: "org-a",
+        workspaceId: "workspace-a",
+        userId: "user-a",
+        source: "TEXT",
+        approved: true,
+        createdAt: new Date().toISOString(),
+    }, {
+        authenticatedActorUserId: "founder-001",
+        organizationId: "org-a",
+        workspaceId: "workspace-a",
+    });
+
+    assert(
+        verifierFailure.status === "WAITING_APPROVAL",
+        "Approval verifier exception did not fail closed to WAITING_APPROVAL.",
+    );
+    assert(
+        !verifierFailure.trace.stages.some((stage) => stage.stage === "EXECUTION"),
+        "Execution proceeded after approval verifier failure.",
+    );
+
+    const authorizedHappy = new HappyOrchestrator(
+        stateFile,
+        {
+            async verifyPersistedApproval(context) {
+                assert(
+                    context.organizationId === "org-a" &&
+                    context.workspaceId === "workspace-a" &&
+                    context.requesterUserId === "user-a" &&
+                    context.authenticatedActorUserId === "founder-001",
+                    "Approval verifier received an incorrect tenant/requester scope.",
+                );
+                return true;
+            },
+        },
+    );
+
+    const approvedCase =
+        await authorizedHappy.run({
             id:
                 "pipeline-approved",
             command:
@@ -208,6 +277,10 @@ async function main(): Promise<void> {
                 true,
             createdAt:
                 new Date().toISOString(),
+        }, {
+            authenticatedActorUserId: "founder-001",
+            organizationId: "org-a",
+            workspaceId: "workspace-a",
         });
 
     assert(
@@ -331,6 +404,7 @@ async function main(): Promise<void> {
 
     type PersistedExecutionRecord = {
         data?: {
+            approved?: boolean;
             targetReference?: {
                 entityId?: string;
                 entityType?: string;
@@ -344,6 +418,13 @@ async function main(): Promise<void> {
     const executionTaskTargetPreserved =
         restoredExecutionRecord?.data?.targetReference?.entityId ===
             "project-happy";
+    const verifiedApprovalReachedExecution =
+        restoredExecutionRecord?.data?.approved === true;
+
+    assert(
+        verifiedApprovalReachedExecution,
+        "Verified approval was not propagated to the downstream execution request.",
+    );
 
     assert(
         executionTaskTargetPreserved,

@@ -77,6 +77,8 @@ import type {
     HappyPipelineRequest,
     HappyPipelineResult,
     HappyPipelineStageResult,
+    PipelineApprovalVerifier,
+    TrustedPipelineExecutionContext,
 } from "./types";
 
 export class HappyOrchestrationEngine {
@@ -90,6 +92,7 @@ export class HappyOrchestrationEngine {
 
     constructor(
         persistenceFile?: string,
+        private readonly approvalVerifier?: PipelineApprovalVerifier,
     ) {
         this.reasoning = new ReasoningOrchestrator();
         this.mission = new MissionOrchestrator();
@@ -163,6 +166,7 @@ export class HappyOrchestrationEngine {
 
     async run(
         request: HappyPipelineRequest,
+        trustedContext?: TrustedPipelineExecutionContext,
     ): Promise<HappyPipelineResult> {
         const startedAt =
             new Date().toISOString();
@@ -416,9 +420,42 @@ contextSummary:
                     step.requiresApproval,
             );
 
+        const trustedContextMatchesRequest =
+            trustedContext !== undefined &&
+            trustedContext.organizationId === request.organizationId &&
+            trustedContext.workspaceId === request.workspaceId &&
+            trustedContext.authenticatedActorUserId.trim().length > 0 &&
+            request.userId !== undefined;
+
+        let verifiedApproval = false;
+
         if (
             approvalRequired &&
-            request.approved !== true
+            trustedContextMatchesRequest &&
+            this.approvalVerifier !== undefined
+        ) {
+            try {
+                verifiedApproval =
+                    await this.approvalVerifier.verifyPersistedApproval({
+                        requestId: request.id,
+                        planId: plan.id,
+                        organizationId: trustedContext.organizationId,
+                        workspaceId: trustedContext.workspaceId,
+                        requesterUserId: request.userId,
+                        authenticatedActorUserId: trustedContext.authenticatedActorUserId,
+                    });
+            } catch {
+                // A verifier outage or unexpected adapter error must fail closed.
+                verifiedApproval = false;
+            }
+        }
+
+        // Caller-controlled request.approved is never proof of approval.
+        // Fail closed unless a trusted server verifier validates the persisted
+        // approval using the authenticated approver and tenant scope.
+        if (
+            approvalRequired &&
+            !verifiedApproval
         ) {
             const approvalRecord = {
                 requestId:
@@ -499,7 +536,7 @@ contextSummary:
             status: "COMPLETED",
             summary:
                 approvalRequired
-                    ? "Approval supplied by caller."
+                    ? "Persisted approval verified by trusted server authorization."
                     : "Approval gate not required.",
         });
 
@@ -654,7 +691,7 @@ contextSummary:
             requiresApproval:
                 approvalRequired,
             approved:
-                request.approved === true,
+                !approvalRequired || verifiedApproval,
             risk:
                 approvalRequired
                     ? "HIGH" as const
