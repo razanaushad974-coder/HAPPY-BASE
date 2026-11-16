@@ -29,6 +29,14 @@ export default async function WorkspacePage() {
         <p className="mt-6 rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-4 text-sm text-emerald-200">
           Identity verification: successful
         </p>
+        <form action="/auth/signout" method="post" className="mt-8">
+          <button
+            type="submit"
+            className="rounded-xl border border-white/15 px-5 py-3 text-sm font-medium text-slate-200 transition hover:bg-white/10"
+          >
+            Sign out
+          </button>
+        </form>
       </section>
     </main>
   );
