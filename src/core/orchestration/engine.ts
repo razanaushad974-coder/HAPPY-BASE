@@ -420,18 +420,20 @@ contextSummary:
                     step.requiresApproval,
             );
 
+        const requesterUserId = request.userId;
+
         const trustedContextMatchesRequest =
             trustedContext !== undefined &&
             trustedContext.organizationId === request.organizationId &&
             trustedContext.workspaceId === request.workspaceId &&
-            trustedContext.authenticatedActorUserId.trim().length > 0 &&
-            request.userId !== undefined;
+            trustedContext.authenticatedActorUserId.trim().length > 0;
 
         let verifiedApproval = false;
 
         if (
             approvalRequired &&
             trustedContextMatchesRequest &&
+            requesterUserId !== undefined &&
             this.approvalVerifier !== undefined
         ) {
             try {
@@ -441,7 +443,7 @@ contextSummary:
                         planId: plan.id,
                         organizationId: trustedContext.organizationId,
                         workspaceId: trustedContext.workspaceId,
-                        requesterUserId: request.userId,
+                        requesterUserId,
                         authenticatedActorUserId: trustedContext.authenticatedActorUserId,
                     });
             } catch {
