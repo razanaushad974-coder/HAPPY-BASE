@@ -22,11 +22,19 @@ export function getSupabasePublicEnvironment(): SupabasePublicEnvironment {
     throw new Error("SUPABASE_URL_INVALID");
   }
 
+  const isLocalhost = ["localhost", "127.0.0.1", "[::1]"].includes(
+    parsedUrl.hostname,
+  );
+
   if (
     parsedUrl.protocol !== "https:" &&
-    parsedUrl.hostname !== "localhost"
+    !(parsedUrl.protocol === "http:" && isLocalhost)
   ) {
     throw new Error("SUPABASE_URL_MUST_USE_HTTPS");
+  }
+
+  if (parsedUrl.username || parsedUrl.password || parsedUrl.search || parsedUrl.hash) {
+    throw new Error("SUPABASE_URL_INVALID");
   }
 
   if (!/^(sb_publishable_[A-Za-z0-9_-]+|[A-Za-z0-9._-]+)$/.test(publishableKey)) {
