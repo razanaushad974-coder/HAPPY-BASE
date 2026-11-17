@@ -92,3 +92,30 @@ This strengthens the finding that snapshot rows are owner-user isolated but thei
 6. Existing snapshot rows are inventoried for UUID validity, workspace existence, organization/workspace pairing, and user ownership/membership before any constraint migration.
 
 No SQL test was run and no migration was applied.
+
+## Follow-up semantic diff — shared execution conflicts
+
+Compared the candidate and GitHub `main` implementations directly (source-level inspection):
+
+### C-01 — database write approval regression (HIGH, integration blocker)
+- GitHub `main` blocks every database write when either `requiresApproval` is false OR `approved` is false: `WRITE_ACTIONS.has(action) && (!request.requiresApproval || !request.approved)`.
+- Candidate blocks only when `requiresApproval` is true AND `approved` is false: `WRITE_ACTIONS.has(action) && request.requiresApproval && !request.approved`.
+- Therefore, in the candidate, a DB write with `requiresApproval=false` can reach the provider without approval. This weakens the fail-closed invariant present in `main`.
+- Required resolution: preserve the `main` fail-closed condition or replace it only with a centrally enforced, independently tested policy that cannot be bypassed by a caller-supplied false flag. Add tests for all four combinations of `requiresApproval` / `approved` across each write action and transaction.
+- Do not integrate the candidate database adapter until this is fixed and verified.
+
+### C-02 — file path hardening and residual race
+- Candidate `WorkspaceCodeExecutor` adds lexical traversal checks, realpath checks for existing ancestors, symlink/junction escape rejection, and hard-link rejection. These are meaningful improvements over `main`'s lexical-prefix-only check.
+- The validation and subsequent filesystem operation are separate synchronous calls. A hostile local process able to replace a checked directory entry between validation and use may still create a TOCTOU race. Retain as a residual hardening item; do not describe the implementation as race-proof.
+
+### C-03 — default execution registry behavior changes
+- Candidate `createDefaultExecutionRegistry` registers a live `SupabaseDatabaseProvider` and `SafeShellExecutionAdapter`, plus automation as disconnected unless a pipeline is injected.
+- `main` registers contract adapters for a fixed capability list and separate AI/code/file/API/browser/database adapters; its database adapter is constructed without a provider in the orchestration engine.
+- This is a runtime capability change, not a mechanical refactor. Before integration, verify provider auth/session binding, tenant scope enforcement, RLS behavior, query allowlisting, transaction validation, and shell command policy. Do not infer safety from the provider's name or status alone.
+
+### C-04 — orchestration engine is a broad architectural conflict
+- Candidate changes registry construction, injects a `PersistenceService`, adds workspace-aware runtime execution routing, and adds durable resume idempotency/recovery audit logic alongside approval expiry.
+- These changes depend on candidate-only modules and contracts. They must be integrated as a dependency-closed feature set with crash/concurrency tests, not copied as a single file over `main`.
+
+### Verification status
+These are static semantic comparisons. No tests were executed for these new findings, no provider was connected, and no database write or migration was performed.
