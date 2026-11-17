@@ -8,37 +8,18 @@
 ## Candidate integration posture
 - Candidate contains 362 files; current GitHub `main` tree contains 179 tracked blobs.
 - Confirmed `main` paths missing from candidate: `README.md`, `HAPPY-AI-SOURCE-REVIEW.zip`.
-- Confirmed same-path conflicts include:
+- Confirmed content-hash conflicts from the exact comparisons completed so far:
   - `package.json`
+  - `package-lock.json`
+  - `eslint.config.mjs`
+  - `tsconfig.json`
   - `src/config/happy.ts`
   - `src/core/orchestration/engine.ts`
-  - `src/core/orchestration/orchestrator.ts`
-  - `src/core/orchestration/types.ts`
   - `src/core/execution/file-execution-adapter.ts`
   - `src/core/execution/database-execution-adapter.ts`
   - `src/core/execution/workspace-code-executor.ts`
-  - `src/core/execution/registry.ts`
-  - `src/core/execution/engine.ts`
-  - `src/core/execution/default-registry.ts`
-  - `src/core/execution/code-execution-adapter.ts`
-  - `src/core/execution/ai-execution-adapter.ts`
-  - `src/core/execution/browser-execution-adapter.ts`
-  - `src/core/execution/api-execution-adapter.ts`
-  - `src/core/execution/capability-resolver.ts`
-  - `src/core/persistence/state.ts`
-  - `src/core/persistence/types.ts`
-  - `src/core/persistence/service.ts`
-  - `src/core/persistence/provider-registry.ts`
-  - `src/core/persistence/serialization.ts`
-  - `src/core/persistence/repositories/in-memory-repository.ts`
-  - `src/core/persistence/adapters/json-file-adapter.ts`
-  - `src/core/founder-os/types.ts`, `service.ts`, `command-control.ts`, `orchestrator.ts`
-  - `src/core/founder/types.ts`, `command-engine.ts`
-  - `src/core/mission/mission-engine.ts`, `task-graph.ts`, `types.ts`, `orchestrator.ts`
-  - `src/core/workspace/types.ts`, `service.ts`, `orchestrator.ts`
-  - `src/types/system.ts`
-  - `eslint.config.mjs`, `package-lock.json`, `tsconfig.json`
-- The above list is a conflict watchlist, not a completed exhaustive SHA comparison of every overlap. A complete generated 362-path matrix remains pending.
+- Other overlapping paths still require content-hash comparison; their presence in both trees is not being labeled a conflict until hashes are checked.
+- A complete generated 362-path matrix remains pending.
 - Candidate-only paths include Supabase runtime snapshot persistence, canonical tenant resolution, authenticated runtime context, approval decision API and mutation, module runtime, several workspace/API routes, new migrations, and additional recovery/concurrency tests. These must be reviewed as a dependency-connected feature set, not copied file-by-file without import analysis.
 
 ## Static tenant / RLS review
