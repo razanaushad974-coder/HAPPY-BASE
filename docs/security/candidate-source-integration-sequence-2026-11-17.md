@@ -107,3 +107,12 @@ The candidate's realpath/symlink/hard-link path checks are stronger than `main`'
 
 ### Additional security gates — C-05 / C-06
 Static review also found the candidate safe-shell adapter trusts `input.approved` from its own payload rather than binding authorization to the trusted request / persisted approval context. Do not enable safe shell until that bypass is removed and forged-approval tests pass. The Supabase database provider authenticates the bearer token and checks optional user scope, but does not independently validate organization/workspace membership; it relies on table RLS. Require negative cross-tenant tests for every reachable table and prevent unintended unfiltered UPDATE/DELETE. Keep raw query and transaction actions disabled until their safe provider layers exist. See C-05 and C-06 in the runtime tenant review.
+
+
+## Remediation progress — 2026-11-17
+The candidate working copy now contains local fixes for C-01 and C-05:
+- DB write gate restored to require both `requiresApproval` and `approved`.
+- Safe Shell ignores caller-provided `input.approved` and derives approval from the trusted execution request.
+- Focused executable harness passed three negative DB approval combinations, one positive DB approval case, two forged/unapproved shell cases, and one read-only shell case.
+
+These fixes are local to the extracted candidate archive and have not been committed as application source to GitHub. Full test/typecheck/lint/build remains blocked by missing installed dependencies / package-registry DNS. C-06 tenant membership, T-01 snapshot RLS, and residual TOCTOU still require separate work and tests.
