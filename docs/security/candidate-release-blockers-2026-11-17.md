@@ -26,3 +26,17 @@ Required before release:
 
 ## Approval and tenant remediation
 The candidate source includes the approval-expiry and canonical-tenant changes described in `approval-expiry-tenant-remediation.md`. These code changes are not a substitute for dependency remediation or full integration testing.
+
+
+## Uploaded security-reviewed candidate re-validation
+
+- Archive SHA-256: `ab39f72492295b34a6ab663d540d9d48ae9233269000bdac2a96fc45618ef00d` (362 entries; ZIP integrity PASS).
+- Candidate `package.json` and `package-lock.json` both resolve `next` and `eslint-config-next` to `16.3.5`; the lockfile root matches the manifest, but the versions remain below the patched line.
+- Current public release evidence: Next.js 16.3.8 fixed the September 30 security advisories; the November 3 release fixed seven additional advisories in 16.4.5, and 16.4.6 is the later 16.x release. Next.js 16.3.5 is therefore behind the documented security fixes. See [Next.js release notes](https://nextjs-changelog.vercel.app/) and [Netlify's November 3 advisory summary](https://www.netlify.com/changelog/2026-11-03-nextjs-security-vulnerabilities/).
+- TypeScript/TSX syntax transpilation: 329 files, zero syntax diagnostics.
+- Focused approval policy/mutation harness: 8 assertions passed.
+- High-confidence secret-pattern scan: zero matches; this does not guarantee absence of all secrets.
+- `npm ci` timed out again. The local dependency tree is incomplete; `tsc --noEmit` reports missing type packages. No lockfile was manually edited because a correct lockfile regeneration requires a successful package-resolution/install step.
+- Full lint, Vitest, npm audit, and production build remain NOT RUN.
+
+**Release remains blocked.** Do not treat the candidate as production-ready, and do not merge or deploy until the dependency upgrade and full validation succeed.
