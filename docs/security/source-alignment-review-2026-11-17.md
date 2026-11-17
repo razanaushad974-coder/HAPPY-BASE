@@ -68,3 +68,16 @@ The re-review confirms material source divergence. It still does not constitute 
 - Full `tsc --noEmit`: blocked by missing type packages after incomplete install.
 - Full lint, Vitest suite, npm audit, and production build: NOT RUN.
 - Candidate and GitHub source were not merged; no DB/migration or production changes.
+
+
+## Path inventory checkpoint — 2026-11-17 (latest candidate)
+
+The current GitHub `main` recursive tree was fetched successfully (tree SHA `5ac91e870f2fc4a79d57a75d55eab5bcb099a1d1`, not truncated) and contains 179 tracked blob paths. The cleaned, security-reviewed candidate extraction contains 362 files.
+
+Confirmed `main` paths absent from the candidate extraction:
+- `README.md`
+- `HAPPY-AI-SOURCE-REVIEW.zip`
+
+The candidate includes substantially more files than `main`, including API routes, Supabase runtime/auth/tenant code, module runtime layers, migrations, and a much larger regression-test set. This confirms the candidate is not a replacement snapshot of the current repository. The two confirmed omissions above also mean a wholesale candidate overlay would not preserve all current repository content.
+
+This checkpoint is a count plus confirmed-path checkpoint, not a claim that every one of the 362 candidate paths has been content-hash reconciled. Same-path conflicts already identified above remain unresolved and must be merged deliberately. The next safe step is a path-by-path import matrix (MAIN_ONLY / CANDIDATE_ONLY / IDENTICAL / CONFLICT), followed by dependency and runtime compatibility review. No source files were imported, no database changes were made, and no deployment or merge was performed.
