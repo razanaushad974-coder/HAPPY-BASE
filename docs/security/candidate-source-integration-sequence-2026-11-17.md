@@ -97,3 +97,9 @@ Production deployment, database migration execution, and merge to `main` remain 
 
 ## Current safety status
 Review branch only. No application source imported, no `main` changes, no database writes or migrations, no deployment, and no merge.
+
+
+### Newly confirmed integration blocker — C-01
+Semantic comparison found that the candidate database adapter weakens `main`'s fail-closed write approval rule. Candidate currently permits a write to reach its provider when `requiresApproval=false`, even if `approved=false`. The existing `main` condition blocks when either approval is not required or not granted. This must be corrected and tested across every DB write action and transaction before candidate database runtime can be integrated. See the detailed C-01 finding in `candidate-runtime-tenant-review-2026-11-17.md`.
+
+The candidate's realpath/symlink/hard-link path checks are stronger than `main`'s lexical-only check, but a local TOCTOU race remains a residual risk. Candidate default registry also changes live capabilities by registering Supabase database and safe-shell adapters; provider auth, tenant scope, RLS, query restrictions, transaction validation, and shell policy require separate verification.
