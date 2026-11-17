@@ -40,3 +40,15 @@ The candidate source includes the approval-expiry and canonical-tenant changes d
 - Full lint, Vitest, npm audit, and production build remain NOT RUN.
 
 **Release remains blocked.** Do not treat the candidate as production-ready, and do not merge or deploy until the dependency upgrade and full validation succeed.
+
+
+## Latest dependency remediation attempt (2026-11-17)
+
+An isolated retry was performed against the exact 362-entry security-reviewed candidate using Node.js v22.16.0 and npm 10.9.2:
+- `npm view next@16.4.6 version --fetch-retries=0 --fetch-timeout=12000`
+- Result: **BLOCKED before package resolution** — `EAI_AGAIN getaddrinfo registry.npmjs.org`.
+- A direct host lookup for `registry.npmjs.org` also returned no address.
+- The candidate manifest and lockfile were rechecked: both `next` and `eslint-config-next` are consistently locked to 16.3.5, so there is no manifest/lock mismatch; the blocker is that both are outdated.
+- No manual lockfile edits were made. Reusing another branch's lockfile would omit candidate-only dependencies and would not be a valid regenerated lockfile.
+
+**Current action status:** dependency upgrade and lockfile regeneration are blocked by registry DNS/network availability. Do not claim the candidate is upgraded or release-ready. Retry package resolution when registry access is available, then run the complete validation matrix.
