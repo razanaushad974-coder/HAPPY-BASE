@@ -137,6 +137,7 @@ export class FileExecutionAdapter implements ExecutionAdapter {
         path: result.path,
         destinationPath: result.destinationPath,
         status: result.status,
+        content: result.content,
         errors: result.errors,
       });
       if (result.status !== "COMPLETED") {
@@ -161,6 +162,10 @@ export class FileExecutionAdapter implements ExecutionAdapter {
       ...baseResult(request, "COMPLETED", startedAt),
       output: {
         mode: "SAFE_FILE_EXECUTION",
+        operation: operations[0].action,
+        path: operations[0].path,
+        destinationPath: operationResults[0]?.destinationPath,
+        content: operationResults[0]?.content,
         operations: operationResults,
         completedOperations: completed.length,
         changedFiles,
