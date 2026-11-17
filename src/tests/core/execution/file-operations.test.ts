@@ -1,3 +1,4 @@
+import type { ExecutionRequest } from "../../../core/execution/types";
 import {
   existsSync,
   mkdtempSync,
@@ -27,10 +28,10 @@ function assert(
 
 function request(
   action: string,
-  targetReference: object,
+  targetReference: ExecutionRequest["targetReference"],
   input: unknown,
-  overrides: Record<string, unknown> = {},
-): any {
+  overrides: Partial<ExecutionRequest> = {},
+): ExecutionRequest {
   return {
     id: `file-op-${action.toLowerCase()}`,
     taskId: "task-file-ops",
