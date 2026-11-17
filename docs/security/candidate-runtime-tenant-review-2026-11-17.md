@@ -138,3 +138,21 @@ Static inspection of candidate `SupabaseDatabaseProvider` shows it requires a be
 - Keep DB_QUERY and DB_TRANSACTION disabled as the current provider does. Add explicit safeguards against unintended unfiltered UPDATE/DELETE if bulk mutation is not a deliberate approved capability.
 
 No provider was connected and no database request was executed. These are static findings requiring authenticated integration tests before enablement.
+
+
+## Remediation patch prepared in the local candidate copy — 2026-11-17
+
+The two caller-controlled approval findings have been patched in the extracted candidate working copy (not imported into GitHub `main`):
+
+1. **Database writes:** the adapter now fails closed unless `request.requiresApproval === true` AND `request.approved === true`. This restores the same gate already present in GitHub `main`.
+2. **Safe Shell:** the adapter no longer uses `input.approved` as authority. It supplies approval to the shell policy only from the trusted `ExecutionRequest` fields (`requiresApproval && approved`). Caller payload flags cannot grant approval.
+
+Focused executable checks were run against the transpiled candidate modules using a fake database provider and injected shell runner:
+- DB writes rejected for (requiresApproval=false, approved=false), (false,true), and (true,false).
+- DB write accepted only for (true,true).
+- Forged shell payload `approved=true` with trusted request approval absent was rejected.
+- Trusted request with approval required but not granted was rejected.
+- Read-only `node --version` remained executable without approval.
+- Result: all focused checks PASS.
+
+The candidate's existing standalone test files were also extended with these regression cases, but the full Vitest/TypeScript/lint/build suite was NOT run because dependencies are not installed and the earlier package-registry DNS failure remains. The patch is local candidate-only; no GitHub application source was changed, no PR merge, no database write, and no deployment occurred.
