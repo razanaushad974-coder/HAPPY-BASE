@@ -200,3 +200,19 @@ Required remediation:
 4. Keep FILE mutations disabled or approval-gated until the execution boundary and caller authorization are verified.
 
 No source code was changed, no filesystem exploit or test was executed, and no deployment action was performed for this finding.
+
+
+## C-07 follow-up — caller inventory status
+
+A repository-scoped GitHub code search was attempted for `HappyOrchestrationEngine.run(`, `new HappyOrchestrationEngine`, and related approval call patterns. The search connector returned no indexed matches. This is an indexing/search limitation, not proof that there are no callers.
+
+The direct source inspection confirms the trust-boundary defect inside the orchestration API: a boolean field on `HappyPipelineRequest` controls the approval gate and is copied into `ExecutionRequest.approved`. The current evidence is therefore sufficient to require remediation of the API contract, but insufficient to claim an unauthenticated remote exploit. A complete caller inventory must be obtained from a repository tree/clone and reviewed before any release sign-off.
+
+Recommended safe API direction:
+- Remove public `approved?: boolean` from the general pipeline request contract.
+- Keep normal pipeline execution unable to mark an approval as approved.
+- Introduce a server-only continuation entry point that accepts a validated approval decision identifier/context after checking authenticated actor, request/plan binding, organization/workspace/user scope, expiry, pending state, and one-time consumption.
+- Do not mint an APPROVED record inside the orchestration engine merely because a boolean is true; persist the decision through the approval service and consume it atomically.
+- Add tests at both the route boundary and execution adapter boundary for forged flags and replayed decisions.
+
+Status: finding documented; no application patch or caller-level verification completed. No tests, database writes, migrations, merges, or deployments were performed.
