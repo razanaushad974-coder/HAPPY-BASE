@@ -216,3 +216,18 @@ Recommended safe API direction:
 - Add tests at both the route boundary and execution adapter boundary for forged flags and replayed decisions.
 
 Status: finding documented; no application patch or caller-level verification completed. No tests, database writes, migrations, merges, or deployments were performed.
+
+
+## C-07 source-level confirmation — execution propagation
+
+Direct source review of GitHub `main` confirms the approval boolean propagates through two independent gates:
+
+1. `src/core/orchestration/engine.ts`: `HappyOrchestrationEngine.run(request)` accepts the general `HappyPipelineRequest`; if the plan requires approval, it bypasses the WAITING_APPROVAL branch when `request.approved === true`. It then creates an `APPROVED` state record itself and copies the same boolean into the downstream execution request.
+2. `src/core/execution/engine.ts`: the generic execution engine blocks only when `requiresApproval && !approved`; it has no approval-service lookup or trusted-decision validation.
+3. `src/core/execution/file-execution-adapter.ts`: FILE adapter repeats the same boolean check and then executes the extracted filesystem operation.
+
+This confirms a trust flaw in the core API contract and adapter boundary. It does not, by itself, establish that an untrusted HTTP caller can construct this request: repository-wide caller discovery remains incomplete because the connected GitHub code-search index returned no matches and a full repository tree/clone is not available through the current connector actions.
+
+Immediate safe containment recommendation: do not expose this engine directly to user-controlled request objects; until the API contract is redesigned, keep mutation-capable adapters unavailable to any path that cannot supply a server-verified approval decision. Do not rely on hiding the UI button or a client-side confirmation dialog.
+
+No code changes or tests were made for this confirmation. No DB writes, migrations, merges, or deployments were performed.
