@@ -65,13 +65,21 @@ export class WorkspaceCodeExecutor {
   constructor(private readonly workspaceRoot: string = process.cwd()) {}
 
   private resolveSafePath(relativePath: string): string {
-    if (!relativePath || isAbsolute(relativePath)) {
-      throw new Error(`Only relative workspace paths are allowed: ${relativePath}`);
+    const normalizedPath = typeof relativePath === "string"
+      ? relativePath.replace(/\\\\/g, "/")
+      : "";
+    if (
+      !normalizedPath ||
+      normalizedPath.startsWith("/") ||
+      /^[A-Za-z]:\\//.test(normalizedPath) ||
+      normalizedPath.split("/").some((segment) => segment === ".." || segment === "")
+    ) {
+      throw new Error(`Only safe relative workspace paths are allowed: ${relativePath}`);
     }
 
     const configuredRoot = resolve(this.workspaceRoot);
     const root = realpathSync(configuredRoot);
-    const candidate = resolve(root, relativePath);
+    const candidate = resolve(root, normalizedPath);
     const rel = relative(root, candidate);
     if (!rel || rel === "." || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
       throw new Error(`Workspace path escapes configured root: ${relativePath}`);
