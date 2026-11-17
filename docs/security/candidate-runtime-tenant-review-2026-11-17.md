@@ -156,3 +156,27 @@ Focused executable checks were run against the transpiled candidate modules usin
 - Result: all focused checks PASS.
 
 The candidate's existing standalone test files were also extended with these regression cases, but the full Vitest/TypeScript/lint/build suite was NOT run because dependencies are not installed and the earlier package-registry DNS failure remains. The patch is local candidate-only; no GitHub application source was changed, no PR merge, no database write, and no deployment occurred.
+
+
+## Additional baseline review — orchestration approval authority (C-07)
+
+Severity: HIGH pending call-site/authentication verification; do not treat this as a demonstrated remote exploit.
+
+Static inspection of GitHub `main` at the current review point:
+- `HappyPipelineRequest` exposes an optional caller-provided `approved?: boolean` field.
+- `HappyOrchestrationEngine.run()` treats `request.approved === true` as sufficient to pass the plan-level approval gate.
+- When that boolean is true, the engine itself writes an `APPROVED` approval record with `approvedAt`; the record is not loaded from or cross-checked against an independently persisted approval decision in this method.
+- The resulting `ExecutionRequest.approved` is then populated from the same caller boolean. The generic `ExecutionEngine` and file adapter also trust this boolean when deciding whether to proceed.
+
+Security interpretation:
+- The orchestration class does not establish approval authority itself. Safety therefore depends on every caller being a trusted server-side boundary that authenticates the founder, loads a pending approval, validates its scope/expiry/status, and only then supplies `approved: true`.
+- The expected `src/app/api/founder/execute/route.ts` and `src/app/api/approvals/decision/route.ts` paths were not present on GitHub `main` at the time of this fetch (404); candidate-only routes described elsewhere in this review are not evidence of protection in `main`.
+- No call-site inventory or live request test has yet established whether an untrusted caller can reach this engine with a forged approval flag.
+
+Required next steps before release:
+1. Inventory every construction/call site of `HappyOrchestrationEngine.run()` and all external routes that can reach it.
+2. Ensure approval is represented by a server-verified decision record or opaque trusted authorization context, not a public boolean supplied by the request body.
+3. Enforce pending status, expiry, target request/plan, tenant/user scope, and one-time consumption at the mutation boundary.
+4. Add negative tests proving a forged `approved: true` cannot create an APPROVED record or execute a FILE/DATABASE/SHELL mutation.
+
+No source code was changed, no test was executed, and no database or deployment action was performed for this finding.
