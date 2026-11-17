@@ -3,7 +3,9 @@
 ## Dependency security blocker
 The candidate's `package.json` and lockfile resolve Next.js and `eslint-config-next` to 16.3.5. This version is below the patched 16.x release line.
 
-The Next.js 16.3.8 release notes (2026-09-30) document security fixes for SSRF in image optimization, cache poisoning, and information disclosure. The November 2026 security release fixed additional issues in 16.4.5; the 16.4.6 release is a later bug-fix release. References:
+A separate read-only check of GitHub `main` also found both `next` and `eslint-config-next` pinned to 16.3.5 (main `package.json` blob: `aa6ee60b3a2974a162f1587910e184d19095e27c`). Therefore this is not isolated to the candidate archive; the repository baseline has the same dependency remediation gap. This finding does not authorize a direct change to `main`.
+
+The Next.js 16.3.8 release notes (2026-09-30) document security fixes for SSRF in image optimization, cache poisoning, and information disclosure. The November 2026 security release fixed additional issues in 16.4.5; 16.4.6 is a later bug-fix release. References:
 - https://nextjs-changelog.vercel.app/ (16.3.8, 16.4.5, 16.4.6 release notes)
 - https://www.netlify.com/changelog/2026-11-03-nextjs-security-vulnerabilities/ (November 3 security fixes; 16.4.5 / 15.5.29)
 - https://www.netlify.com/changelog/2026-09-30-nextjs-react-security-vulnerabilities/ (September 30 security fixes; 16.3.8)
