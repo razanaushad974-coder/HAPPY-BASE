@@ -41,6 +41,7 @@ async function main(): Promise<void> {
   let stored: PersistedPipelineApproval | null = approval;
   let session: AuthenticatedApprovalActor | null = actor;
   let roleAllowed = true;
+  let lastRequiredRole: string | null = null;
 
   const verifier = new PersistedPipelineApprovalVerifier(
     { async getAuthenticatedActor() { return session; } },
@@ -57,11 +58,17 @@ async function main(): Promise<void> {
         return true;
       },
     },
-    { async hasRequiredRole() { return roleAllowed; } },
+    { async hasRequiredRole(_actor, role) { lastRequiredRole = role; return roleAllowed; } },
     () => now,
   );
 
   assert(await verifier.verifyPersistedApproval(context), "Valid persisted founder approval was rejected.");
+  assert(lastRequiredRole === "FOUNDER", "Founder approval did not request founder authorization.");
+
+  stored = { ...approval, requiredRole: "SECURITY" };
+  assert(await verifier.verifyPersistedApproval(context), "Valid persisted security approval was rejected.");
+  assert(lastRequiredRole === "SECURITY", "Security approval was not mapped to the security role.");
+  stored = approval;
 
   stored = { ...approval, planId: "different-plan" };
   assert(!(await verifier.verifyPersistedApproval(context)), "Mismatched plan approval was accepted.");
