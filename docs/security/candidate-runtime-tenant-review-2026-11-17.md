@@ -72,3 +72,23 @@ Status: positive control observed with limitation.
 3. Resolve T-01 schema design and add regression tests; do not execute the migration without explicit approval.
 4. Restore package-registry access, update Next.js and matching eslint config with a regenerated candidate lockfile, then run full install/typecheck/lint/tests/audit/build.
 5. Only after those gates, prepare a source integration PR. Do not merge or deploy this review branch as application source.
+
+
+## Follow-up detail — snapshot scope key and membership model
+Further source inspection confirms:
+- `createRuntimeScopeKey` concatenates `organizationId|workspaceId|userId`; both `save` and `saveIfVersion` write those values, and `saveIfVersion` uses version-checked update / insert-on-version-zero.
+- The core migration defines `workspace_members(workspace_id,user_id,role)` and `private.is_workspace_member(uuid)` as a `SECURITY DEFINER` helper with an empty pinned search path. Execute permission is explicitly granted to authenticated after revoking public/anon/authenticated defaults and re-granting authenticated.
+- `happy_module_records` applies this membership helper in SELECT/INSERT/UPDATE/DELETE policies and has a composite FK to `workspaces(organization_id,id)`.
+- `happy_runtime_snapshots` does not use that helper, does not have the composite FK, and only constrains `user_id` to `auth.users`.
+
+This strengthens the finding that snapshot rows are owner-user isolated but their tenant labels are not independently bound to a real workspace membership at the database layer. The scope key's inclusion of user ID and the approval route's canonical tenant resolution reduce application-path exposure, but direct authenticated table access remains the relevant RLS test case.
+
+### Proposed regression cases (not executed)
+1. User A inserts a snapshot with their own `user_id` and a random/nonexistent organization/workspace pair — expect rejection after hardening.
+2. User A inserts with a real workspace belonging to User B but their own `user_id` — expect rejection unless User A is an active workspace member.
+3. User A attempts to read/update/delete User B's snapshot — expect zero rows / RLS rejection.
+4. A workspace member saves a snapshot for a valid workspace with their own user scope — expected behavior must be explicitly decided (current approval resolver is owner-only, so do not silently broaden this).
+5. Mismatched organization/workspace pair — expect FK rejection.
+6. Existing snapshot rows are inventoried for UUID validity, workspace existence, organization/workspace pairing, and user ownership/membership before any constraint migration.
+
+No SQL test was run and no migration was applied.
