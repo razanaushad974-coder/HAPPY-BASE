@@ -91,7 +91,7 @@ async function main(): Promise<void> {
           ],
         },
         targetReference: target,
-        requiresApproval: false,
+        requiresApproval: true,
         approved: true,
         risk: "LOW",
         createdAt: new Date().toISOString(),
