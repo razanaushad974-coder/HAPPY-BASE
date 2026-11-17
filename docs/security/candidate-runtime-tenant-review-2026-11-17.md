@@ -119,3 +119,22 @@ Compared the candidate and GitHub `main` implementations directly (source-level 
 
 ### Verification status
 These are static semantic comparisons. No tests were executed for these new findings, no provider was connected, and no database write or migration was performed.
+
+
+### C-05 — safe-shell approval is caller-controlled (HIGH, security blocker)
+Static inspection of candidate `SafeShellExecutionAdapter` and `safe-shell-policy.ts` found:
+- `parseInput` copies `input.approved` from the execution payload.
+- `evaluateSafeShellRequest` treats that field as the approval decision for every non-read-only command.
+- The adapter does not independently require `request.requiresApproval` AND `request.approved`, nor does it bind the input approval flag to a persisted approval decision.
+- Therefore, a caller able to construct the execution input can set `approved: true` and pass the policy for an allowlisted executable with non-read-only arguments, provided `HAPPY_ENABLE_SAFE_SHELL=true`.
+
+Required resolution: remove caller-supplied approval as an authority; derive approval only from the trusted orchestration/approval context, enforce it at the adapter boundary, and test forged `input.approved=true`, missing approval, stale approval, and approved/unapproved request combinations. Until then, do not enable or integrate safe-shell execution.
+
+### C-06 — Supabase provider trusts RLS for organization/workspace isolation
+Static inspection of candidate `SupabaseDatabaseProvider` shows it requires a bearer access token, calls `auth.getUser(accessToken)`, and rejects a supplied `scope.userId` that differs from the authenticated user. It does not independently resolve or verify `organizationId` / `workspaceId` membership, nor does it add those tenant ids as query predicates. The provider passes the user JWT to PostgREST and relies on table RLS for row-level isolation.
+- This is not proof of a cross-tenant exploit; correctly configured RLS may enforce the boundary.
+- However, the generic resource selector permits any syntactically valid table identifier, so every reachable table must have correct RLS. The current provider does not offer a tenant-membership check as a second control.
+- Required tests: attempt reads/inserts/updates/deletes against a workspace owned by another user; verify missing-RLS tables cannot be reached or are explicitly denied; verify org/workspace mismatch; verify user JWT is always used and service/secret key never reaches this provider.
+- Keep DB_QUERY and DB_TRANSACTION disabled as the current provider does. Add explicit safeguards against unintended unfiltered UPDATE/DELETE if bulk mutation is not a deliberate approved capability.
+
+No provider was connected and no database request was executed. These are static findings requiring authenticated integration tests before enablement.
