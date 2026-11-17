@@ -270,6 +270,33 @@ async function main(): Promise<void> {
   }
 
   // --------------------------------------------------
+  // TRANSACTION SUB-OPERATIONS MUST BE VALIDATED
+  // --------------------------------------------------
+
+  const malformedTransaction = {
+    action: "DB_TRANSACTION",
+    resource: "users",
+    scope: {
+      organizationId: "org-a",
+      workspaceId: "ws-a",
+    },
+    transaction: [
+      {
+        action: "DB_SELECT",
+        resource: "users",
+      },
+      {
+        action: "DROP_TABLE",
+        resource: "users",
+      },
+    ],
+  };
+
+  if (connected.canExecute(request(malformedTransaction))) {
+    throw new Error("Malformed transaction operation was accepted.");
+  }
+
+  // --------------------------------------------------
   // BAD INPUT
   // --------------------------------------------------
 
