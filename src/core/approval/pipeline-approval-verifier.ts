@@ -3,7 +3,7 @@ import type {
   PipelineApprovalVerifier,
 } from "../orchestration/types";
 
-export type PipelineApprovalRole = "FOUNDER" | "ADMIN";
+export type PipelineApprovalRole = "FOUNDER" | "ADMIN" | "SECURITY";
 
 export interface AuthenticatedApprovalActor {
   userId: string;
