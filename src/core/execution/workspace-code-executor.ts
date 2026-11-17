@@ -66,12 +66,12 @@ export class WorkspaceCodeExecutor {
 
   private resolveSafePath(relativePath: string): string {
     const normalizedPath = typeof relativePath === "string"
-      ? relativePath.replace(/\\\\/g, "/")
+      ? relativePath.split(String.fromCharCode(92)).join("/")
       : "";
     if (
       !normalizedPath ||
       normalizedPath.startsWith("/") ||
-      /^[A-Za-z]:\\//.test(normalizedPath) ||
+      /^[A-Za-z]:/.test(normalizedPath) ||
       normalizedPath.split("/").some((segment) => segment === ".." || segment === "")
     ) {
       throw new Error(`Only safe relative workspace paths are allowed: ${relativePath}`);
