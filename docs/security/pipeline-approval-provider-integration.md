@@ -27,3 +27,10 @@ When approved, the atomic store operation must persist `approverUserId` and `dec
 ## Not yet connected
 
 The repository currently has no configured authentication provider, durable approval-store adapter, role/membership adapter, or approval API route. Therefore these core services are reusable server-side boundaries, not a live connected approval feature. High-risk execution remains blocked until those adapters are implemented and wired in. Do not use the in-memory test doubles as production adapters.
+
+
+## Approval-level mapping and quorum safety
+
+- `FOUNDER`, `ADMIN`, and `SECURITY` are supported single-approver role requirements by the core verifier contract. The authorization adapter must resolve each role from current trusted membership data in the exact tenant scope.
+- `MULTI_APPROVER` is a quorum requirement, not a role. It is deliberately not accepted by `PipelineApprovalRole` and must never be mapped to a single founder/admin/security approval. A quorum implementation needs a separate append-only decision table, distinct approver identities, a configured threshold, and a transaction that changes the request to `APPROVED` only when the threshold is reached. Until that exists, multi-approver policy must remain blocked.
+- `SECURITY` policy decisions now have an explicit verifier role type; this is contract-level support only. It does not mean a live security-role membership adapter exists.
