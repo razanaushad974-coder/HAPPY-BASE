@@ -37,3 +37,34 @@ A blind import or overwrite would risk losing code on either side. The ZIP also 
 
 ## Validation limitations
 This document records a targeted comparison of the ten paths above. It is not a claim that all 379 paths have been reconciled, nor that the ZIP passes a full project build or test suite.
+
+
+## Re-review of the uploaded security-reviewed candidate
+
+A later uploaded archive was inspected separately:
+- Archive: `HAPPY-AI-WORKING-UPDATED-security-reviewed-candidate.zip`
+- SHA-256: `ab39f72492295b34a6ab663d540d9d48ae9233269000bdac2a96fc45618ef00d`
+- Entries: 362
+- ZIP integrity: PASS
+- Backup-like paths: 0
+- `supabase/.temp/` paths: 0
+- Required remediation documents: present
+
+Additional exact path checks against the current `main` tree:
+- `src/core/orchestration/engine.ts`: candidate blob `64c1a276ff06bb2002148d3d8604eed01d989436`, main blob `434d3e3e64814d421ea23929fbb4f902a464e415` — DIFFERENT.
+- `src/core/execution/file-execution-adapter.ts`: candidate blob `897d1376d77f39f6430b88274ee03bc9f5288c01`, main blob `0b9d6426b337951412e15a98e65e743fd6e1161f` — DIFFERENT.
+- `src/core/execution/database-execution-adapter.ts`: candidate blob `ea40bc89b00c152352442134df975f19cdc7d10e`, main blob `f0299118e43d504f884bd0ee7c20576d9e3cc364` — DIFFERENT.
+- `src/core/execution/workspace-code-executor.ts`: candidate blob `0ac49aa7e9bb815e348880eb57c8d2581dc68c13`, main blob `a9ffef6008b4e476a91ed8e821f5b268ef315c6d` — DIFFERENT.
+- The approval decision route, approval mutation service, tenant resolver, runtime auth context, and expiry policy remain candidate-only paths (404 on `main`).
+
+The re-review confirms material source divergence. It still does not constitute a complete 362-path reconciliation; do not import the archive as a wholesale replacement.
+
+## Re-review validation
+
+- TypeScript/TSX syntax transpilation: 329 files checked, 0 syntax diagnostics.
+- Focused approval policy/mutation harness: 8 assertions passed (default/configured TTL, invalid TTL fallback, expired transition and audit, normal approval, malformed expiry fail-closed, legacy expiry fallback, duplicate-decision rejection).
+- High-confidence secret-pattern scan: 0 matches for private-key headers, AWS access-key IDs, GitHub token patterns, JWT-shaped strings, or literal service-role key assignments. This is not a guarantee that no secrets exist.
+- `npm ci --ignore-scripts --no-audit --no-fund`: timed out; dependencies incomplete.
+- Full `tsc --noEmit`: blocked by missing type packages after incomplete install.
+- Full lint, Vitest suite, npm audit, and production build: NOT RUN.
+- Candidate and GitHub source were not merged; no DB/migration or production changes.
