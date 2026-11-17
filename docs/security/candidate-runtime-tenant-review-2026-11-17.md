@@ -180,3 +180,23 @@ Required next steps before release:
 4. Add negative tests proving a forged `approved: true` cannot create an APPROVED record or execute a FILE/DATABASE/SHELL mutation.
 
 No source code was changed, no test was executed, and no database or deployment action was performed for this finding.
+
+
+## Additional baseline review — workspace symlink escape (C-08)
+
+Severity: HIGH if FILE execution is reachable against a workspace containing attacker-controlled symlinks; exposure depends on workspace write access and execution call-site controls.
+
+Static evidence in GitHub `main` `src/core/execution/workspace-code-executor.ts`:
+- `resolveSafePath()` resolves the requested relative path and checks only that the resulting lexical path begins with the configured workspace root prefix.
+- It does not resolve the real path of existing ancestors or reject symlinks/junctions/hard links.
+- CREATE/MODIFY/COPY/MOVE/RENAME/DELETE subsequently operate on the resolved path using ordinary filesystem calls.
+
+A pre-existing symlink inside the workspace can therefore point outside the workspace while its lexical path still passes the prefix check. For example, a path like `linked-dir/target.txt` can resolve lexically below the root even when `linked-dir` is a symlink to an external directory. This is a static path-validation bypass scenario; no filesystem exploit was executed.
+
+Required remediation:
+1. Preserve the candidate's stronger realpath/ancestor/symlink checks, but close the remaining validation-to-use TOCTOU window with directory-handle-relative operations / no-follow semantics where supported, or isolate execution in a filesystem sandbox that prevents writes outside the workspace.
+2. Validate both source and destination paths for COPY/MOVE/RENAME and revalidate after parent-directory creation.
+3. Add platform-specific tests for POSIX symlinks, Windows junctions/reparse points, hard links, missing nested parents, and concurrent path replacement.
+4. Keep FILE mutations disabled or approval-gated until the execution boundary and caller authorization are verified.
+
+No source code was changed, no filesystem exploit or test was executed, and no deployment action was performed for this finding.
