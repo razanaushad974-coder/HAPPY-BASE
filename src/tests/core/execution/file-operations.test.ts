@@ -1,3 +1,4 @@
+import type { ExecutionRequest } from "../../../core/execution/types";
 import {
   existsSync,
   mkdtempSync,
@@ -27,10 +28,10 @@ function assert(
 
 function request(
   action: string,
-  targetReference: object,
+  targetReference: ExecutionRequest["targetReference"],
   input: unknown,
-  overrides: Record<string, unknown> = {},
-): any {
+  overrides: Partial<ExecutionRequest> = {},
+): ExecutionRequest {
   return {
     id: `file-op-${action.toLowerCase()}`,
     taskId: "task-file-ops",
@@ -39,7 +40,7 @@ function request(
     action,
     input,
     targetReference,
-    requiresApproval: false,
+    requiresApproval: action !== "READ",
     approved: true,
     risk: "LOW",
     createdAt: new Date().toISOString(),
@@ -266,7 +267,25 @@ async function main(): Promise<void> {
       "MODIFY content mismatch.",
     );
 
-    // DELETE
+    // DELETE must not bypass approval by lowering the planner flag.
+    const deleteWithoutApproval = await adapter.execute(
+      request(
+        "DELETE",
+        target,
+        { operation: "DELETE", path: "moved/final.ts" },
+        { requiresApproval: false, approved: false },
+      ),
+    );
+    assert(
+      deleteWithoutApproval.status === "WAITING_APPROVAL",
+      "DELETE without explicit approval was not blocked.",
+    );
+    assert(
+      existsSync(join(root, "moved", "final.ts")),
+      "Unapproved DELETE changed the file.",
+    );
+
+    // Approved DELETE
     const del =
       await adapter.execute(
         request(

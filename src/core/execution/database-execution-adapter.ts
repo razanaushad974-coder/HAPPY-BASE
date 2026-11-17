@@ -114,6 +114,26 @@ function parseInput(
     return undefined;
   }
 
+  if (input.action === "DB_TRANSACTION") {
+    if (!Array.isArray(input.transaction) || input.transaction.length === 0) {
+      return undefined;
+    }
+    const allowedActions = new Set([
+      "DB_SELECT", "DB_QUERY", "DB_INSERT", "DB_UPDATE", "DB_DELETE",
+    ]);
+    for (const operation of input.transaction) {
+      if (
+        !operation ||
+        typeof operation !== "object" ||
+        !allowedActions.has(operation.action) ||
+        typeof operation.resource !== "string" ||
+        !operation.resource.trim()
+      ) {
+        return undefined;
+      }
+    }
+  }
+
   return input as DatabaseExecutionInput;
 }
 

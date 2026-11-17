@@ -3,6 +3,8 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -83,6 +85,48 @@ function main(): void {
       escaped.status === "FAILED",
       "Path traversal was not blocked.",
     );
+
+    const outsideRoot = mkdtempSync(join(tmpdir(), "happy-outside-"));
+    try {
+      const outsideSecret = join(outsideRoot, "secret.txt");
+      writeFileSync(outsideSecret, "outside", "utf8");
+      symlinkSync(outsideRoot, join(root, "linked"), "dir");
+      const symlinkEscape = executor.execute([
+        {
+          action: "CREATE",
+          path: "linked/created-outside.txt",
+          content: "must-not-write",
+        },
+      ]);
+      assert(
+        symlinkEscape.status === "FAILED",
+        "Workspace symlink escape was not rejected.",
+      );
+      assert(
+        !existsSync(join(outsideRoot, "created-outside.txt")),
+        "Symlink escape created a file outside the workspace.",
+      );
+
+      const danglingTarget = join(outsideRoot, "not-created-yet");
+      symlinkSync(danglingTarget, join(root, "dangling-link"), "dir");
+      const danglingEscape = executor.execute([
+        {
+          action: "CREATE",
+          path: "dangling-link/new-file.txt",
+          content: "must-not-write",
+        },
+      ]);
+      assert(
+        danglingEscape.status === "FAILED",
+        "Dangling symlink escape was not rejected.",
+      );
+      assert(
+        !existsSync(join(danglingTarget, "new-file.txt")),
+        "Dangling symlink created a file outside the workspace.",
+      );
+    } finally {
+      rmSync(outsideRoot, { recursive: true, force: true });
+    }
 
     const missingModify =
       executor.execute([

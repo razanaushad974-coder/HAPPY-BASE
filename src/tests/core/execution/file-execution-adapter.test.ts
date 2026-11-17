@@ -60,7 +60,7 @@ async function main(): Promise<void> {
         action: "CREATE",
         input: {},
         targetReference: target,
-        requiresApproval: false,
+        requiresApproval: true,
         approved: true,
         risk: "LOW",
         createdAt: new Date().toISOString(),
@@ -83,10 +83,15 @@ async function main(): Promise<void> {
               content:
                 "export const fileAdapter = true;\n",
             },
+            {
+              action: "CREATE",
+              path: "src/file-adapter-second.ts",
+              content: "export const second = true;\n",
+            },
           ],
         },
         targetReference: target,
-        requiresApproval: false,
+        requiresApproval: true,
         approved: true,
         risk: "LOW",
         createdAt: new Date().toISOString(),
@@ -113,6 +118,10 @@ async function main(): Promise<void> {
       readFileSync(file, "utf8") ===
         "export const fileAdapter = true;\n",
       "FILE adapter output mismatch.",
+    );
+    assert(
+      existsSync(join(root, "src", "file-adapter-second.ts")),
+      "FILE adapter did not execute every supplied change.",
     );
 
     const approval =
