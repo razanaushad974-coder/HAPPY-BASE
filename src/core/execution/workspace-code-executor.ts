@@ -83,8 +83,22 @@ export class WorkspaceCodeExecutor {
     let current = root;
     for (const segment of segments) {
       current = resolve(current, segment);
-      if (!existsSync(current)) continue;
-      const stat = lstatSync(current);
+      let stat;
+      try {
+        // lstat also detects dangling symlinks; existsSync follows the link
+        // and incorrectly reports false when its target does not exist.
+        stat = lstatSync(current);
+      } catch (error) {
+        if (
+          error &&
+          typeof error === "object" &&
+          "code" in error &&
+          error.code === "ENOENT"
+        ) {
+          continue;
+        }
+        throw error;
+      }
       if (stat.isSymbolicLink()) {
         throw new Error(`Workspace symlink paths are not allowed: ${relativePath}`);
       }
