@@ -56,3 +56,20 @@ Static review of that archive found:
 - Keep the current founder-only gate until a trusted membership/role mapping is implemented. Do not silently allow ADMIN or SECURITY based on client fields.
 - Implement multi-approver as a true quorum with distinct approvers and transactional threshold enforcement; never treat it as one role.
 - Refresh the bundled source from the current canonical working tree before applying these changes. The 2026-11-06 archive is a review artifact, not proof of current deployment state.
+
+
+## Follow-up review of uploaded HAPPY working source (2026-11-17)
+
+A later user-uploaded source set was inspected. The 2026-11-16 `HAPPY-BASE-happy-supabase-auth-tenant-foundation.zip` is a separate foundation snapshot: it contains the core approval verifier but does not contain the Supabase decision route or the `persist-decision.ts` runtime mutation. The complete `HAPPY-AI-WORKING-UPDATED (2).zip` contains those runtime paths and the canonical tenant resolver. Its matching target-file hashes were identical to the unsuffixed `HAPPY-AI-WORKING-UPDATED.zip` in the upload set.
+
+A standalone remediation archive was prepared from that working-source ZIP:
+
+- New pending approvals receive an expiry. Default TTL is 24 hours; a positive integer `HAPPY_APPROVAL_TTL_MS` overrides it.
+- The mutation layer checks expiry. Expired approvals transition to `EXPIRED` and append `APPROVAL_EXPIRED`; the requested decision is not applied and execution is not resumed.
+- Legacy pending records without `expiresAt` derive a bounded expiry from `createdAt`; malformed expiry/creation timestamps fail closed without mutation.
+- The decision route resolves the existing tenant from the authenticated access token with `allowProvisioning: false`, checks that the tenant user matches the authenticated user, and no longer bootstraps file-backed `org-*` / `workspace-*` IDs.
+- Founder-only authorization remains in place. ADMIN, SECURITY, and MULTI_APPROVER remain blocked pending a trusted role registry / quorum implementation.
+
+Regression tests for the mutation, expiry policy, and route contract passed using TypeScript transpilation plus Node execution. A full `npm ci` exceeded the execution timeout, so a full project typecheck, lint, Vitest suite, dependency audit, and build have not been claimed.
+
+**Important repository boundary:** the uploaded working-source project is not the same tree as this PR's current Next.js shell. The PR branch does not contain `src/app/api/approvals/decision/route.ts` or the related HAPPY runtime modules. Therefore the standalone archive `HAPPY-AI-WORKING-UPDATED-security-fixes.zip` and patch file were prepared for the uploaded source project, but these runtime changes have **not** been committed to this PR branch, merged, deployed, or applied to Supabase. The source ZIP is not independently verified as the currently deployed application.
