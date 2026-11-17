@@ -34,3 +34,25 @@ The repository currently has no configured authentication provider, durable appr
 - `FOUNDER`, `ADMIN`, and `SECURITY` are supported single-approver role requirements by the core verifier contract. The authorization adapter must resolve each role from current trusted membership data in the exact tenant scope.
 - `MULTI_APPROVER` is a quorum requirement, not a role. It is deliberately not accepted by `PipelineApprovalRole` and must never be mapped to a single founder/admin/security approval. A quorum implementation needs a separate append-only decision table, distinct approver identities, a configured threshold, and a transaction that changes the request to `APPROVED` only when the threshold is reached. Until that exists, multi-approver policy must remain blocked.
 - `SECURITY` policy decisions now have an explicit verifier role type; this is contract-level support only. It does not mean a live security-role membership adapter exists.
+
+
+## Review of bundled HAPPY source snapshot (2026-11-06 archive)
+
+The repository also contains `HAPPY-AI-SOURCE-REVIEW.zip`. This archive is a separate source snapshot dated 2026-11-06; it is not the same tree as the small Next.js shell checked out at the repository root, and it must not be assumed to be the current deployed source without a fresh sync.
+
+Static review of that archive found:
+
+1. **Supabase Auth and decision API exist in the archive.** `src/core/auth/supabase-runtime-context.ts` uses Supabase `getClaims()` plus `getSession()`; `src/app/api/approvals/decision/route.ts` exposes GET/POST and uses the authenticated server client. The route does not use a service-role key.
+2. **Approval durability exists, but as a runtime snapshot.** Approval state and its audit event are changed in `happy_runtime_snapshots.state`; `saveIfVersion` updates by both `scope_key` and expected `version`, providing optimistic concurrency control. There is no dedicated normalized approval/decision table in the bundled migrations.
+3. **Authorization is founder-only.** The route resolves the authenticated user against server env `HAPPY_FOUNDER_USER_ID`. `ADMIN`, `SECURITY`, and `MULTI_APPROVER` levels are explicitly rejected with `503 APPROVER_REGISTRY_NOT_YET_CONNECTED`. This is fail-closed, not general role authorization.
+4. **Expiry is not enforced in the archive.** `ApprovalRequest.expiresAt` is optional in the type, but there is no runtime expiry check in `applyApprovalDecision` or the decision route. The function checks only that the current status is pending. An expired pending approval can therefore still be decided.
+5. **First-run tenant scope mismatch is present in the archive.** The decision route calls `createAuthenticatedWorkspaceState`, which uses the file-backed tenant registry. Its bootstrap fallback creates IDs with `org-${randomUUID()}` and `workspace-${randomUUID()}`; the Supabase runtime snapshot adapter requires UUID-formatted organization/workspace/user IDs before loading. The route does not call `resolveCanonicalSupabaseTenant`. A newly bootstrapped file-backed tenant can therefore fail before approval state is loaded with `INVALID_SUPABASE_SCOPE`, unless the registry already contains canonical UUIDs.
+6. **Membership schema exists but is not the approval authorizer.** The migrations define organization/workspace membership with `owner/admin/member` roles and RLS helper functions. The decision route does not consult those membership roles; it uses the single configured founder identity.
+
+### Required fixes before claiming production-complete approvals
+
+- Add expiry validation to the decision mutation itself (not only UI): reject malformed/expired `expiresAt` before mutating state, and persist an explicit `EXPIRED` state/audit result through a safe state transition.
+- Resolve canonical Supabase tenant IDs from the authenticated access token in the approval route, with provisioning disabled for read/decision paths unless a separate approved provisioning flow is invoked. Do not pass file-generated prefixed IDs to the UUID-only snapshot adapter.
+- Keep the current founder-only gate until a trusted membership/role mapping is implemented. Do not silently allow ADMIN or SECURITY based on client fields.
+- Implement multi-approver as a true quorum with distinct approvers and transactional threshold enforcement; never treat it as one role.
+- Refresh the bundled source from the current canonical working tree before applying these changes. The 2026-11-06 archive is a review artifact, not proof of current deployment state.
