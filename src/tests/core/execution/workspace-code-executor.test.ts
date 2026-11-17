@@ -106,6 +106,24 @@ function main(): void {
         !existsSync(join(outsideRoot, "created-outside.txt")),
         "Symlink escape created a file outside the workspace.",
       );
+
+      const danglingTarget = join(outsideRoot, "not-created-yet");
+      symlinkSync(danglingTarget, join(root, "dangling-link"), "dir");
+      const danglingEscape = executor.execute([
+        {
+          action: "CREATE",
+          path: "dangling-link/new-file.txt",
+          content: "must-not-write",
+        },
+      ]);
+      assert(
+        danglingEscape.status === "FAILED",
+        "Dangling symlink escape was not rejected.",
+      );
+      assert(
+        !existsSync(join(danglingTarget, "new-file.txt")),
+        "Dangling symlink created a file outside the workspace.",
+      );
     } finally {
       rmSync(outsideRoot, { recursive: true, force: true });
     }
