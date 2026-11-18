@@ -5,14 +5,14 @@
 - Uploaded archive: `HAPPY-AI-WORKING-UPDATED-security-reviewed-candidate.zip`
 - SHA-256: `ab39f72492295b34a6ab663d540d9d48ae9233269000bdac2a96fc45618ef00d`
 - Archive entries: 362; ZIP integrity check: PASS.
-- GitHub `main` tree inspected at `5ac91e870f2fc4a79d57a75d55eab5bcb099a1d1` (236 tree entries; not truncated).
-- Candidate is not a drop-in replacement for `main`. This pass hash-compared 17 selected overlapping files: 12 differ and 5 match. The complete 362-path matrix remains outstanding.
+- GitHub `main` tree inspected at `5ac91e870f2fc4a79d57a75d55eab5bcb099a1d1` (179 blobs; recursive tree not truncated).
+- Candidate is not a drop-in replacement for `main`. The complete path inventory found 177 shared paths, 185 candidate-only paths, and 2 main-only paths. A complete Git blob hash comparison of all 177 shared paths found 164 content-different files and 13 byte-identical files. See `candidate-main-complete-path-inventory-2026-11-18.md` and `candidate-main-content-hash-matrix-2026-11-18.md`.
 - TypeScript syntax transpilation: 329 TS/TSX files, zero syntax diagnostics (TypeScript 5.8.3 transpile-only). This is not a semantic typecheck.
 - Full dependency installation, typecheck, lint, Vitest, npm audit, and production build were not completed in this pass. Candidate has no `node_modules`; its own release note records the previous `npm ci` attempt timed out.
 
 ## Confirmed source alignment
 
-Selected candidate-vs-`main` content-hash results:
+The complete 177-path content hash comparison is recorded in `candidate-main-content-hash-matrix-2026-11-18.md`. Selected examples:
 
 | Path | Result |
 |---|---|
