@@ -97,6 +97,7 @@ function digestOperation(
   // included verbatim in the digest; it is never copied into grant metadata.
   const canonical = JSON.stringify({
     requestId: request.id,
+    requestAction: request.action,
     taskId: request.taskId,
     missionId: request.missionId,
     capability: request.capability,
@@ -137,6 +138,7 @@ implements FileMutationAuthorizer {
     try {
       if (
         request.capability !== "FILE" ||
+        request.action !== operation.action ||
         operation.action === "READ" ||
         !request.id.trim() ||
         !request.taskId.trim() ||
