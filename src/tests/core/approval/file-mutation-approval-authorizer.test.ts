@@ -262,18 +262,13 @@ async function main(): Promise<void> {
       destinationPath: copyOperation.destinationPath,
     },
   };
+  let copyBinding!: FileMutationGrantBinding;
   const copyCapture = new PersistedFileMutationAuthorizer(
     { async getContext() { return context; } },
     {
       async getApprovedGrant(_scope, binding) {
-        return {
-          ...approvedGrant,
-          ...binding,
-          operation: "COPY",
-          sourcePath: copyOperation.path,
-          destinationPath: copyOperation.destinationPath!,
-          inputDigest: binding.inputDigest,
-        };
+        copyBinding = binding;
+        return { ...approvedGrant, ...binding };
       },
       async consumeApprovedGrant() { return true; },
     },
@@ -284,11 +279,9 @@ async function main(): Promise<void> {
     await copyCapture.authorize(copyRequest, copyOperation),
     "Valid COPY grant binding was rejected.",
   );
-  const copyGrantBinding = {
+  const copyGrantBinding: PersistedFileMutationGrant = {
     ...approvedGrant,
-    operation: "COPY" as const,
-    sourcePath: copyOperation.path,
-    destinationPath: copyOperation.destinationPath!,
+    ...copyBinding,
   };
   const copyHarness = makeHarness({
     grant: copyGrantBinding,
