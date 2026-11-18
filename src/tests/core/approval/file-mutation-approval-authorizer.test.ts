@@ -210,6 +210,19 @@ async function main(): Promise<void> {
   });
   await expectDenied(actorOutsideWorkspace.authorizer, request, operation, "Actor without workspace membership was accepted.");
 
+  const actorOutsideOrganization = makeHarness({
+    context: {
+      ...context,
+      actor: { ...context.actor, organizationIds: [] },
+    },
+  });
+  await expectDenied(
+    actorOutsideOrganization.authorizer,
+    request,
+    operation,
+    "Actor without organization membership was accepted.",
+  );
+
   const readRequest: ExecutionRequest = { ...request, action: "READ" };
   await expectDenied(
     makeHarness().authorizer,
