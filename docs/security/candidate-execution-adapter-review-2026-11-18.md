@@ -58,6 +58,39 @@ Required remediation:
 4. Compute approval requirements server-side; callers must not be able to set `requiresApproval: false`.
 5. Add direct-adapter tests for false/false, false/true, true/true, expired/replayed grants, tenant mismatch, target mismatch, changed input and concurrent consumption.
 
+## HIGH — safe-shell approval is read from the command input itself
+
+Evidence:
+- `src/core/execution/safe-shell-adapter.ts` copies `input.approved` from `request.input` into the policy request (lines 105–145).
+- `src/core/execution/safe-shell-policy.ts` permits non-read-only commands when `request.approved` is truthy (lines 240–255).
+- The adapter's `canExecute()` and `execute()` both evaluate that parsed input; neither validates a persisted approval record or a server-owned authorization grant (adapter lines 166–184 and 215–243).
+- The generic execution request also exposes caller-controlled `approved` and `requiresApproval` fields (see the preceding approval-authority finding).
+
+Impact:
+The shell policy's approval signal is supplied inside the command payload being authorized. A caller able to construct the execution request can forge that field. The separate `HAPPY_ENABLE_SAFE_SHELL=true` feature flag is a useful deployment gate, but it does not make the approval signal trustworthy once the adapter is enabled. No shell command was executed during this review.
+
+Required remediation:
+1. Remove `approved` from `SafeShellRequest` and all user/task-provided shell input.
+2. Require an injected server-side authorizer for every non-read-only command; bind the grant to the exact executable, normalized argument vector, working directory, tenant, actor, expiry and one-time consumption.
+3. Keep the feature flag disabled until the authorizer is wired in the production composition root.
+4. Add forged-input, replay, changed-argument, tenant-mismatch and concurrent-consumption tests.
+
+## MEDIUM — generic database UPDATE/DELETE can be constructed without a filter
+
+Evidence:
+- `src/core/database/supabase-database-provider.ts` accepts a generic table/resource name after identifier validation and performs UPDATE/DELETE against that resource (lines 21–33, 251–286 and 298–333).
+- The UPDATE and DELETE query builders add equality predicates only when `input.filter` is present; there is no fail-closed requirement for a non-empty filter before executing the mutation.
+- The provider authenticates the bearer token with Supabase and checks that an optional supplied `scope.userId` matches the authenticated user, but does not independently resolve organization/workspace membership in this provider (lines 109–160). Row-level security remains the effective data boundary for the selected table.
+
+Impact:
+A malformed or overly broad mutation can affect every row visible to that user's RLS policies in the selected table. Whether this crosses tenant boundaries depends on each target table's RLS policies; this review does not claim a demonstrated cross-tenant access. A missing filter should not be treated as a safe no-op.
+
+Required remediation:
+1. Reject UPDATE and DELETE unless a server-generated, validated, non-empty predicate is present.
+2. Restrict the generic resource selector to an explicit table/action registry; do not let task input select arbitrary tables.
+3. Resolve and verify organization/workspace membership in the trusted provider layer in addition to relying on table RLS.
+4. Add tests for empty/missing filters, broad predicates, wrong workspace membership, tables with weak/no RLS and attempted cross-tenant access.
+
 ## MEDIUM — workspace path validation retains a time-of-check/time-of-use window
 
 Evidence:
