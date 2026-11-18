@@ -155,12 +155,12 @@ async function main(): Promise<void> {
   tenantAllowed = false;
   assert(!(await authorizer.authorize(request, operation)), "Mismatched tenant context was accepted.");
 
-  const alteredRequest = {
-    ...request,
-    input: { operation: "CREATE", path: "notes/approved.txt", content: "tampered content" },
+  const alteredOperation: WorkspaceFileOperationRequest = {
+    ...operation,
+    content: "tampered content",
   };
   tenantAllowed = true;
-  assert(!(await authorizer.authorize(alteredRequest, operation)), "Changed request content reused the old grant.");
+  assert(!(await authorizer.authorize(request, alteredOperation)), "Changed file content reused the old grant.");
 
   const brokenStoreAuthorizer = new PersistedFileMutationAuthorizer(
     { async getContext() { return context; } },
