@@ -241,6 +241,64 @@ async function main(): Promise<void> {
     operation,
     "Changed task reused the old grant.",
   );
+  await expectDenied(
+    makeHarness().authorizer,
+    { ...request, missionId: "mission-2" },
+    operation,
+    "Changed mission reused the old grant.",
+  );
+
+  const copyOperation: WorkspaceFileOperationRequest = {
+    action: "COPY",
+    path: "notes/source.txt",
+    destinationPath: "archive/source.txt",
+  };
+  const copyRequest: ExecutionRequest = {
+    ...request,
+    action: "COPY",
+    input: {
+      operation: "COPY",
+      path: copyOperation.path,
+      destinationPath: copyOperation.destinationPath,
+    },
+  };
+  const copyCapture = new PersistedFileMutationAuthorizer(
+    { async getContext() { return context; } },
+    {
+      async getApprovedGrant(_scope, binding) {
+        return {
+          ...approvedGrant,
+          ...binding,
+          operation: "COPY",
+          sourcePath: copyOperation.path,
+          destinationPath: copyOperation.destinationPath!,
+          inputDigest: binding.inputDigest,
+        };
+      },
+      async consumeApprovedGrant() { return true; },
+    },
+    { async hasRequiredRole() { return true; } },
+    () => now,
+  );
+  assert(
+    await copyCapture.authorize(copyRequest, copyOperation),
+    "Valid COPY grant binding was rejected.",
+  );
+  const copyGrantBinding = {
+    ...approvedGrant,
+    operation: "COPY" as const,
+    sourcePath: copyOperation.path,
+    destinationPath: copyOperation.destinationPath!,
+  };
+  const copyHarness = makeHarness({
+    grant: copyGrantBinding,
+  });
+  await expectDenied(
+    copyHarness.authorizer,
+    copyRequest,
+    { ...copyOperation, destinationPath: "archive/other.txt" },
+    "Changed destination path reused the old grant.",
+  );
 
   const lookupFailure = makeHarness({ failLookup: true });
   await expectDenied(lookupFailure.authorizer, request, operation, "Grant lookup outage did not fail closed.");
