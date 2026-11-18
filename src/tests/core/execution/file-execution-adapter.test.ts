@@ -93,8 +93,8 @@ async function main(): Promise<void> {
       });
 
     assert(
-      result.status === "COMPLETED",
-      "FILE execution did not complete.",
+      result.status === "WAITING_APPROVAL",
+      "Caller-controlled approved=true bypassed the default-deny file mutation gate.",
     );
 
     const file =
@@ -105,14 +105,52 @@ async function main(): Promise<void> {
       );
 
     assert(
-      existsSync(file),
-      "FILE adapter did not create the file.",
+      !existsSync(file),
+      "Unverified FILE mutation changed the workspace.",
     );
 
+    const authorizedAdapter =
+      new FileExecutionAdapter(
+        executor,
+        {
+          async authorize(request, operation) {
+            return (
+              request.id === "file-authorized-test" &&
+              operation.action === "CREATE" &&
+              operation.path === "src/file-adapter-test.ts"
+            );
+          },
+        },
+      );
+
+    const authorizedResult =
+      await authorizedAdapter.execute({
+        id: "file-authorized-test",
+        taskId: "task-file",
+        missionId: "mission-file",
+        capability: "FILE",
+        action: "CREATE",
+        input: {
+          operation: "CREATE",
+          path: "src/file-adapter-test.ts",
+          content: "export const fileAdapter = true;\\n",
+        },
+        targetReference: target,
+        requiresApproval: true,
+        approved: true,
+        risk: "HIGH",
+        createdAt: new Date().toISOString(),
+      });
+
     assert(
-      readFileSync(file, "utf8") ===
-        "export const fileAdapter = true;\n",
-      "FILE adapter output mismatch.",
+      authorizedResult.status === "COMPLETED",
+      "Injected server authorizer could not authorize a file mutation.",
+    );
+    assert(
+      existsSync(file) &&
+        readFileSync(file, "utf8") ===
+          "export const fileAdapter = true;\\n",
+      "Authorized FILE mutation output mismatch.",
     );
 
     const approval =
@@ -151,7 +189,7 @@ async function main(): Promise<void> {
     console.log({
       fileTargetSupported: true,
       fileCapabilityAvailable: true,
-      createExecuted: true,
+      forgedApprovedFlagDenied: true,\n      defaultDenyMutationGate: true,\n      injectedAuthorizerPath: true,
       approvalGate: true,
       pathSafetyInherited: true,
       noShellExecution: true,
