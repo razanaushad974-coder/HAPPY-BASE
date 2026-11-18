@@ -133,7 +133,7 @@ async function main(): Promise<void> {
         input: {
           operation: "CREATE",
           path: "src/file-adapter-test.ts",
-          content: "export const fileAdapter = true;\\n",
+          content: "export const fileAdapter = true;\n",
         },
         targetReference: target,
         requiresApproval: true,
@@ -149,8 +149,43 @@ async function main(): Promise<void> {
     assert(
       existsSync(file) &&
         readFileSync(file, "utf8") ===
-          "export const fileAdapter = true;\\n",
+          "export const fileAdapter = true;\n",
       "Authorized FILE mutation output mismatch.",
+    );
+
+    const throwingAdapter =
+      new FileExecutionAdapter(
+        executor,
+        {
+          async authorize() {
+            throw new Error("approval store unavailable");
+          },
+        },
+      );
+
+    const exceptionResult =
+      await throwingAdapter.execute({
+        id: "file-authorizer-error-test",
+        taskId: "task-file",
+        missionId: "mission-file",
+        capability: "FILE",
+        action: "CREATE",
+        input: {
+          operation: "CREATE",
+          path: "src/authorizer-error-test.ts",
+          content: "must not be written",
+        },
+        targetReference: target,
+        requiresApproval: false,
+        approved: true,
+        risk: "HIGH",
+        createdAt: new Date().toISOString(),
+      });
+
+    assert(
+      exceptionResult.status === "WAITING_APPROVAL" &&
+        !existsSync(join(root, "src", "authorizer-error-test.ts")),
+      "Authorizer exception did not fail closed.",
     );
 
     const approval =
@@ -192,6 +227,7 @@ async function main(): Promise<void> {
       forgedApprovedFlagDenied: true,
       defaultDenyMutationGate: true,
       injectedAuthorizerPath: true,
+      authorizerExceptionFailsClosed: true,
       approvalGate: true,
       pathSafetyInherited: true,
       noShellExecution: true,
