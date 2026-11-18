@@ -120,7 +120,7 @@ async function main(): Promise<void> {
 
   // Seed the exact digest using the same canonical fields via an initial
   // lookup capture, then prove one successful consume and replay rejection.
-  let observedBinding: FileMutationGrantBinding | null = null;
+  let observedBinding!: FileMutationGrantBinding;
   const capturingAuthorizer = new PersistedFileMutationAuthorizer(
     { async getContext() { return context; } },
     {
@@ -136,11 +136,10 @@ async function main(): Promise<void> {
     () => now,
   );
   assert(await capturingAuthorizer.authorize(request, operation), "Exact grant binding should authorize.");
-  assert(observedBinding !== null, "Authorizer did not derive a binding.");
   grant = {
     ...grant,
-    ...(observedBinding as FileMutationGrantBinding),
-    inputDigest: (observedBinding as FileMutationGrantBinding).inputDigest,
+    ...observedBinding,
+    inputDigest: observedBinding.inputDigest,
   };
 
   assert(await authorizer.authorize(request, operation), "Valid persisted grant was rejected.");
