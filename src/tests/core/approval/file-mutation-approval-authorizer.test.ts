@@ -202,6 +202,22 @@ async function main(): Promise<void> {
   });
   await expectDenied(wrongApprover.authorizer, request, operation, "Mismatched approver was accepted.");
 
+  const actorOutsideWorkspace = makeHarness({
+    context: {
+      ...context,
+      actor: { ...context.actor, workspaceIds: [] },
+    },
+  });
+  await expectDenied(actorOutsideWorkspace.authorizer, request, operation, "Actor without workspace membership was accepted.");
+
+  const readRequest: ExecutionRequest = { ...request, action: "READ" };
+  await expectDenied(
+    makeHarness().authorizer,
+    readRequest,
+    { ...operation, action: "READ" },
+    "READ was incorrectly accepted as a mutation grant.",
+  );
+
   const wrongTenant = makeHarness({
     context: { ...context, workspaceId: "other-workspace" },
   });
