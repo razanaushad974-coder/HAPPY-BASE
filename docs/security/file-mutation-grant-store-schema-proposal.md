@@ -6,7 +6,9 @@
 
 - The connected Supabase project is `razanaushad974PANDA` (`hsuxeebljhjwyxeuztzz`), PostgreSQL 17.6.
 - Read-only table discovery returned no tables in `public` and no migration history rows for this project.
-- The current Git branch `security/file-mutation-authorizer` does not contain the candidate's Supabase runtime/session composition root or tenant resolver.
+- The PR #8 base branch `security/file-mutation-authorizer` does not contain the candidate's Supabase runtime/session composition root or tenant resolver.
+- A separate branch, `happy/supabase-auth-tenant-foundation`, does contain a cookie-based server client and `getVerifiedIdentity()` based on Supabase `auth.getClaims()`. It does **not** contain a canonical organization/workspace membership resolver, durable tenant schema, grant store, or runtime composition wiring.
+- That auth-foundation branch is **diverged** from `security/file-mutation-authorizer` (22 commits ahead, 8 behind at inspection). It must not be merged/rebased into PR #8 blindly; its app-route and package changes need a separate conflict/security review first.
 - Therefore this proposal deliberately does not assume existing `organizations`, `workspaces`, or `workspace_members` FK names/types. Tenant IDs are stored as text until the canonical schema is reconciled.
 - No SQL was executed against the project. No migration was applied.
 
@@ -134,6 +136,6 @@ The Supabase JS query builder must express this as one UPDATE request with all e
 
 - Confirm the connected Supabase project is the intended HAPPY environment; the inspected project has no public tables or migration records.
 - Reconcile canonical organization/workspace ID types and membership table/role schema.
-- Add a real authenticated server context provider and server-only service client on a branch that contains the runtime routes.
+- Integrate the verified Supabase identity helper from the auth-foundation work only after reconciling its diverged branch with the selected execution/runtime branch; add a canonical tenant-membership resolver and server-only service client. `getVerifiedIdentity()` alone proves the user identity, not organization/workspace membership.
 - Implement grant create/approve/revoke/get/consume store methods and test them against a disposable Supabase branch or local Postgres.
 - Generate the migration via `supabase migration new`, review it, run Supabase security advisors and RLS tests, then request explicit approval before applying anywhere.
