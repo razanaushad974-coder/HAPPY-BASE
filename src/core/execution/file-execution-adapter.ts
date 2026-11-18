@@ -126,6 +126,18 @@ function extractOperation(
   return null;
 }
 
+/**
+ * A server-owned authorizer must independently validate a persisted approval
+ * against the authenticated actor, tenant, request, operation, and target.
+ * Never implement this by trusting ExecutionRequest.approved.
+ */
+export interface FileMutationAuthorizer {
+  authorize(
+    request: ExecutionRequest,
+    operation: WorkspaceFileOperationRequest,
+  ): Promise<boolean>;
+}
+
 export class FileExecutionAdapter
   implements ExecutionAdapter
 {
@@ -134,6 +146,7 @@ export class FileExecutionAdapter
   constructor(
     private readonly executor: WorkspaceCodeExecutor =
       new WorkspaceCodeExecutor(),
+    private readonly mutationAuthorizer?: FileMutationAuthorizer,
   ) {}
 
   status(): AdapterStatus {
@@ -204,6 +217,34 @@ export class FileExecutionAdapter
         error:
           "No valid file operation was supplied.",
       };
+    }
+
+    if (operation.action !== "READ") {
+      let authorized = false;
+
+      try {
+        authorized =
+          this.mutationAuthorizer !== undefined &&
+          await this.mutationAuthorizer.authorize(
+            request,
+            operation,
+          );
+      } catch {
+        // Authorization failures must never fall through to file mutation.
+        authorized = false;
+      }
+
+      if (!authorized) {
+        return {
+          ...baseResult(
+            request,
+            "WAITING_APPROVAL",
+            startedAt,
+          ),
+          error:
+            "File mutation requires a server-verified approval authorizer.",
+        };
+      }
     }
 
     const result =
