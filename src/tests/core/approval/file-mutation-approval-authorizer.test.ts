@@ -207,6 +207,14 @@ async function main(): Promise<void> {
   });
   await expectDenied(wrongTenant.authorizer, request, operation, "Mismatched tenant was accepted.");
 
+  // The orchestration action must agree with the extracted FILE operation.
+  await expectDenied(
+    makeHarness().authorizer,
+    { ...request, action: "MODIFY" },
+    operation,
+    "Mismatched orchestration action was accepted.",
+  );
+
   // Every operation-defining field is bound to the approval.
   await expectDenied(
     makeHarness().authorizer,
