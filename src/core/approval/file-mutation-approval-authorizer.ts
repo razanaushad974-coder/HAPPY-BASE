@@ -14,7 +14,7 @@ import type {
   WorkspaceFileOperationRequest,
 } from "../execution/workspace-code-executor";
 
-export type FileMutationApprovalRole = "FOUNDER" | "ADMIN" | "SECURITY";
+export type FileMutationApprovalRole = "FOUNDER" | "ADMIN";
 
 export interface FileMutationAuthorizationContext {
   /** Must be derived from the validated server session and trusted tenant resolver. */
