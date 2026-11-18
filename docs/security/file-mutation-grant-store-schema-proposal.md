@@ -10,6 +10,14 @@
 - Therefore this proposal deliberately does not assume existing `organizations`, `workspaces`, or `workspace_members` FK names/types. Tenant IDs are stored as text until the canonical schema is reconciled.
 - No SQL was executed against the project. No migration was applied.
 
+## Identity semantics and current limitation
+
+The current verifier deliberately requires the authenticated execution actor to be the same user recorded as the grant approver. It checks that this actor is currently a member of the organization/workspace and still holds the required role at consumption time. This is a conservative, fail-closed policy for this contract.
+
+**It does not yet support a distinct approver approving on behalf of a requester/agent that later executes under a different authenticated identity.** Do not weaken the approver equality check or trust an approver ID supplied by the execution request to enable that workflow. Supporting separate identities requires an explicit trusted identity-resolution design: the execution session must establish the executor, the persisted grant must establish the approver, and a server-side membership/role resolver must independently revalidate the approver in the same tenant at consumption time. Tests must cover executor/approver separation, revoked approver membership, revoked approver role, and cross-tenant identity substitution before that mode is enabled.
+
+Until that design is implemented, only same-actor execution is supported by this authorizer; other identity arrangements must remain blocked.
+
 ## Storage boundary
 
 Use a non-exposed `private` schema. Do not add this table to `public` or expose it through the Data API. The connected project currently reports no public tables, and Supabase's 2026 Data API default no longer automatically exposes newly created public tables; this design avoids depending on Data API exposure.
