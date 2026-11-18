@@ -189,7 +189,9 @@ async function main(): Promise<void> {
     console.log({
       fileTargetSupported: true,
       fileCapabilityAvailable: true,
-      forgedApprovedFlagDenied: true,\n      defaultDenyMutationGate: true,\n      injectedAuthorizerPath: true,
+      forgedApprovedFlagDenied: true,
+      defaultDenyMutationGate: true,
+      injectedAuthorizerPath: true,
       approvalGate: true,
       pathSafetyInherited: true,
       noShellExecution: true,
