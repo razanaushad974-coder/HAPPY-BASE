@@ -456,7 +456,7 @@ async function main(): Promise<void> {
         "The root task was not held when semantic verification could not prove completion.",
     );
     assert(
-        targetTask.data?.status === "PENDING",
+        targetTask?.data?.status === "PENDING",
         "A dependent task ran before its prerequisite passed verification.",
     );
     const restoredVerification =
