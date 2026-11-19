@@ -1,6 +1,8 @@
 import {
   resolveCanonicalTenantContext,
   type CanonicalTenantMembershipStore,
+  type OrganizationMembershipRecord,
+  type WorkspaceMembershipRecord,
 } from "../../../core/tenant/canonical-tenant-context";
 
 function assert(condition: boolean, message: string): void {
@@ -10,13 +12,13 @@ function assert(condition: boolean, message: string): void {
 async function main(): Promise<void> {
   const identity = { userId: "verified-user-1" };
   const scope = { organizationId: "org-1", workspaceId: "workspace-1" };
-  const org = {
+  const org: OrganizationMembershipRecord = {
     userId: "verified-user-1",
     organizationId: "org-1",
     status: "ACTIVE" as const,
     role: "FOUNDER",
   };
-  const workspace = {
+  const workspace: WorkspaceMembershipRecord = {
     userId: "verified-user-1",
     organizationId: "org-1",
     workspaceId: "workspace-1",
@@ -26,8 +28,8 @@ async function main(): Promise<void> {
 
   function store(
     overrides: Partial<{
-      organization: typeof org | null;
-      workspace: typeof workspace | null;
+      organization: OrganizationMembershipRecord | null;
+      workspace: WorkspaceMembershipRecord | null;
       failOrganization: boolean;
       failWorkspace: boolean;
     }> = {},
