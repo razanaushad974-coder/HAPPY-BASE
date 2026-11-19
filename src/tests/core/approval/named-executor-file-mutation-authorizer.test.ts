@@ -103,6 +103,22 @@ async function main(): Promise<void> {
   assert(currentGrant().approverUserId === "approver-B", "Persisted approver identity was not retained.");
   assert(!(await authorizer.authorize(request, operation)), "Consumed grant replay was accepted.");
 
+  // Operation tampering must not reach the atomic consume step.
+  stored = { ...currentGrant(), status: "APPROVED", consumedAt: undefined };
+  const beforeTamper = consumeCount;
+  assert(!(await authorizer.authorize(request, { ...operation, content: "tampered" })), "Changed content was accepted.");
+  assert(consumeCount === beforeTamper, "Changed content reached atomic consume.");
+  assert(!(await authorizer.authorize(request, { ...operation, path: "notes/other.txt" })), "Changed path was accepted.");
+  assert(consumeCount === beforeTamper, "Changed path reached atomic consume.");
+
+  // Concurrent callers race on the same one-time grant; exactly one wins.
+  stored = { ...currentGrant(), status: "APPROVED", consumedAt: undefined };
+  const concurrent = await Promise.all([
+    authorizer.authorize(request, operation),
+    authorizer.authorize(request, operation),
+  ]);
+  assert(concurrent.filter(Boolean).length === 1, "Concurrent grant consumption did not have exactly one winner.");
+
   // A grant for another named executor must be denied before consumption.
   stored = { ...currentGrant(), status: "APPROVED", consumedAt: undefined, executorUserId: "executor-D" };
   consumed = false;
