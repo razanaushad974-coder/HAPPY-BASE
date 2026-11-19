@@ -243,3 +243,22 @@ The candidate intentionally depends on the canonical `private.organizations`, `p
 - GitHub Actions run `44558782916` for PR #9 checked out merge commit `7c92534bfaec00dae26848544d3176796f04e6b7` and failed at the TypeScript step. The reported errors were `TS1127` / `TS1005` on line 21 of `src/core/state/async-happy-state-store.ts`.
 - Source inspection confirmed literal backslash-n characters had been written into the transaction callback expression instead of actual line breaks. Corrected the source in commit `681297f509b1515bb8bbc73aa34cce22856e17f1`.
 - The failure occurred before test, lint, audit, and build steps; those steps were skipped. The corrected head has not yet completed CI. No validation pass is claimed.
+
+
+## PostgreSQL tenant persistence adapter — 2026-11-19
+
+Added `src/core/persistence/adapters/postgres-tenant-adapter.ts` as a real PostgreSQL query/transaction adapter over an injected pool/session boundary.
+
+- Each standalone operation uses one short database transaction and one acquired connection.
+- The session provider obtains the principal from `VerifiedServerIdentityProvider`, requires exact equality with the canonical tenant scope's user ID, then sets the local database role to `authenticated` and both Supabase JWT claim settings. A mismatch is rejected before connection acquisition.
+- Reads and creates derive the row principal from `auth.uid()`; org/workspace selectors are always exact SQL predicates.
+- Updates/deletes call the SQL candidate's conditional CAS RPCs; database SQLSTATEs map to repository errors.
+- A multi-operation `transaction()` uses one connection and one PostgreSQL transaction; nested transactions use savepoints; callback/query failures roll back.
+- List queries have a hard 500-row maximum and a default limit of 100.
+- The pool login must be explicitly provisioned to `SET ROLE authenticated`; do not use `service_role`. JWT claim injection is safe only behind the trusted server identity provider and a reviewed server-only composition boundary.
+
+The adapter is not wired into provider registry or production routes. The repository still reports Supabase/Postgres NOT_YET_CONNECTED until a real pool, verified identity composition, schema ownership/grants, and real-PostgreSQL integration are established.
+
+### Contract tests and limits
+
+Added `src/tests/core/persistence/postgres-tenant-adapter.test.ts` and a CI step. It uses a fake PostgreSQL pool to verify query scoping, auth-derived identity, CAS error mapping, one-connection transactions, nested savepoints, rollback, and identity mismatch denial. This is an adapter contract test only; it is **not** a PostgreSQL engine, RLS, real JWT, or concurrency integration test. No live database was contacted.
