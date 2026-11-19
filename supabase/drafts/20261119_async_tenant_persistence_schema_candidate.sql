@@ -176,8 +176,8 @@ grant execute on function public.happy_has_active_tenant_scope(uuid, uuid)
   to authenticated;
 
 revoke all on public.happy_tenant_records from public, anon, service_role;
-grant select, insert on public.happy_tenant_records to authenticated;
-revoke update, delete on public.happy_tenant_records from authenticated;
+grant select on public.happy_tenant_records to authenticated;
+revoke insert, update, delete on public.happy_tenant_records from authenticated;
 
 -- REQUIRED ADAPTER SQL SEMANTICS (implement in a reviewed server adapter):
 --
@@ -190,7 +190,9 @@ revoke update, delete on public.happy_tenant_records from authenticated;
 --   bounded LIMIT. Never load a global table and filter in application memory.
 --
 -- CREATE:
---   INSERT with version=1; map unique_violation to RECORD_ALREADY_EXISTS.
+--   Call public.happy_create_tenant_record(...); it derives auth.uid(), locks
+--   active tenant/membership rows, inserts version 1, and maps unique_violation
+--   to RECORD_ALREADY_EXISTS. Direct authenticated INSERT is revoked.
 --
 -- UPDATE / DELETE:
 --   Direct UPDATE and DELETE grants are intentionally withheld from authenticated.
@@ -211,6 +213,109 @@ revoke update, delete on public.happy_tenant_records from authenticated;
 --   function-owner, role grants, membership-table access, and real-JWT tests
 --   have been reviewed and verified. The production adapter remains NOT_CONNECTED.
 --
+-- Serialize writes against tenant membership/status revocation. Lock order is
+-- organization -> workspace -> organization membership -> workspace membership.
+-- A concurrent status UPDATE either commits before this check (and is denied)
+-- or waits until the authorized write transaction completes.
+create or replace function public.happy_lock_active_tenant_scope(
+  p_organization_id uuid,
+  p_workspace_id uuid
+)
+returns boolean
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog
+as $lock_scope$
+declare
+  v_actor uuid;
+begin
+  v_actor := auth.uid();
+  if v_actor is null then return false; end if;
+
+  perform 1
+    from private.organizations o
+   where o.organization_id = p_organization_id
+     and o.status = 'ACTIVE'
+   for share;
+  if not found then return false; end if;
+
+  perform 1
+    from private.workspaces w
+   where w.organization_id = p_organization_id
+     and w.workspace_id = p_workspace_id
+     and w.status = 'ACTIVE'
+   for share;
+  if not found then return false; end if;
+
+  perform 1
+    from private.organization_memberships om
+   where om.organization_id = p_organization_id
+     and om.user_id = v_actor
+     and om.status = 'ACTIVE'
+   for share;
+  if not found then return false; end if;
+
+  perform 1
+    from private.workspace_memberships wm
+   where wm.organization_id = p_organization_id
+     and wm.workspace_id = p_workspace_id
+     and wm.user_id = v_actor
+     and wm.status = 'ACTIVE'
+   for share;
+  if not found then return false; end if;
+
+  return true;
+end;
+$lock_scope$;
+
+revoke all on function public.happy_lock_active_tenant_scope(uuid, uuid)
+  from public, anon, authenticated, service_role;
+
+-- Create is a SECURITY DEFINER RPC so active membership rows are locked before
+-- insert. Authenticated clients cannot bypass that check with direct INSERT.
+create or replace function public.happy_create_tenant_record(
+  p_organization_id uuid,
+  p_workspace_id uuid,
+  p_entity_type text,
+  p_record_id text,
+  p_data jsonb
+)
+returns public.happy_tenant_records
+language plpgsql
+security definer
+set search_path = pg_catalog
+as $create$
+declare
+  v_actor uuid;
+  v_record public.happy_tenant_records%rowtype;
+begin
+  v_actor := auth.uid();
+  if v_actor is null
+     or not public.happy_lock_active_tenant_scope(p_organization_id, p_workspace_id) then
+    raise exception 'TENANT_SCOPE_DENIED' using errcode = '42501';
+  end if;
+
+  if p_data is null or jsonb_typeof(p_data) <> 'object'
+     or p_record_id is null or length(btrim(p_record_id)) = 0 then
+    raise exception 'INVALID_RECORD_INPUT' using errcode = '22023';
+  end if;
+
+  insert into public.happy_tenant_records
+    (organization_id, workspace_id, user_id, entity_type, record_id, version, data)
+  values
+    (p_organization_id, p_workspace_id, v_actor, p_entity_type, p_record_id, 1, p_data)
+  returning * into v_record;
+
+  return v_record;
+end;
+$create$;
+
+revoke all on function public.happy_create_tenant_record(uuid, uuid, text, text, jsonb)
+  from public, anon, service_role;
+grant execute on function public.happy_create_tenant_record(uuid, uuid, text, text, jsonb)
+  to authenticated;
+
 -- Atomic compare-and-swap write RPCs. They derive the principal from auth.uid(),
 -- never accept user_id as a parameter, and are the only authenticated update/delete
 -- surface. Their owner/privilege model is a deployment gate documented below.
@@ -234,7 +339,7 @@ declare
 begin
   v_actor := auth.uid();
   if v_actor is null
-     or not public.happy_has_active_tenant_scope(p_organization_id, p_workspace_id) then
+     or not public.happy_lock_active_tenant_scope(p_organization_id, p_workspace_id) then
     raise exception 'TENANT_SCOPE_DENIED' using errcode = '42501';
   end if;
 
@@ -297,7 +402,7 @@ declare
 begin
   v_actor := auth.uid();
   if v_actor is null
-     or not public.happy_has_active_tenant_scope(p_organization_id, p_workspace_id) then
+     or not public.happy_lock_active_tenant_scope(p_organization_id, p_workspace_id) then
     raise exception 'TENANT_SCOPE_DENIED' using errcode = '42501';
   end if;
 
@@ -360,8 +465,8 @@ grant execute on function public.happy_delete_tenant_record(uuid, uuid, text, te
 --    reviewed owner/privilege design; do not assume it can read those tables.
 -- 3. Verify function owners, BYPASSRLS, FORCE ROW LEVEL SECURITY behavior,
 --    table grants, function grants, and auth.uid() with real user JWTs.
--- 4. Direct authenticated UPDATE/DELETE is deliberately revoked; only the
---    conditional CAS RPCs above may mutate existing records. Test cross-user,
+-- 4. Direct authenticated INSERT/UPDATE/DELETE is deliberately revoked; create
+--    and CAS RPCs lock the active tenant/membership rows before writing. Test cross-user,
 --    cross-workspace, suspended/revoked membership, duplicate create, stale CAS
 --    update/delete, concurrent writers, and rollback using disposable PostgreSQL
 --    plus actual Supabase JWT integration.
