@@ -41,16 +41,16 @@ class FakePgClient implements PgClientLike {
       throw Object.assign(new Error(code), { code });
     }
     if (sql.includes("happy_delete_tenant_record")) {
-      return { rows: [{ deleted: true } as Row], rowCount: 1 };
+      return { rows: [{ deleted: true } as unknown as Row], rowCount: 1 };
     }
     if (sql.includes("happy_update_tenant_record")) {
-      return { rows: [{ ...dbRow, version: 2, data: { goal: "updated" } } as Row], rowCount: 1 };
+      return { rows: [{ ...dbRow, version: 2, data: { goal: "updated" } } as unknown as Row], rowCount: 1 };
     }
     if (sql.includes("insert into public.happy_tenant_records")) {
-      return { rows: [dbRow as Row], rowCount: 1 };
+      return { rows: [dbRow as unknown as Row], rowCount: 1 };
     }
     if (sql.includes("from public.happy_tenant_records")) {
-      return { rows: [dbRow as Row], rowCount: 1 };
+      return { rows: [dbRow as unknown as Row], rowCount: 1 };
     }
     return { rows: [], rowCount: 0 };
   }
