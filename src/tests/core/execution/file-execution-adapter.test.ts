@@ -137,7 +137,7 @@ async function main(): Promise<void> {
         },
         targetReference: target,
         requiresApproval: true,
-        approved: true,
+        approved: false,
         risk: "HIGH",
         createdAt: new Date().toISOString(),
       });
