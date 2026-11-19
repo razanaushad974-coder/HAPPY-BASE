@@ -152,3 +152,9 @@ Reviewed `supabase/drafts/20261119_file_mutation_atomic_consume_candidate.sql` a
 - Source commit: `9a5751cb4672f472adc1127cfd3064623e151720`. The PostgreSQL workflow's PR base filter now includes `security/durable-file-mutation-grants`, matching the active platform PR base.
 - GitHub Actions run has not yet been observed for this exact head; no test pass is claimed. Vercel statuses remain build-rate-limited and are not evidence of PostgreSQL or application validation.
 - No live Supabase changes, merge, deployment, or `main` modification.
+
+
+### PostgreSQL workflow trigger wiring — 2026-11-19
+- Added `platform/full-happy-audit-and-integration` to the PostgreSQL integration workflow's push branches, so the isolated PostgreSQL fixture runs directly on this feature branch as well as its configured PR targets. Workflow commit: `01becf38a8620c144576b0961bc945511cfa4598`.
+- The available GitHub workflow-run wrapper filters to pull-request-triggered runs and does not expose push-triggered runs; no exact-head Actions result can be verified through that endpoint. Commit combined status currently exposes only Vercel build-rate-limit failures, not PostgreSQL job results. No pass is claimed.
+- No production Supabase change, merge, deployment, or `main` modification.
