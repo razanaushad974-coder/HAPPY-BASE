@@ -195,11 +195,8 @@ revoke insert, update, delete on public.happy_tenant_records from authenticated;
 --   to RECORD_ALREADY_EXISTS. Direct authenticated INSERT is revoked.
 --
 -- UPDATE / DELETE:
---   Direct UPDATE and DELETE grants are intentionally withheld from authenticated.
---   Do not expose unrestricted table writes: RLS alone cannot enforce the
---   adapter's expected-version compare-and-swap contract. Implement narrowly
---   reviewed user-JWT RPCs (or an equivalent trusted transaction boundary)
---   that derive user_id from auth.uid(), bind the full scope/key, and perform:
+--   Use the CAS RPCs defined below; they derive user_id from auth.uid(), lock
+--   the active tenant/membership rows, bind the full scope/key, and perform:
 --     UPDATE ... SET data=$data, version=version+1,
 --         updated_at=clock_timestamp()
 --      WHERE organization_id=$org AND workspace_id=$workspace
