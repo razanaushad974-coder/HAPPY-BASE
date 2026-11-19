@@ -210,6 +210,141 @@ revoke update, delete on public.happy_tenant_records from authenticated;
 --   No such RPCs are implemented by this candidate, so the production adapter
 --   remains NOT_CONNECTED until that security review and implementation exist.
 --
+-- Atomic compare-and-swap write RPCs. They derive the principal from auth.uid(),
+-- never accept user_id as a parameter, and are the only authenticated update/delete
+-- surface. Their owner/privilege model is a deployment gate documented below.
+create or replace function public.happy_update_tenant_record(
+  p_organization_id uuid,
+  p_workspace_id uuid,
+  p_entity_type text,
+  p_record_id text,
+  p_expected_version bigint,
+  p_data jsonb
+)
+returns public.happy_tenant_records
+language plpgsql
+security definer
+set search_path = pg_catalog
+as $update$
+declare
+  v_actor uuid;
+  v_record public.happy_tenant_records%rowtype;
+  v_exists boolean;
+begin
+  v_actor := auth.uid();
+  if v_actor is null
+     or not public.happy_has_active_tenant_scope(p_organization_id, p_workspace_id) then
+    raise exception 'TENANT_SCOPE_DENIED' using errcode = '42501';
+  end if;
+
+  if p_expected_version is null or p_expected_version < 1
+     or p_data is null or jsonb_typeof(p_data) <> 'object'
+     or p_record_id is null or length(btrim(p_record_id)) = 0 then
+    raise exception 'INVALID_RECORD_INPUT' using errcode = '22023';
+  end if;
+
+  update public.happy_tenant_records as r
+     set data = p_data,
+         version = r.version + 1,
+         updated_at = clock_timestamp()
+   where r.organization_id = p_organization_id
+     and r.workspace_id = p_workspace_id
+     and r.user_id = v_actor
+     and r.entity_type = p_entity_type
+     and r.record_id = p_record_id
+     and r.version = p_expected_version
+   returning r.* into v_record;
+
+  if found then
+    return v_record;
+  end if;
+
+  select exists (
+    select 1
+      from public.happy_tenant_records as r
+     where r.organization_id = p_organization_id
+       and r.workspace_id = p_workspace_id
+       and r.user_id = v_actor
+       and r.entity_type = p_entity_type
+       and r.record_id = p_record_id
+  ) into v_exists;
+
+  if v_exists then
+    raise exception 'VERSION_CONFLICT' using errcode = '40001';
+  end if;
+
+  raise exception 'RECORD_NOT_FOUND' using errcode = 'P0002';
+end;
+$update$;
+
+create or replace function public.happy_delete_tenant_record(
+  p_organization_id uuid,
+  p_workspace_id uuid,
+  p_entity_type text,
+  p_record_id text,
+  p_expected_version bigint
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = pg_catalog
+as $delete$
+declare
+  v_actor uuid;
+  v_deleted boolean;
+  v_exists boolean;
+begin
+  v_actor := auth.uid();
+  if v_actor is null
+     or not public.happy_has_active_tenant_scope(p_organization_id, p_workspace_id) then
+    raise exception 'TENANT_SCOPE_DENIED' using errcode = '42501';
+  end if;
+
+  if p_expected_version is null or p_expected_version < 1
+     or p_record_id is null or length(btrim(p_record_id)) = 0 then
+    raise exception 'INVALID_RECORD_INPUT' using errcode = '22023';
+  end if;
+
+  delete from public.happy_tenant_records as r
+   where r.organization_id = p_organization_id
+     and r.workspace_id = p_workspace_id
+     and r.user_id = v_actor
+     and r.entity_type = p_entity_type
+     and r.record_id = p_record_id
+     and r.version = p_expected_version
+  returning true into v_deleted;
+
+  if found then
+    return true;
+  end if;
+
+  select exists (
+    select 1
+      from public.happy_tenant_records as r
+     where r.organization_id = p_organization_id
+       and r.workspace_id = p_workspace_id
+       and r.user_id = v_actor
+       and r.entity_type = p_entity_type
+       and r.record_id = p_record_id
+  ) into v_exists;
+
+  if v_exists then
+    raise exception 'VERSION_CONFLICT' using errcode = '40001';
+  end if;
+
+  return false;
+end;
+$delete$;
+
+revoke all on function public.happy_update_tenant_record(uuid, uuid, text, text, bigint, jsonb)
+  from public, anon, service_role;
+revoke all on function public.happy_delete_tenant_record(uuid, uuid, text, text, bigint)
+  from public, anon, service_role;
+grant execute on function public.happy_update_tenant_record(uuid, uuid, text, text, bigint, jsonb)
+  to authenticated;
+grant execute on function public.happy_delete_tenant_record(uuid, uuid, text, text, bigint)
+  to authenticated;
+
 -- TRANSACTION:
 --   callback operations must share one PostgreSQL transaction. Independent
 --   PostgREST HTTP requests do not satisfy AsyncTenantPersistenceAdapter.transaction.
