@@ -80,6 +80,21 @@ invoke_grant() {
     COMMIT;" | grep -E '^(t|f)$' | tail -n 1
 }
 
+
+wait_for_lock_wait() {
+  local application_name="$1"
+  local attempt waiting
+  for attempt in $(seq 1 200); do
+    waiting="$(psql "$DATABASE_URL" -XqAt -c "SELECT count(*) FROM pg_stat_activity WHERE application_name='$application_name' AND wait_event_type='Lock';")"
+    if [[ "$waiting" -gt 0 ]]; then
+      return 0
+    fi
+    sleep 0.05
+  done
+  echo "FAIL: timed out waiting for PostgreSQL lock waiter: $application_name" >&2
+  return 1
+}
+
 expect_result() {
   local expected="$1" actual="$2" label="$3"
   if [[ "$actual" != "$expected" ]]; then
@@ -158,12 +173,15 @@ psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
  BEGIN;
  UPDATE private.organization_memberships SET status='REVOKED'
  WHERE organization_id='$ORG' AND user_id='$APPROVER';
- SELECT pg_sleep(1.5);
+ SELECT pg_sleep(5);
  COMMIT;" &
 revoke_pid=$!
-sleep 0.2
-actual="$(invoke_grant '10000000-0000-0000-0000-000000000009' 'revoke-race-1' "$EXECUTOR")"
+PGAPPNAME=happy-revoke-consumer invoke_grant '10000000-0000-0000-0000-000000000009' 'revoke-race-1' "$EXECUTOR" > /tmp/happy-revoke-consumer.out &
+revoke_consumer_pid=$!
+wait_for_lock_wait happy-revoke-consumer
 wait "$revoke_pid"
+wait "$revoke_consumer_pid"
+actual="$(cat /tmp/happy-revoke-consumer.out | tail -n 1)"
 expect_result f "$actual" 'revocation commits before consume'
 audit_count="$(psql "$DATABASE_URL" -XqAt -c "SELECT count(*) FROM private.file_mutation_approval_events WHERE grant_id='10000000-0000-0000-0000-000000000009';")"
 expect_result 0 "$audit_count" 'no audit on denied consume'
@@ -173,12 +191,15 @@ psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
  BEGIN;
  UPDATE private.organization_memberships SET role='MEMBER'
  WHERE organization_id='$ORG' AND user_id='$APPROVER';
- SELECT pg_sleep(1.5);
+ SELECT pg_sleep(5);
  COMMIT;" &
 downgrade_pid=$!
-sleep 0.2
-actual="$(invoke_grant '10000000-0000-0000-0000-000000000011' 'role-downgrade-race-1' "$EXECUTOR")"
+PGAPPNAME=happy-downgrade-consumer invoke_grant '10000000-0000-0000-0000-000000000011' 'role-downgrade-race-1' "$EXECUTOR" > /tmp/happy-downgrade-consumer.out &
+downgrade_consumer_pid=$!
+wait_for_lock_wait happy-downgrade-consumer
 wait "$downgrade_pid"
+wait "$downgrade_consumer_pid"
+actual="$(cat /tmp/happy-downgrade-consumer.out | tail -n 1)"
 expect_result f "$actual" 'role downgrade commits before consume'
 audit_count="$(psql "$DATABASE_URL" -XqAt -c "SELECT count(*) FROM private.file_mutation_approval_events WHERE grant_id='10000000-0000-0000-0000-000000000011';")"
 expect_result 0 "$audit_count" 'no audit on role-downgrade denied consume'
@@ -243,19 +264,22 @@ seed_grant '10000000-0000-0000-0000-000000000017' 'suspend-first-1'
 psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
  BEGIN;
  UPDATE private.organizations SET status='SUSPENDED' WHERE organization_id='$ORG';
- SELECT pg_sleep(1.5);
+ SELECT pg_sleep(5);
  COMMIT;" &
 suspend_first_pid=$!
-sleep 0.2
-actual="$(invoke_grant '10000000-0000-0000-0000-000000000017' 'suspend-first-1' "$EXECUTOR")"
+PGAPPNAME=happy-suspend-first-consumer invoke_grant '10000000-0000-0000-0000-000000000017' 'suspend-first-1' "$EXECUTOR" > /tmp/happy-suspend-first-consumer.out &
+suspend_consumer_pid=$!
+wait_for_lock_wait happy-suspend-first-consumer
 wait "$suspend_first_pid"
+wait "$suspend_consumer_pid"
+actual="$(cat /tmp/happy-suspend-first-consumer.out | tail -n 1)"
 expect_result f "$actual" 'organization suspension commits before consume'
 audit_count="$(psql "$DATABASE_URL" -XqAt -c "SELECT count(*) FROM private.file_mutation_approval_events WHERE grant_id='10000000-0000-0000-0000-000000000017';")"
 expect_result 0 "$audit_count" 'no audit after suspension-first race'
 
 # Forced reverse order: consume commits first; later suspension cannot retroactively deny it.
 seed_grant '10000000-0000-0000-0000-000000000018' 'consume-first-suspend-1'
-psql "$DATABASE_URL" -XqAt -v ON_ERROR_STOP=1 -c "
+PGAPPNAME=happy-consume-first-blocker psql "$DATABASE_URL" -XqAt -v ON_ERROR_STOP=1 -c "
  BEGIN;
  SET LOCAL ROLE authenticated;
  SET LOCAL request.jwt.claim.sub = '$EXECUTOR';
@@ -264,13 +288,15 @@ psql "$DATABASE_URL" -XqAt -v ON_ERROR_STOP=1 -c "
   'consume-first-suspend-1','task-consume-first-suspend-1','mission-consume-first-suspend-1',
   'file-consume-first-suspend-1','MODIFY','source-consume-first-suspend-1',NULL,'$DIGEST'
  );
- SELECT pg_sleep(1.5);
+ SELECT pg_sleep(5);
  COMMIT;" > /tmp/happy-txn-consume-first-suspend.out &
 consume_first_pid=$!
-sleep 0.2
-psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
- UPDATE private.organizations SET status='SUSPENDED' WHERE organization_id='$ORG';"
+PGAPPNAME=happy-consume-first-suspender psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+ UPDATE private.organizations SET status='SUSPENDED' WHERE organization_id='$ORG';" &
+suspender_pid=$!
+wait_for_lock_wait happy-consume-first-suspender
 wait "$consume_first_pid"
+wait "$suspender_pid"
 consume_first_result="$(grep -E '^(t|f)$' /tmp/happy-txn-consume-first-suspend.out | tail -n 1)"
 expect_result t "$consume_first_result" 'consume commits before later suspension'
 audit_count="$(psql "$DATABASE_URL" -XqAt -c "SELECT count(*) FROM private.file_mutation_approval_events WHERE grant_id='10000000-0000-0000-0000-000000000018' AND event_type='CONSUMED';")"
@@ -281,12 +307,15 @@ seed_grant '10000000-0000-0000-0000-000000000019' 'cancel-first-1'
 psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
  BEGIN;
  UPDATE private.execution_requests SET status='CANCELLED' WHERE request_id='cancel-first-1';
- SELECT pg_sleep(1.5);
+ SELECT pg_sleep(5);
  COMMIT;" &
 cancel_first_pid=$!
-sleep 0.2
-actual="$(invoke_grant '10000000-0000-0000-0000-000000000019' 'cancel-first-1' "$EXECUTOR")"
+PGAPPNAME=happy-cancel-first-consumer invoke_grant '10000000-0000-0000-0000-000000000019' 'cancel-first-1' "$EXECUTOR" > /tmp/happy-cancel-first-consumer.out &
+cancel_consumer_pid=$!
+wait_for_lock_wait happy-cancel-first-consumer
 wait "$cancel_first_pid"
+wait "$cancel_consumer_pid"
+actual="$(cat /tmp/happy-cancel-first-consumer.out | tail -n 1)"
 expect_result f "$actual" 'request cancellation commits before consume'
 audit_count="$(psql "$DATABASE_URL" -XqAt -c "SELECT count(*) FROM private.file_mutation_approval_events WHERE grant_id='10000000-0000-0000-0000-000000000019';")"
 expect_result 0 "$audit_count" 'no audit after cancellation-first race'
