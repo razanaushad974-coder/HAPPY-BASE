@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - main
+      - security/file-mutation-authorizer
       - happy/server-verified-pipeline-approval
     paths:
       - "src/core/approval/**"
