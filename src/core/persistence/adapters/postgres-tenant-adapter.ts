@@ -196,11 +196,10 @@ function throwMappedDatabaseError(error: unknown): never {
 }
 
 class PostgresTransactionAdapter implements AsyncTenantPersistenceAdapter {
-  private nestedTransactionSequence = 0;
-
   constructor(
     private readonly scope: CompleteTenantScope,
     private readonly client: PgQueryable,
+    private readonly savepointSequence: { value: number } = { value: 0 },
   ) {}
 
   private assertScope(scope: CompleteTenantScope): void {
@@ -339,13 +338,13 @@ class PostgresTransactionAdapter implements AsyncTenantPersistenceAdapter {
     operation: (transaction: AsyncTenantPersistenceAdapter) => Promise<T>,
   ): Promise<T> {
     this.assertScope(scope);
-    const savepoint = `happy_nested_${++this.nestedTransactionSequence}`;
+    const savepoint = `happy_nested_${++this.savepointSequence.value}`;
     await this.client.query(`SAVEPOINT ${savepoint}`);
     try {
       const result = await operation(
         new TenantBoundTransactionAdapter(
           this.scope,
-          new PostgresTransactionAdapter(this.scope, this.client),
+          new PostgresTransactionAdapter(this.scope, this.client, this.savepointSequence),
         ),
       );
       await this.client.query(`RELEASE SAVEPOINT ${savepoint}`);
