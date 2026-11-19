@@ -1,6 +1,7 @@
 import type {
   NamedExecutorContext,
   NamedExecutorContextProvider,
+  PersistedApproverMembershipProvider,
 } from "../approval/named-executor-file-mutation-authorizer";
 import type {
   ApprovalRoleAuthorizer,
@@ -132,7 +133,7 @@ export class SupabaseNamedExecutorContextProvider implements NamedExecutorContex
  * it does not infer role hierarchy or trust role strings from the JWT.
  */
 /** Resolves the persisted approver from current active tenant membership. */
-export class SupabasePersistedApproverMembershipProvider {
+export class SupabasePersistedApproverMembershipProvider implements PersistedApproverMembershipProvider {
   constructor(private readonly memberships: CanonicalTenantMembershipStore) {}
 
   async getActiveActor(
