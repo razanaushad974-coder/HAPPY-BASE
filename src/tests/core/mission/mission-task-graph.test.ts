@@ -190,6 +190,15 @@ if (mission.status !== "RUNNING") {
   throw new Error("Mission RUNNING state failed.");
 }
 
+const verifyingFirst = missionEngine.updateTaskStatus(
+  mission,
+  tasks,
+  firstReadyTask.id,
+  "VERIFYING",
+);
+mission = verifyingFirst.mission;
+tasks = verifyingFirst.tasks;
+
 const completed = missionEngine.updateTaskStatus(
   mission,
   tasks,
@@ -211,28 +220,54 @@ if (nextReady.length !== 1) {
   throw new Error("Dependency-based readiness failed.");
 }
 
-const failed = missionEngine.updateTaskStatus(
+const runningSecond = missionEngine.updateTaskStatus(
   mission,
   tasks,
+  nextReady[0].id,
+  "RUNNING",
+);
+const verifyingSecond = missionEngine.updateTaskStatus(
+  runningSecond.mission,
+  runningSecond.tasks,
+  nextReady[0].id,
+  "VERIFYING",
+);
+const failed = missionEngine.updateTaskStatus(
+  verifyingSecond.mission,
+  verifyingSecond.tasks,
   nextReady[0].id,
   "FAILED",
 );
 
-const retriableTask = failed.tasks.find(
-  (task) => task.id === nextReady[0].id,
+const retried = missionEngine.retryMissionTask(
+  failed.mission,
+  failed.tasks,
+  nextReady[0].id,
 );
-
-if (!retriableTask) {
-  throw new Error("Failed task missing.");
-}
-
-const retried = missionEngine.retryTask(retriableTask);
+const retriedTask = retried.tasks.find((task) => task.id === nextReady[0].id);
 
 if (
-  retried.status !== "PENDING" ||
-  retried.retryCount !== 1
+  retriedTask?.status !== "PENDING" ||
+  retriedTask.retryCount !== 1 ||
+  retried.mission.status !== "READY" ||
+  retried.mission.failedTaskIds.includes(nextReady[0].id)
 ) {
-  throw new Error("Task retry handling failed.");
+  throw new Error("Mission retry did not restore a consistent READY state.");
+}
+
+let invalidTransitionDenied = false;
+try {
+  missionEngine.updateTaskStatus(
+    completed.mission,
+    completed.tasks,
+    firstReadyTask.id,
+    "RUNNING",
+  );
+} catch {
+  invalidTransitionDenied = true;
+}
+if (!invalidTransitionDenied) {
+  throw new Error("A completed task was allowed to restart.");
 }
 
 console.log("Mission + task graph test: PASS");

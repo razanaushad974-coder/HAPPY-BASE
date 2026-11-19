@@ -9,6 +9,17 @@ import type {
 } from "./types";
 
 import { TaskGraphEngine } from "./task-graph";
+const ALLOWED_TASK_TRANSITIONS: Record<TaskStatus, readonly TaskStatus[]> = {
+  PENDING: ["READY", "RUNNING", "BLOCKED", "CANCELLED"],
+  READY: ["RUNNING", "BLOCKED", "CANCELLED"],
+  RUNNING: ["VERIFYING", "FAILED", "BLOCKED", "CANCELLED"],
+  VERIFYING: ["COMPLETED", "FAILED", "BLOCKED", "CANCELLED"],
+  COMPLETED: [],
+  FAILED: [],
+  BLOCKED: [],
+  CANCELLED: [],
+};
+
 
 export class MissionEngine {
   private readonly graphEngine = new TaskGraphEngine();
@@ -89,6 +100,18 @@ export class MissionEngine {
     if (!target) {
       throw new Error(`Task not found: ${taskId}`);
     }
+    if (target.missionId !== mission.id || !mission.taskIds.includes(taskId)) {
+      throw new Error(`Task ${taskId} does not belong to mission ${mission.id}.`);
+    }
+    if (target.status !== status &&
+        !ALLOWED_TASK_TRANSITIONS[target.status].includes(status)) {
+      throw new Error(
+        `Invalid task status transition: ${target.status} -> ${status}.`,
+      );
+    }
+    if (target.status === status) {
+      return { mission, tasks };
+    }
 
     const updatedTasks = tasks.map((task) =>
       task.id === taskId
@@ -153,6 +176,53 @@ export class MissionEngine {
         failedTaskIds,
         blockedTaskIds,
         progressPercent,
+        updatedAt: new Date().toISOString(),
+      },
+      tasks: updatedTasks,
+    };
+  }
+
+  retryMissionTask(
+    mission: Mission,
+    tasks: MissionTask[],
+    taskId: string,
+  ): { mission: Mission; tasks: MissionTask[] } {
+    const task = tasks.find((item) => item.id === taskId);
+    if (!task || task.missionId !== mission.id || !mission.taskIds.includes(taskId)) {
+      throw new Error(`Task ${taskId} does not belong to mission ${mission.id}.`);
+    }
+
+    const retriedTask = this.retryTask(task);
+    const updatedTasks = tasks.map((item) =>
+      item.id === taskId ? retriedTask : item,
+    );
+    const completedTaskIds = updatedTasks
+      .filter((item) => item.status === "COMPLETED")
+      .map((item) => item.id);
+    const failedTaskIds = updatedTasks
+      .filter((item) => item.status === "FAILED")
+      .map((item) => item.id);
+    const blockedTaskIds = updatedTasks
+      .filter((item) => item.status === "BLOCKED")
+      .map((item) => item.id);
+    const total = updatedTasks.length;
+
+    let status = mission.status;
+    if (failedTaskIds.length > 0) status = "FAILED";
+    else if (blockedTaskIds.length > 0) status = "BLOCKED";
+    else if (total > 0 && completedTaskIds.length === total) status = "COMPLETED";
+    else if (updatedTasks.some((item) => item.status === "RUNNING")) status = "RUNNING";
+    else if (updatedTasks.some((item) => item.status === "VERIFYING")) status = "VERIFYING";
+    else status = "READY";
+
+    return {
+      mission: {
+        ...mission,
+        status,
+        completedTaskIds,
+        failedTaskIds,
+        blockedTaskIds,
+        progressPercent: total === 0 ? 0 : Math.round((completedTaskIds.length / total) * 100),
         updatedAt: new Date().toISOString(),
       },
       tasks: updatedTasks,
