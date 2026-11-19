@@ -72,6 +72,37 @@ Evidence observed:
 8. **Provider integrations** — secrets vault, AI providers, browser worker, connectors, automation scheduler, voice/telephony, notifications, billing.
 9. **Operational readiness** — migrations, CI/E2E, observability, backups, rollback, rate limits, abuse controls, performance, accessibility, and deployment verification.
 
+
+## FILE approval SQL candidate review (design-only, 2026-11-19)
+
+Reviewed `supabase/drafts/20261119_file_mutation_atomic_consume_candidate.sql` as source text only. It was **not applied** and this review is not a database execution or RLS certification.
+
+### Positive controls present in the candidate
+
+- The consume RPC derives executor identity from `auth.uid()`; it does not accept executor/requester/approver IDs as parameters.
+- The function pins `search_path` to `pg_catalog`, is `SECURITY DEFINER`, and revokes execution from `public`, `anon`, and `service_role`, granting it only to `authenticated`.
+- It rechecks active organization/workspace, READY execution request, executor identity, active executor and approver organization memberships, active executor workspace membership, exact FILE target/action/path/digest binding, approver role allowlist, and grant expiry.
+- It uses row locks and a conditional APPROVED-to-CONSUMED update; the unique consumption event constraint provides an additional one-event-per-grant guard.
+- The candidate revokes direct table access from API roles and keeps the tables in a private schema.
+
+### Blocking questions before any migration or production adapter
+
+1. **Approver workspace authorization is not checked.** The consume function locks/checks the approver's active organization membership and organization role, but does not load an approver `workspace_memberships` row. Confirm whether approval authority is intentionally organization-wide; if approval is workspace-scoped, require an active membership in the exact workspace and validate its role.
+2. **Requester membership freshness is not revalidated.** The grant requester is bound to the execution request, but current requester organization/workspace membership is not checked at consume time. Decide and document whether revocation of the requester should invalidate an already-approved grant.
+3. **Role authority is organization-level only.** `required_role` is checked against `organization_memberships.role`; workspace role is not part of the authorization decision. This must match the product's canonical role policy and must not rely on implicit lexical role ordering.
+4. **Lifecycle composition is incomplete.** This draft defines the consume RPC, but no complete trusted create/approve/reject/revoke/expire RPC set or production store composition was established by this file. Direct table grants are restricted, so those transitions need explicit reviewed server-side entry points.
+5. **Execution-request identity lifecycle needs a contract.** The function requires request status READY and binds request/task/mission/executor, but request creation, immutable binding, status transitions, and task-to-mission ownership constraints need their own transactional enforcement.
+6. **Deployment ownership and RLS semantics remain unverified.** Before use, explicitly specify the function owner, whether that owner bypasses RLS, table-owner/role grants, function execute grants, and how private-schema objects are accessed. Test with real user JWTs and revoked/suspended memberships; do not use service-role as an RLS substitute.
+7. **Path and target canonicalization must be defined upstream.** Exact string equality is checked, but the candidate itself does not prove that paths are canonical, confined to the approved workspace root, or resistant to alias/symlink changes between approval and mutation. The executor must bind the approval digest to the exact normalized operation input and revalidate filesystem identity at execution.
+
+### Required next verification
+
+- Write a role/scope matrix for requester, executor, approver, organization, and workspace membership.
+- Add isolated PostgreSQL integration tests for membership revocation/demotion races, duplicate consumption, concurrent consume, request cancellation, grant expiry, exact path/digest mismatch, and unauthorized direct table access.
+- Add lifecycle RPC tests for creation, approval, rejection, revocation, and expiry before implementing a production store.
+- Obtain explicit approval before applying any migration to a shared or production Supabase project.
+
+
 ## Scope and safety constraints
 
 - This audit is source/tree inspection, not a live production certification.
