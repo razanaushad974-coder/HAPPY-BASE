@@ -176,8 +176,8 @@ grant execute on function public.happy_has_active_tenant_scope(uuid, uuid)
   to authenticated;
 
 revoke all on public.happy_tenant_records from public, anon;
-grant select, insert, update, delete on public.happy_tenant_records
-  to authenticated;
+grant select, insert on public.happy_tenant_records to authenticated;
+revoke update, delete on public.happy_tenant_records from authenticated;
 
 -- REQUIRED ADAPTER SQL SEMANTICS (implement in a reviewed server adapter):
 --
@@ -192,19 +192,23 @@ grant select, insert, update, delete on public.happy_tenant_records
 -- CREATE:
 --   INSERT with version=1; map unique_violation to RECORD_ALREADY_EXISTS.
 --
--- UPDATE (single statement; no read-then-write):
---   UPDATE ... SET data=$data, version=version+1,
---       updated_at=clock_timestamp()
---    WHERE organization_id=$org AND workspace_id=$workspace
---      AND user_id=auth.uid() AND entity_type=$type AND record_id=$id
---      AND version=$expected_version
---   RETURNING ...;
---   If no row returns, perform a scope-bound existence check to distinguish
+-- UPDATE / DELETE:
+--   Direct UPDATE and DELETE grants are intentionally withheld from authenticated.
+--   Do not expose unrestricted table writes: RLS alone cannot enforce the
+--   adapter's expected-version compare-and-swap contract. Implement narrowly
+--   reviewed user-JWT RPCs (or an equivalent trusted transaction boundary)
+--   that derive user_id from auth.uid(), bind the full scope/key, and perform:
+--     UPDATE ... SET data=$data, version=version+1,
+--         updated_at=clock_timestamp()
+--      WHERE organization_id=$org AND workspace_id=$workspace
+--        AND user_id=auth.uid() AND entity_type=$type AND record_id=$id
+--        AND version=$expected_version RETURNING ...;
+--     DELETE ... WHERE the same full scope/key AND version=$expected_version
+--       RETURNING record_id;
+--   If no row returns, use a scope-bound existence check to distinguish
 --   RECORD_NOT_FOUND from VERSION_CONFLICT. Never widen that diagnostic query.
---
--- DELETE (single statement):
---   DELETE ... WHERE the same full scope/key AND version=$expected_version
---   RETURNING record_id; distinguish not-found/conflict with a scoped query.
+--   No such RPCs are implemented by this candidate, so the production adapter
+--   remains NOT_CONNECTED until that security review and implementation exist.
 --
 -- TRANSACTION:
 --   callback operations must share one PostgreSQL transaction. Independent
@@ -220,8 +224,10 @@ grant select, insert, update, delete on public.happy_tenant_records
 --    reviewed owner/privilege design; do not assume it can read those tables.
 -- 3. Verify function owner, BYPASSRLS, FORCE ROW LEVEL SECURITY behavior,
 --    table grants, function grants, and auth.uid() with real user JWTs.
--- 4. Test cross-user, cross-workspace, suspended/revoked membership, duplicate
---    create, stale CAS update/delete, concurrent writers, and rollback using
+-- 4. Implement reviewed CAS update/delete RPCs before enabling those writes;
+--    direct authenticated UPDATE/DELETE is deliberately revoked. Test cross-user,
+--    cross-workspace, suspended/revoked membership, duplicate create, stale CAS
+--    update/delete, concurrent writers, and rollback using
 --    disposable PostgreSQL plus actual Supabase JWT integration.
 -- 5. Decide retention, audit/event coupling, payload size limits, and entity
 --    lifecycle constraints. This generic record table does not replace typed
