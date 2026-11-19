@@ -209,3 +209,33 @@ Tenant IDs are UUID in this proposed schema; core TypeScript contracts currently
 - Only then generate a reviewed migration with the Supabase CLI and request explicit approval before applying it.
 
 No schema, SQL, RLS policy, migration, or database record was changed in this work.
+
+
+## Server-side adapter implementation checkpoint (2026-11-19)
+
+The branch now includes these source contracts/adapters:
+
+- `src/core/tenant/supabase-private-tenant-stores.ts`
+  - Reads organization and workspace memberships from the proposed private schema with exact user + tenant filters.
+  - Implements named-executor grant lookup and one conditional UPDATE/RETURNING consumption request.
+  - Includes requester, executor, approver, tenant, request/task/mission, target, operation, path, digest, expiry and unconsumed predicates in the consume request.
+  - Uses null-aware destination-path filtering; database errors and zero-row results fail closed.
+- `src/core/tenant/supabase-named-executor-context-provider.ts`
+  - Loads requester and named executor from a durable `private.execution_requests` record.
+  - Derives executor identity only through an injected verified-server-session provider.
+  - Revalidates active organization and workspace membership before constructing the named-executor context.
+  - Rechecks approver membership and delegates FOUNDER/ADMIN mapping to an explicit injected role policy; no role hierarchy is guessed.
+- `src/tests/core/tenant/supabase-private-tenant-stores.test.ts`
+  - Asserts the query contract uses a single UPDATE, exact principal/tenant/operation predicates, null-safe destination matching, expiry and one-time consumption.
+  - Asserts membership lookups are constrained by verified user and tenant.
+  - This is a fake query-builder contract test only; it does not prove PostgreSQL concurrency or actual Supabase schema compatibility.
+
+### Explicit remaining gaps
+
+- These adapters are not wired into a server-only composition root. Do not instantiate them with a browser client or unverified identity provider.
+- The target private tables do not exist in the connected Supabase project. No migration has been generated or applied.
+- `private.execution_requests` is now a required schema contract for the context provider. It must contain immutable `request_id, task_id, mission_id, requester_user_id, executor_user_id, organization_id, workspace_id` fields, with user foreign keys to `auth.users(id)` and tenant/workspace consistency constraints.
+- The query-builder harness is not a substitute for a disposable PostgreSQL/Supabase integration test. Real tests must prove two concurrent consumers yield exactly one success and that revoke-vs-consume has exactly one winning state transition.
+- Current Vercel PR checks returned deployment rate-limit failures ("retry in 24 hours") after the new commits; they are not code-test results. No new TypeScript, lint, security harness, or build validation is claimed for this adapter checkpoint.
+
+No production schema, SQL, RLS, data, deployment, merge, or `main` change was made.
