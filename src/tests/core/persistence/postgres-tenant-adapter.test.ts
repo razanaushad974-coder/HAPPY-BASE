@@ -62,9 +62,12 @@ class FakePgClient implements PgClientLike {
 
 class FakePgPool implements PgPoolLike {
   readonly clients: FakePgClient[] = [];
+  failNextRpcCode: string | undefined;
 
   async connect(): Promise<PgClientLike> {
     const client = new FakePgClient();
+    client.failNextRpcCode = this.failNextRpcCode;
+    this.failNextRpcCode = undefined;
     this.clients.push(client);
     return client;
   }
@@ -125,7 +128,7 @@ async function main(): Promise<void> {
     throw new Error("PostgreSQL update did not pass the expected version to the CAS RPC.");
   }
 
-  pool.clients[4].failNextRpcCode = "40001";
+  pool.failNextRpcCode = "40001";
   let staleConflict = false;
   try {
     await adapter.update(scope, "MISSION", "mission-1", 1, { goal: "stale" });
