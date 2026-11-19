@@ -142,8 +142,7 @@ revoke_holder_pid=$!
 
 revoke_lock_ready=false
 for _ in $(seq 1 200); do
-  if "${psql_base[@]}" -Atqc "select 1 from pg_stat_activity where application_name = 'happy-tenant-membership-revoke-holder' and state = 'active' and wait_event = 'PgSleep' limit 1" | grep -q '^1
-; then
+  if "${psql_base[@]}" -Atqc "select 1 from pg_stat_activity where application_name = 'happy-tenant-membership-revoke-holder' and state = 'active' and wait_event = 'PgSleep' limit 1" | grep -q '^1'; then
     revoke_lock_ready=true
     break
   fi
@@ -170,8 +169,7 @@ revoke_contender_pid=$!
 
 revoke_wait_seen=false
 for _ in $(seq 1 200); do
-  if "${psql_base[@]}" -Atqc "select 1 from pg_stat_activity where application_name = 'happy-tenant-membership-create-contender' and state = 'active' and wait_event_type = 'Lock' limit 1" | grep -q '^1
-; then
+  if "${psql_base[@]}" -Atqc "select 1 from pg_stat_activity where application_name = 'happy-tenant-membership-create-contender' and state = 'active' and wait_event_type = 'Lock' limit 1" | grep -q '^1'; then
     revoke_wait_seen=true
     break
   fi
