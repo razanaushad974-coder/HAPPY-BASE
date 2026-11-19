@@ -14,6 +14,14 @@ export class AsyncHappyStateStore {
     private readonly scope: TenantScope,
   ) {}
 
+  async transaction<T>(
+    operation: (transactionStore: AsyncHappyStateStore) => Promise<T>,
+  ): Promise<T> {
+    return this.adapter.transaction(this.scope, async (transactionAdapter) =>
+      operation(new AsyncHappyStateStore(transactionAdapter, this.scope)),
+    );
+  }
+
   repository<T>(entityType: EntityType): AsyncTenantScopedRepository<T> {
     return new AsyncTenantScopedRepository<T>(
       entityType,
