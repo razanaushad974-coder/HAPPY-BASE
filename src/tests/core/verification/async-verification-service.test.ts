@@ -48,7 +48,28 @@ async function main(): Promise<void> {
     content: "Must not be attached to this result.",
   });
 
-  const result = await verifier.verify(request, [valid.id, mismatched.id, valid.id]);
+  const wrongExecution = await evidence.capture({
+    verificationRequestId: request.id,
+    missionId: request.missionId,
+    taskId: request.taskId,
+    executionRequestId: "another-execution",
+    type: "TEST_RESULT",
+    source: "TEST",
+    title: "Wrong execution evidence",
+    content: "Must not be attached to this result.",
+  });
+  const wrongRequest = await evidence.capture({
+    verificationRequestId: "another-verification",
+    missionId: request.missionId,
+    taskId: request.taskId,
+    executionRequestId: request.executionRequestId,
+    type: "TEST_RESULT",
+    source: "TEST",
+    title: "Wrong verification evidence",
+    content: "Must not be attached to this result.",
+  });
+
+  const result = await verifier.verify(request, [valid.id, mismatched.id, wrongExecution.id, wrongRequest.id, valid.id]);
   if (result.status !== "PARTIAL" || result.failureReason !== "SEMANTIC_VERIFIER_NOT_CONNECTED") {
     throw new Error("Evidence presence was incorrectly treated as semantic success.");
   }
