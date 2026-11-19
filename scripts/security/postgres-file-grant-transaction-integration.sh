@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "\${DATABASE_URL:?DATABASE_URL must point to a disposable PostgreSQL database}"
+: "${DATABASE_URL:?DATABASE_URL must point to a disposable PostgreSQL database}"
 
 # Emulates the Supabase auth schema contract. PostgREST sets this claim only
 # after JWT verification; this fixture does not prove an external JWT verifier.
@@ -31,7 +31,7 @@ APPROVER='00000000-0000-0000-0000-000000000103'
 DIGEST='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 
 seed_grant() {
-  local grant="$1" request="$2" approver_status="\${3:-ACTIVE}" approver_role="\${4:-ADMIN}" executor_status="\${5:-ACTIVE}" expiry="\${6:-5 minutes}"
+  local grant="$1" request="$2" approver_status="${3:-ACTIVE}" approver_role="${4:-ADMIN}" executor_status="${5:-ACTIVE}" expiry="${6:-5 minutes}"
   psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 <<SQL
 INSERT INTO auth.users(id) VALUES
  ('$REQUESTER'),('$EXECUTOR'),('$APPROVER')
@@ -67,7 +67,7 @@ SQL
 }
 
 invoke_grant() {
-  local grant="$1" request="$2" user="$3" digest="\${4:-$DIGEST}"
+  local grant="$1" request="$2" user="$3" digest="${4:-$DIGEST}"
   psql "$DATABASE_URL" -XqAt -v ON_ERROR_STOP=1 -c "
     BEGIN;
     SET LOCAL ROLE authenticated;
