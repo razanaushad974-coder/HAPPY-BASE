@@ -239,3 +239,13 @@ The branch now includes these source contracts/adapters:
 - Current Vercel PR checks returned deployment rate-limit failures ("retry in 24 hours") after the new commits; they are not code-test results. No new TypeScript, lint, security harness, or build validation is claimed for this adapter checkpoint.
 
 No production schema, SQL, RLS, data, deployment, merge, or `main` change was made.
+
+
+## Verified approver and CI checkpoint (2026-11-19)
+
+- Added `SupabasePersistedApproverMembershipProvider`: the persisted grant's approver ID is independently resolved against current ACTIVE organization + workspace memberships. Missing/revoked membership returns null.
+- Added `supabase-named-executor-context-provider.test.ts`: verifies requester comes from durable request, executor comes from injected verified session, mismatched session is denied, approver membership is independently loaded, missing approver is denied, and FOUNDER/ADMIN policy mapping is explicit rather than inferred.
+- Included this harness in `npm run test:security`.
+- Added `.github/workflows/security-validation.yml` on the feature branch. It runs Node 22, locked `npm ci`, TypeScript, all security harnesses, ESLint, npm audit and production build on relevant PR/push changes. Workflow run is not yet visible; no passing result is claimed.
+- The connected Vercel project continues to rate-limit preview deployments. This does not establish source correctness either way.
+- No trusted runtime composition, live schema, migration, RLS, data write, merge, production deploy, or `main` change.
