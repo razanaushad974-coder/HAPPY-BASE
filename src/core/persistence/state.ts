@@ -27,6 +27,7 @@ export const ENTITY_STATE_KEYS: Record<
   TASK: "tasks",
   EXECUTION: "executions",
   VERIFICATION: "verifications",
+  VERIFICATION_REQUEST: "verifications",
   EVIDENCE: "evidence",
   MEMORY: "memories",
   APPROVAL: "approvals",
