@@ -131,6 +131,27 @@ export class SupabaseNamedExecutorContextProvider implements NamedExecutorContex
  * The adapter re-reads both current membership rows at authorization time;
  * it does not infer role hierarchy or trust role strings from the JWT.
  */
+/** Resolves the persisted approver from current active tenant membership. */
+export class SupabasePersistedApproverMembershipProvider {
+  constructor(private readonly memberships: CanonicalTenantMembershipStore) {}
+
+  async getActiveActor(
+    userId: string,
+    scope: { organizationId: string; workspaceId: string },
+  ): Promise<AuthenticatedApprovalActor | null> {
+    try {
+      const context = await resolveCanonicalTenantContext(
+        { userId },
+        scope,
+        this.memberships,
+      );
+      return context?.actor ?? null;
+    } catch {
+      return null;
+    }
+  }
+}
+
 export type ApprovalMembershipRolePolicy = (
   organizationRole: string,
   workspaceRole: string,
