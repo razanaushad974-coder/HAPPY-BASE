@@ -33,12 +33,23 @@ async function main(): Promise<void> {
     throw new Error("Missing verification ID was not rejected.");
   }
 
-  const captured = await service.capture(input);
+  let missingPayloadRejected = false;
+  try {
+    await service.capture({ ...input, content: "   ", uri: undefined });
+  } catch (error) {
+    missingPayloadRejected = error instanceof Error &&
+      error.message === "Evidence content or URI is required.";
+  }
+  if (!missingPayloadRejected) {
+    throw new Error("Evidence without non-empty content or URI was accepted.");
+  }
+
+  const captured = await service.capture({ ...input, title: "  Async evidence contract  ", verificationRequestId: " verification-1 " });
   const loaded = await service.get(captured.id);
   if (!loaded || loaded.id !== captured.id || loaded.title !== input.title) {
     throw new Error("Captured evidence could not be read back.");
   }
-  if ((await service.forVerification("verification-1")).length !== 1) {
+  if ((await service.forVerification(" verification-1 ")).length !== 1) {
     throw new Error("Verification evidence query returned the wrong records.");
   }
   if ((await service.forTask("task-1")).length !== 1 || (await service.count()) !== 1) {
@@ -54,7 +65,7 @@ async function main(): Promise<void> {
   console.log("Async tenant-scoped evidence service: PASS");
   console.log({
     evidenceCaptured: true,
-    validationFailClosed: missingVerificationRejected,
+    validationFailClosed: missingVerificationRejected && missingPayloadRejected,
     tenantIsolation: true,
     appendOnlyServiceSurface: true,
   });
