@@ -5,7 +5,7 @@ import {
   type WorkspaceMembershipRecord,
 } from "../../../core/tenant/canonical-tenant-context";
 
-function assert(condition: boolean, message: string): void {
+function assert(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
 
