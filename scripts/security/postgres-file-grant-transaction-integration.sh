@@ -68,8 +68,8 @@ SQL
 }
 
 invoke_grant() {
-  local grant="$1" request="$2" user="$3" digest="${4:-$DIGEST}"
-  psql "$DATABASE_URL" -XqAt -v ON_ERROR_STOP=1 -c "
+  local grant="$1" request="$2" user="$3" digest="${4:-$DIGEST}" application_name="${5:-happy-file-grant-consumer}"
+  PGAPPNAME="$application_name" psql "$DATABASE_URL" -XqAt -v ON_ERROR_STOP=1 -c "
     BEGIN;
     SET LOCAL ROLE authenticated;
     SET LOCAL request.jwt.claim.sub = '$user';
@@ -176,7 +176,7 @@ psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
  SELECT pg_sleep(15);
  COMMIT;" &
 revoke_pid=$!
-PGAPPNAME=happy-revoke-consumer invoke_grant '10000000-0000-0000-0000-000000000009' 'revoke-race-1' "$EXECUTOR" > /tmp/happy-revoke-consumer.out &
+invoke_grant '10000000-0000-0000-0000-000000000009' 'revoke-race-1' "$EXECUTOR" "$DIGEST" 'happy-revoke-consumer' > /tmp/happy-revoke-consumer.out &
 revoke_consumer_pid=$!
 wait_for_lock_wait happy-revoke-consumer
 wait "$revoke_pid"
@@ -194,7 +194,7 @@ psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
  SELECT pg_sleep(15);
  COMMIT;" &
 downgrade_pid=$!
-PGAPPNAME=happy-downgrade-consumer invoke_grant '10000000-0000-0000-0000-000000000011' 'role-downgrade-race-1' "$EXECUTOR" > /tmp/happy-downgrade-consumer.out &
+invoke_grant '10000000-0000-0000-0000-000000000011' 'role-downgrade-race-1' "$EXECUTOR" "$DIGEST" 'happy-downgrade-consumer' > /tmp/happy-downgrade-consumer.out &
 downgrade_consumer_pid=$!
 wait_for_lock_wait happy-downgrade-consumer
 wait "$downgrade_pid"
@@ -267,7 +267,7 @@ psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
  SELECT pg_sleep(15);
  COMMIT;" &
 suspend_first_pid=$!
-PGAPPNAME=happy-suspend-first-consumer invoke_grant '10000000-0000-0000-0000-000000000017' 'suspend-first-1' "$EXECUTOR" > /tmp/happy-suspend-first-consumer.out &
+invoke_grant '10000000-0000-0000-0000-000000000017' 'suspend-first-1' "$EXECUTOR" "$DIGEST" 'happy-suspend-first-consumer' > /tmp/happy-suspend-first-consumer.out &
 suspend_consumer_pid=$!
 wait_for_lock_wait happy-suspend-first-consumer
 wait "$suspend_first_pid"
@@ -310,7 +310,7 @@ psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
  SELECT pg_sleep(15);
  COMMIT;" &
 cancel_first_pid=$!
-PGAPPNAME=happy-cancel-first-consumer invoke_grant '10000000-0000-0000-0000-000000000019' 'cancel-first-1' "$EXECUTOR" > /tmp/happy-cancel-first-consumer.out &
+invoke_grant '10000000-0000-0000-0000-000000000019' 'cancel-first-1' "$EXECUTOR" "$DIGEST" 'happy-cancel-first-consumer' > /tmp/happy-cancel-first-consumer.out &
 cancel_consumer_pid=$!
 wait_for_lock_wait happy-cancel-first-consumer
 wait "$cancel_first_pid"
