@@ -282,3 +282,16 @@ The harness stubs `auth.uid()` using PostgreSQL's local JWT-claim setting. It ex
 ### Concurrent CAS race coverage
 
 Added `scripts/security/postgres-tenant-cas-concurrency.sh`, invoked by the disposable PostgreSQL integration harness. It starts two independent PostgreSQL sessions against the same version-1 record, confirms the contender is actually waiting on a row lock, lets the holder commit version 2, and requires the contender to fail with SQLSTATE `40001`. The race uses a privileged test-session lock only because direct authenticated UPDATE is intentionally revoked; the winning write itself executes through the authenticated CAS RPC. This is isolated PostgreSQL concurrency evidence, not a hosted Supabase/JWT test.
+
+
+### Membership-revocation serialization hardening
+
+A final review identified a time-of-check/time-of-use race in write authorization: checking active membership without locking its row could allow a concurrent suspension/revocation to commit between the check and the record write. The schema candidate now:
+
+- Adds `happy_lock_active_tenant_scope`, which locks organization, workspace, organization-membership, and workspace-membership rows in a fixed order using `FOR SHARE`.
+- Routes create through `happy_create_tenant_record`; direct authenticated INSERT is revoked.
+- Routes update/delete through CAS RPCs that acquire the same active-scope locks before touching the record.
+- Keeps the internal lock helper unavailable to authenticated callers; only the narrow create/CAS RPCs are callable.
+- Extends the disposable PostgreSQL harness to verify a create waits behind a workspace-membership revocation and is denied after the revocation commits.
+
+This serializes the tested record-write path with membership/status updates in PostgreSQL. The test uses a local auth.uid() stub and does not replace real Supabase JWT, function-owner, or hosted-project authorization testing.
