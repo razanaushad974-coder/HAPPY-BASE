@@ -21,22 +21,6 @@ function key(
     entityType,
     id,
   ]);
-  async transaction<T>(
-    scope: CompleteScope,
-    operation: (transaction: AsyncTenantPersistenceAdapter) => Promise<T>,
-  ): Promise<T> {
-    // Test-only snapshot transaction: commit the cloned state only on success.
-    // This does not claim PostgreSQL isolation or concurrency semantics.
-    const transactionAdapter = new InMemoryTenantPersistenceAdapter();
-    transactionAdapter.records = new Map(
-      [...this.records.entries()].map(([recordKey, record]) => [
-        recordKey, structuredClone(record),
-      ]),
-    );
-    const result = await operation(transactionAdapter);
-    this.records = transactionAdapter.records;
-    return result;
-  }
 }
 
 /**
@@ -130,5 +114,26 @@ export class InMemoryTenantPersistenceAdapter implements AsyncTenantPersistenceA
       throw new TenantPersistenceError("VERSION_CONFLICT");
     }
     return this.records.delete(recordKey);
+  }
+
+  async transaction<T>(
+    scope: CompleteScope,
+    operation: (transaction: AsyncTenantPersistenceAdapter) => Promise<T>,
+  ): Promise<T> {
+    if (!scope.organizationId.trim() || !scope.workspaceId.trim() || !scope.userId.trim()) {
+      throw new TenantPersistenceError("INVALID_TENANT_SCOPE");
+    }
+    // Test-only snapshot transaction: commit the cloned state only on success.
+    // This does not claim PostgreSQL isolation or concurrency semantics.
+    const transactionAdapter = new InMemoryTenantPersistenceAdapter();
+    transactionAdapter.records = new Map(
+      [...this.records.entries()].map(([recordKey, record]) => [
+        recordKey,
+        structuredClone(record),
+      ]),
+    );
+    const result = await operation(transactionAdapter);
+    this.records = transactionAdapter.records;
+    return result;
   }
 }
