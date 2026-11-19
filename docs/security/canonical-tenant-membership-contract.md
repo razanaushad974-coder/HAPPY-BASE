@@ -30,3 +30,17 @@ This change adds a fail-closed core resolver contract only. It does not connect 
 - No Supabase auth helper copied from the divergent branch.
 - No production authorizer/store wiring; FILE READ and FILE mutations remain default-deny unless separately and correctly composed.
 - No merge, production deployment, or change to `main`.
+
+
+
+## Role and durable-request implementation addendum (2026-11-19)
+
+The connected Supabase project currently has no HAPPY application membership or execution-request tables. The core resolver is therefore not yet backed by an authoritative source. Before implementing the store:
+
+- Introduce explicit organization/workspace lifecycle and membership records with ACTIVE/SUSPENDED/REVOKED states.
+- Define canonical role allowlists and a reviewed mapping to FOUNDER/ADMIN. A nonblank role string alone is not authorization.
+- Add a durable execution-request record. The current `ExecutionRequest` TypeScript interface is runtime input and is not proof of requester identity.
+- Resolve executor from verified server session; load requester from the durable request; load approver from persisted grant; revalidate all three independently.
+- Keep all membership/grant/audit tables in a non-exposed schema with no direct client grants. Any privileged server adapter must still enforce exact tenant filters.
+
+The proposed tenant key type is UUID (matching `auth.users.id` for user references), but no app tenant IDs currently exist in this project. This remains a proposal until confirmed and migrated. No database changes were made.
