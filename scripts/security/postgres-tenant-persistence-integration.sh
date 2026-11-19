@@ -96,6 +96,16 @@ insert into private.organization_memberships values
    '40000000-0000-4000-8000-000000000004', 'ACTIVE', 'MEMBER'),
   ('10000000-0000-4000-8000-000000000001',
    '50000000-0000-4000-8000-000000000005', 'ACTIVE', 'MEMBER');
+alter table private.organizations enable row level security;
+alter table private.workspaces enable row level security;
+alter table private.organization_memberships enable row level security;
+alter table private.workspace_memberships enable row level security;
+revoke all on schema private from public, anon, authenticated;
+revoke all on all tables in schema private from public, anon, authenticated;
+grant usage on schema private to service_role;
+grant select, insert, update on private.organizations, private.workspaces,
+  private.organization_memberships, private.workspace_memberships to service_role;
+
 insert into private.workspace_memberships values
   ('10000000-0000-4000-8000-000000000001',
    '20000000-0000-4000-8000-000000000002',
@@ -169,9 +179,105 @@ begin
     'MISSION', 'mission-cas', 2
   );
   if not v_deleted then raise exception 'valid CAS delete failed'; end if;
+end
+$checks$;
 
-  v_deleted := public.happy_delete_tenant_record(
-    '10000000-0000-4000-8000-000000000002',
+-- Create a row for the cross-user isolation assertion.
+insert into public.happy_tenant_records
+  (organization_id, workspace_id, user_id, entity_type, record_id, version, data)
+values
+  ('10000000-0000-4000-8000-000000000001',
+   '20000000-0000-4000-8000-000000000002',
+   auth.uid(), 'MISSION', 'private-to-user-a', 1, '{"goal":"private"}');
+
+-- An active second user cannot read, update, or delete the first user's row.
+select set_config('request.jwt.claim.sub',
+  '40000000-0000-4000-8000-000000000004', false);
+do $isolation$
+declare
+  v_visible bigint;
+begin
+  select count(*) into v_visible
+    from public.happy_tenant_records
+   where record_id = 'private-to-user-a';
+  if v_visible <> 0 then raise exception 'cross-user RLS read leaked a row'; end if;
+
+  begin
+    perform public.happy_update_tenant_record(
+      '10000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000002',
+      'MISSION', 'private-to-user-a', 1, '{"goal":"intrusion"}'
+    );
+    raise exception 'cross-user update unexpectedly succeeded';
+  exception when sqlstate 'P0002' then null;
+  end;
+end
+$isolation$;
+
+-- A user with revoked workspace membership cannot read or insert.
+select set_config('request.jwt.claim.sub',
+  '50000000-0000-4000-8000-000000000005', false);
+do $revoked$
+declare
+  v_visible bigint;
+begin
+  select count(*) into v_visible from public.happy_tenant_records;
+  if v_visible <> 0 then raise exception 'revoked workspace member can read tenant rows'; end if;
+
+  begin
+    insert into public.happy_tenant_records
+      (organization_id, workspace_id, user_id, entity_type, record_id, version, data)
+    values
+      ('10000000-0000-4000-8000-000000000001',
+       '20000000-0000-4000-8000-000000000002',
+       auth.uid(), 'MISSION', 'revoked-insert', 1, '{"goal":"denied"}');
+    raise exception 'revoked workspace member insert unexpectedly succeeded';
+  exception when insufficient_privilege then null;
+  end;
+end
+$revoked$;
+
+reset role;
+
+-- Direct table mutation is not granted, and service_role is not granted access.
+do $privileges$
+begin
+  if has_table_privilege('authenticated', 'public.happy_tenant_records', 'UPDATE') then
+    raise exception 'authenticated has direct UPDATE privilege';
+  end if;
+  if has_table_privilege('authenticated', 'public.happy_tenant_records', 'DELETE') then
+    raise exception 'authenticated has direct DELETE privilege';
+  end if;
+  if has_table_privilege('service_role', 'public.happy_tenant_records', 'SELECT') then
+    raise exception 'service_role has direct SELECT privilege';
+  end if;
+end
+$privileges$;
+
+begin;
+insert into public.happy_tenant_records
+  (organization_id, workspace_id, user_id, entity_type, record_id, version, data)
+values
+  ('10000000-0000-4000-8000-000000000001',
+   '20000000-0000-4000-8000-000000000002',
+   '30000000-0000-4000-8000-000000000003',
+   'MISSION', 'rollback-check', 1, '{"goal":"must rollback"}');
+rollback;
+
+do $rollback$
+declare
+  v_count bigint;
+begin
+  select count(*) into v_count
+    from public.happy_tenant_records
+   where record_id = 'rollback-check';
+  if v_count <> 0 then raise exception 'PostgreSQL transaction rollback failed'; end if;
+end
+$rollback$;
+
+select 'PostgreSQL tenant persistence RLS/CAS integration: PASS' as result;
+SQL
+
     '20000000-0000-4000-8000-000000000002',
     'MISSION', 'missing-record', 1
   );
