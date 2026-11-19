@@ -59,7 +59,7 @@ Add a unique key on (organization_id, id) so child records can use composite for
 
 Unique (organization_id, user_id). A user has at most one current membership row per organization; re-invitation/re-activation updates the lifecycle state with an audit trail rather than creating ambiguous active duplicates.
 
-Approval-capable organization roles are OWNER and ADMIN. Role strings are not trusted from JWT user_metadata, request bodies, or client state.
+Approval-capable organization roles are OWNER and ADMIN. The existing core verifier contract uses the normalized policy roles FOUNDER and ADMIN: map organization OWNER to FOUNDER and organization ADMIN to ADMIN in the trusted server-side role mapper. Persist the normalized required role as FOUNDER or ADMIN, and recheck the underlying current organization membership role at consumption. Workspace roles never confer founder/admin approval authority. Role strings are not trusted from JWT user_metadata, request bodies, or client state.
 
 ### 2.4 workspace_memberships
 
@@ -104,7 +104,7 @@ Required fields:
 - id UUID primary key.
 - organization_id, workspace_id, execution_request_id.
 - requester_user_id, approver_user_id, executor_user_id, each FK to auth.users.
-- required_approver_role constrained to OWNER or ADMIN.
+- required_approver_role constrained to FOUNDER or ADMIN (the verifier's normalized role vocabulary; organization OWNER maps to FOUNDER, organization ADMIN maps to ADMIN).
 - target_entity_type constrained to FILE.
 - target_entity_id, operation, source_path, destination_path.
 - input_digest as a fixed 32-byte SHA-256 value over a canonical encoding of the complete normalized operation.
@@ -124,7 +124,7 @@ A grant can be consumed only when all of the following are true in one database 
 3. The current authenticated user equals the grant's named executor_user_id.
 4. The organization and workspace are ACTIVE.
 5. The executor has current ACTIVE organization and workspace memberships in the exact scope.
-6. The persisted approver has current ACTIVE organization membership and currently holds the required OWNER/ADMIN role. A revoked or downgraded approver cannot authorize consumption.
+6. The persisted approver has current ACTIVE organization membership and currently holds the organization role mapped to the required FOUNDER/ADMIN policy role. A revoked or downgraded approver cannot authorize consumption.
 7. The grant is APPROVED, not revoked, not consumed, and expires_at is later than the database clock.
 8. The operation, FILE target, source/destination paths, task/mission IDs, and digest exactly match the current normalized operation.
 9. The conditional consume changes exactly one row. Zero rows means deny; more than one row is a schema/invariant failure and must abort.
