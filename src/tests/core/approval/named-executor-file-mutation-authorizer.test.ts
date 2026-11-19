@@ -36,7 +36,11 @@ async function main(): Promise<void> {
   let stored: NamedExecutorGrant | null = null;
   let consumed = false;
   let consumeCount = 0;
-  const captureState: { lookup?: NamedExecutorGrantLookup } = {};
+  const captureState: { lookup: NamedExecutorGrantLookup | undefined } = { lookup: undefined };
+  function currentGrant(): NamedExecutorGrant {
+    if (!stored) throw new Error("Expected a persisted test grant.");
+    return stored;
+  }
 
   const store: NamedExecutorGrantStore = {
     async getApprovedGrant(_scope, lookup) {
@@ -71,7 +75,7 @@ async function main(): Promise<void> {
   // an approved server-side grant. The approver is not the execution actor.
   const captureStore: NamedExecutorGrantStore = {
     async getApprovedGrant(_scope, lookup) {
-      lookupSeen = lookup;
+      captureState.lookup = lookup;
       return null;
     },
     async consumeApprovedGrant() { return false; },
@@ -85,7 +89,7 @@ async function main(): Promise<void> {
   );
   assert(!(await capture.authorize(request, operation)), "Lookup capture should not authorize without a persisted grant.");
   const lookup = captureState.lookup;
-  assert(lookup !== undefined, "Expected canonical binding lookup.");
+  if (!lookup) throw new Error("Expected canonical binding lookup.");
   stored = {
     ...lookup, grantId: "grant-1", approverUserId: "approver-B",
     requiredRole: "FOUNDER", status: "APPROVED",
@@ -93,21 +97,21 @@ async function main(): Promise<void> {
   };
 
   assert(await authorizer.authorize(request, operation), "Distinct requester/approver/executor grant should authorize.");
-  assert(consumed && stored.status === "CONSUMED", "Grant was not consumed.");
+  assert(consumed && currentGrant().status === "CONSUMED", "Grant was not consumed.");
   assert(captureState.lookup?.executorUserId === "executor-C", "Lookup did not bind the named executor.");
   assert(captureState.lookup?.requesterUserId === "requester-A", "Lookup did not bind the requester.");
-  assert(stored.approverUserId === "approver-B", "Persisted approver identity was not retained.");
+  assert(currentGrant().approverUserId === "approver-B", "Persisted approver identity was not retained.");
   assert(!(await authorizer.authorize(request, operation)), "Consumed grant replay was accepted.");
 
   // A grant for another named executor must be denied before consumption.
-  stored = { ...stored, status: "APPROVED", consumedAt: undefined, executorUserId: "executor-D" };
+  stored = { ...currentGrant(), status: "APPROVED", consumedAt: undefined, executorUserId: "executor-D" };
   consumed = false;
   const beforeWrongExecutor = consumeCount;
   assert(!(await authorizer.authorize(request, operation)), "Wrong executor was accepted.");
   assert(consumeCount === beforeWrongExecutor, "Wrong executor reached atomic consume.");
 
   // Approver must independently be an active member and retain the role.
-  stored = { ...stored, executorUserId: "executor-C", status: "APPROVED", consumedAt: undefined };
+  stored = { ...currentGrant(), executorUserId: "executor-C", status: "APPROVED", consumedAt: undefined };
   const missingApprover = new NamedExecutorFileMutationAuthorizer(
     { async getContext() { return context; } }, store,
     { async getActiveActor() { return null; } },
