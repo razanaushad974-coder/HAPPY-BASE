@@ -58,8 +58,11 @@ INSERT INTO private.file_mutation_approval_grants
   destination_path,input_digest,required_role,status,expires_at,decided_at)
  VALUES ('$grant','$request','task-$request','mission-$request','$REQUESTER','$EXECUTOR','$APPROVER',
   '$ORG','$WS','FILE','file-$request','MODIFY','source-$request',NULL,'$DIGEST','ADMIN',
-  'APPROVED',clock_timestamp()+interval '$expiry',clock_timestamp())
+  'PENDING',clock_timestamp()+interval '$expiry',NULL)
 ON CONFLICT (grant_id) DO NOTHING;
+UPDATE private.file_mutation_approval_grants
+   SET status='APPROVED', decided_at=clock_timestamp()
+ WHERE grant_id='$grant' AND status='PENDING';
 SQL
 }
 
