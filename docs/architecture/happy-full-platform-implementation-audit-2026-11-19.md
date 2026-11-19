@@ -136,3 +136,10 @@ Reviewed `supabase/drafts/20261119_file_mutation_atomic_consume_candidate.sql` a
 - This is a source correction only. The disposable PostgreSQL integration harness has not yet been executed against this exact head; no test pass is claimed.
 - The remaining sleep-based race coordination is a timing-based fixture and should be made deterministic or exercised repeatedly before treating the race assertions as conclusive.
 - No live Supabase DDL/data write, merge, deployment, or main change.
+
+
+### Final harness restoration and verification boundary — 2026-11-19
+- The first output-parser correction was superseded after a follow-up fetch exposed an unintended duplicated tail in that intermediate file revision. The script was restored from the immediately preceding known source revision and the consume-first block was reapplied as a bounded edit.
+- Final script commit: 686efec77b12cabd048c924aa7522c4c97b26b32. The block now uses psql quiet/unaligned/tuples-only output and filters the standalone boolean row; the file tail is intact and the malformed fragment is absent on re-fetch.
+- This is source-level verification only. The disposable PostgreSQL integration harness remains unexecuted on this exact revision, and its sleep-based race coordination remains timing-sensitive. No test pass is claimed.
+- No live Supabase changes, merge, deployment, or main-branch changes.
