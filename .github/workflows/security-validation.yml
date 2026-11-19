@@ -47,6 +47,26 @@ jobs:
     name: Typecheck, tests, lint, audit, build
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: happy_test
+          POSTGRES_DB: happy_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d happy_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: happy_test
+      PGDATABASE: happy_test
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -67,6 +87,10 @@ jobs:
         run: npx --yes tsx@4.23.15 src/tests/core/persistence/persistence-provider-durability.test.ts
       - name: PostgreSQL tenant adapter contract
         run: npx --yes tsx@4.23.15 src/tests/core/persistence/postgres-tenant-adapter.test.ts
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: PostgreSQL RLS and CAS integration
+        run: bash scripts/security/postgres-tenant-persistence-integration.sh
       - name: Async tenant memory contract
         run: npx --yes tsx@4.23.15 src/tests/core/persistence/async-persistent-memory.test.ts
       - name: Async HAPPY state store contract
