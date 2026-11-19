@@ -11,7 +11,7 @@ Evidence observed:
 - `main` contains 179 tracked files, 163 under `src/`, 47 test/spec files, and only `src/app/page.tsx` as an application page. No App Router API route was found on `main`.
 - The security feature branch contains 208 tracked files, 177 under `src/`, and 55 test/spec files; it adds tenant and approval security work, but it remains a draft PR chain and is not merged to `main`.
 - `src/app/page.tsx` on `main` is the unmodified Next.js starter screen; `src/app/layout.tsx` still uses Create Next App metadata.
-- `HappyOrchestrationEngine` uses a local JSON-file persistence adapter and in-memory evidence repository. Its current pipeline selects and executes only the first task in a mission graph.
+- `HappyOrchestrationEngine` uses a local JSON-file persistence adapter and in-memory evidence repository. The current pipeline loops over dependency-ready tasks sequentially; durable crash recovery and complete scheduler lifecycle remain unverified.
 - `VerificationEngine` explicitly returns PARTIAL for required criteria because semantic outcome verification is not connected.
 - The PR8 branch removes caller-supplied `request.approved` as proof, but the trusted approval verifier/store/session adapters still require real production composition.
 - FILE mutation authorization remains fail-closed pending durable grant creation/approval/revocation and production wiring. The candidate SQL is not an applied migration.
@@ -31,7 +31,7 @@ Evidence observed:
 | Command understanding / routing | PARTIAL | Parser and command tests exist; natural-language multilingual intent routing and full reference resolution need end-to-end validation. |
 | Context / project awareness | PARTIAL | Context resolver and reference regression tests exist; durable project state and cross-session context integration remain incomplete. |
 | Reasoning / planning | PARTIAL | Deterministic and Gemini planning paths exist; provider fallback, evaluations, policy constraints, and real-world plan quality need verification. |
-| Mission / task graph | PARTIAL | Mission and task graph engines/tests exist; pipeline currently executes only the first selected task rather than scheduling the full dependency graph. |
+| Mission / task graph | PARTIAL | The pipeline iterates dependency-ready tasks and persists per-task state transitions; new branch-DAG tests cover independent roots and prerequisite gating. Crash-safe resume, retry orchestration, cancellation, idempotency, and durable scheduler ownership remain incomplete. |
 | Orchestration / lifecycle | PARTIAL | Pipeline stages are present; resumability, retries, multi-task progression, cancellation, idempotency, and recovery need integrated verification. |
 | Execution adapters | PARTIAL | AI, CODE, FILE, API, BROWSER, DATABASE adapters exist; several capabilities are contract placeholders or have incomplete production controls. |
 | FILE read / mutation | PARTIAL | Path-safe executor and default-deny authorization work exist; durable grant lifecycle and production composition are incomplete. |
