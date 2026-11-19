@@ -90,6 +90,8 @@ jobs:
         run: npx --yes tsx@4.23.15 src/tests/core/persistence/persistence-provider-durability.test.ts
       - name: PostgreSQL tenant adapter contract
         run: npx --yes tsx@4.23.15 src/tests/core/persistence/postgres-tenant-adapter.test.ts
+      - name: Validate PostgreSQL harness shell syntax
+        run: bash -n scripts/security/postgres-tenant-persistence-integration.sh scripts/security/postgres-tenant-cas-concurrency.sh
       - name: Install PostgreSQL client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - name: PostgreSQL RLS and CAS integration
