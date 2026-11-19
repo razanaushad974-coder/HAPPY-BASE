@@ -22,18 +22,24 @@ export class AsyncEvidenceService {
     if (!input.title?.trim()) {
       throw new Error("Evidence title is required.");
     }
+    if (
+      (input.content === undefined || input.content.trim().length === 0) &&
+      (input.uri === undefined || input.uri.trim().length === 0)
+    ) {
+      throw new Error("Evidence content or URI is required.");
+    }
 
     const evidence: Evidence = {
       id: `evidence-${crypto.randomUUID()}`,
-      verificationRequestId: input.verificationRequestId,
-      executionRequestId: input.executionRequestId,
-      missionId: input.missionId,
-      taskId: input.taskId,
+      verificationRequestId: input.verificationRequestId.trim(),
+      executionRequestId: input.executionRequestId?.trim() || undefined,
+      missionId: input.missionId.trim(),
+      taskId: input.taskId.trim(),
       type: input.type,
       source: input.source,
       title: input.title.trim(),
-      content: input.content,
-      uri: input.uri,
+      content: input.content?.trim() || undefined,
+      uri: input.uri?.trim() || undefined,
       checksum: input.checksum,
       metadata: input.metadata ? structuredClone(input.metadata) : undefined,
       capturedAt: new Date().toISOString(),
@@ -50,17 +56,21 @@ export class AsyncEvidenceService {
   }
 
   async forVerification(verificationRequestId: string): Promise<Evidence[]> {
+    const normalizedId = verificationRequestId.trim();
+    if (!normalizedId) return [];
     const records = await this.state.evidence<Evidence>().list();
     return records
       .map((record) => record.data)
-      .filter((evidence) => evidence.verificationRequestId === verificationRequestId);
+      .filter((evidence) => evidence.verificationRequestId === normalizedId);
   }
 
   async forTask(taskId: string): Promise<Evidence[]> {
+    const normalizedId = taskId.trim();
+    if (!normalizedId) return [];
     const records = await this.state.evidence<Evidence>().list();
     return records
       .map((record) => record.data)
-      .filter((evidence) => evidence.taskId === taskId);
+      .filter((evidence) => evidence.taskId === normalizedId);
   }
 
   async count(): Promise<number> {
