@@ -22,7 +22,7 @@ export type TenantPersistenceFailureCode =
 export class TenantPersistenceError extends Error {
   constructor(
     readonly code: TenantPersistenceFailureCode,
-    message = code,
+    message: string = code,
   ) {
     super(message);
     this.name = "TenantPersistenceError";
