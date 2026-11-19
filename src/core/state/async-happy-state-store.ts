@@ -1,4 +1,4 @@
-import { TenantBoundTransactionAdapter, type AsyncTenantPersistenceAdapter } from "../persistence/async-tenant-repository";
+import { TenantBoundTransactionAdapter, requireCompleteScope, type AsyncTenantPersistenceAdapter } from "../persistence/async-tenant-repository";
 import { AsyncTenantScopedRepository } from "../persistence/async-tenant-repository";
 import type { EntityType } from "../persistence/types";
 import type { TenantScope } from "./types";
@@ -9,10 +9,15 @@ import type { TenantScope } from "./types";
  * persistence service. Production adapters must enforce scope in storage.
  */
 export class AsyncHappyStateStore {
+  private readonly scope: TenantScope & { userId: string };
+
   constructor(
     private readonly adapter: AsyncTenantPersistenceAdapter,
-    private readonly scope: TenantScope,
-  ) {}
+    scope: TenantScope,
+  ) {
+    requireCompleteScope(scope);
+    this.scope = { ...scope, userId: scope.userId };
+  }
 
   async transaction<T>(
     operation: (transactionStore: AsyncHappyStateStore) => Promise<T>,
