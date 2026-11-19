@@ -77,7 +77,7 @@ export interface AsyncTenantPersistenceAdapter {
   ): Promise<T>;
 }
 
-function requireCompleteScope(
+export function requireCompleteScope(
   scope: TenantScope,
 ): asserts scope is TenantScope & { userId: string } {
   if (
