@@ -21,6 +21,22 @@ function key(
     entityType,
     id,
   ]);
+  async transaction<T>(
+    scope: CompleteScope,
+    operation: (transaction: AsyncTenantPersistenceAdapter) => Promise<T>,
+  ): Promise<T> {
+    // Test-only snapshot transaction: commit the cloned state only on success.
+    // This does not claim PostgreSQL isolation or concurrency semantics.
+    const transactionAdapter = new InMemoryTenantPersistenceAdapter();
+    transactionAdapter.records = new Map(
+      [...this.records.entries()].map(([recordKey, record]) => [
+        recordKey, structuredClone(record),
+      ]),
+    );
+    const result = await operation(transactionAdapter);
+    this.records = transactionAdapter.records;
+    return result;
+  }
 }
 
 /**
@@ -28,7 +44,7 @@ function key(
  * It is NOT durable and must never be registered as a production provider.
  */
 export class InMemoryTenantPersistenceAdapter implements AsyncTenantPersistenceAdapter {
-  private readonly records = new Map<string, TenantPersistedRecord<unknown>>();
+  private records = new Map<string, TenantPersistedRecord<unknown>>();
 
   async get<T>(
     scope: CompleteScope,
