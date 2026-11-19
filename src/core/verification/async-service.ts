@@ -5,8 +5,6 @@ import type { Mission, MissionTask } from "../mission/types";
 import type { ExecutionRequest } from "../execution/types";
 import type { VerificationRequest, VerificationResult } from "./types";
 
-const REQUEST_KEY_PREFIX = "verification-request:";
-
 function isVerificationResult(value: unknown): value is VerificationResult {
   return Boolean(
     value && typeof value === "object" &&
@@ -54,8 +52,8 @@ export class AsyncVerificationService {
       }
     }
 
-    await this.state.verification<VerificationRequest>().create(
-      REQUEST_KEY_PREFIX + normalized.id,
+    await this.state.verificationRequest<VerificationRequest>().create(
+      normalized.id,
       normalized,
     );
     return normalized;
@@ -70,8 +68,8 @@ export class AsyncVerificationService {
     if (!Array.isArray(observedEvidenceIds)) {
       throw new Error("Observed evidence IDs must be an array.");
     }
-    const storedRequest = await this.state.verification<VerificationRequest>()
-      .get(REQUEST_KEY_PREFIX + normalizedId);
+    const storedRequest = await this.state.verificationRequest<VerificationRequest>()
+      .get(normalizedId);
     if (!storedRequest) {
       throw new Error("Verification request is not registered in the active tenant.");
     }
