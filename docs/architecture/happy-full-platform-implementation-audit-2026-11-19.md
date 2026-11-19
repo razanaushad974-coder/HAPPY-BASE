@@ -229,3 +229,10 @@ The candidate intentionally depends on the canonical `private.organizations`, `p
 - RLS and real-JWT integration: NOT VERIFIED.
 - PostgreSQL CAS/concurrency/rollback tests for this schema: NOT RUN.
 - No live Supabase DDL/data write, merge, deployment, or `main` modification.
+
+
+### CAS write-surface hardening
+
+- Follow-up review found that granting direct authenticated UPDATE/DELETE would not enforce the adapter's expected-version compare-and-swap contract; RLS constrains row scope but does not prove the caller supplied the current version.
+- The schema candidate now withholds UPDATE and DELETE table privileges from `authenticated`. A narrowly reviewed user-JWT RPC (or equivalent trusted transaction boundary) must implement conditional update/delete, derive the principal from `auth.uid()`, and distinguish not-found from version-conflict using only the same tenant scope.
+- Those CAS RPCs are deliberately not implemented in this draft. Until they exist and are tested, the schema cannot back the full async adapter and remains NOT_CONNECTED.
