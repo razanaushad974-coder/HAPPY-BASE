@@ -264,9 +264,8 @@ trap 'rm -f "$holder_log" "$contender_log"' EXIT
 
 PGAPPNAME=happy-tenant-cas-holder "${psql_base[@]}" >"$holder_log" 2>&1 <<'SQL' &
 begin;
-set role authenticated;
-select set_config('request.jwt.claim.sub',
-  '30000000-0000-4000-8000-000000000003', false);
+-- Lock as the database owner because authenticated intentionally has no
+-- direct UPDATE privilege; then switch to the authenticated role for CAS.
 select record_id
   from public.happy_tenant_records
  where organization_id = '10000000-0000-4000-8000-000000000001'
@@ -274,6 +273,9 @@ select record_id
    and record_id = 'cas-concurrent-race'
  for update;
 select pg_sleep(3);
+set local role authenticated;
+select set_config('request.jwt.claim.sub',
+  '30000000-0000-4000-8000-000000000003', true);
 select (public.happy_update_tenant_record(
   '10000000-0000-4000-8000-000000000001',
   '20000000-0000-4000-8000-000000000002',
