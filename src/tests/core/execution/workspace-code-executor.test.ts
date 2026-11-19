@@ -76,7 +76,7 @@ function main(): void {
       executor.execute([
         {
           action: "CREATE",
-          path: "..\\outside.ts",
+          path: join("..", "outside.ts"),
           content: "blocked",
         },
       ]);
