@@ -114,7 +114,7 @@ export class AsyncVerificationService {
     return evidence.verificationRequestId === request.id.trim() &&
       evidence.missionId === request.missionId.trim() &&
       evidence.taskId === request.taskId.trim() &&
-      (request.executionRequestId === undefined ||
-        evidence.executionRequestId === request.executionRequestId.trim());
+      (evidence.executionRequestId || undefined) ===
+        (request.executionRequestId?.trim() || undefined);
   }
 }
