@@ -236,3 +236,10 @@ The candidate intentionally depends on the canonical `private.organizations`, `p
 - Follow-up review found that granting direct authenticated UPDATE/DELETE would not enforce the adapter's expected-version compare-and-swap contract; RLS constrains row scope but does not prove the caller supplied the current version.
 - The schema candidate now withholds UPDATE and DELETE table privileges from `authenticated`. A narrowly reviewed user-JWT RPC (or equivalent trusted transaction boundary) must implement conditional update/delete, derive the principal from `auth.uid()`, and distinguish not-found from version-conflict using only the same tenant scope.
 - Those CAS RPCs are deliberately not implemented in this draft. Until they exist and are tested, the schema cannot back the full async adapter and remains NOT_CONNECTED.
+
+
+### TypeScript CI finding — transaction facade syntax correction
+
+- GitHub Actions run `44558782916` for PR #9 checked out merge commit `7c92534bfaec00dae26848544d3176796f04e6b7` and failed at the TypeScript step. The reported errors were `TS1127` / `TS1005` on line 21 of `src/core/state/async-happy-state-store.ts`.
+- Source inspection confirmed literal backslash-n characters had been written into the transaction callback expression instead of actual line breaks. Corrected the source in commit `681297f509b1515bb8bbc73aa34cce22856e17f1`.
+- The failure occurred before test, lint, audit, and build steps; those steps were skipped. The corrected head has not yet completed CI. No validation pass is claimed.
