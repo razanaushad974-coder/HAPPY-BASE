@@ -96,8 +96,12 @@ async function main(): Promise<void> {
   if (!insert?.sql.includes("auth.uid()") || insert.values?.includes(scope.userId)) {
     throw new Error("PostgreSQL create trusted a caller-supplied user ID.");
   }
+  const claimSetup = createClient.statements.find((entry) =>
+    entry.sql.includes("request.jwt.claim.sub"),
+  );
   if (!createClient.statements.some((entry) => entry.sql === "SET LOCAL ROLE authenticated") ||
-      !createClient.statements.some((entry) => entry.sql.includes("request.jwt.claim.sub")) ||
+      !claimSetup?.values?.includes("15000ms") ||
+      !claimSetup.values.includes("30000ms") ||
       !createClient.statements.some((entry) => entry.sql === "COMMIT") ||
       !createClient.released) {
     throw new Error("PostgreSQL user session was not established and cleaned up.");
@@ -147,6 +151,9 @@ async function main(): Promise<void> {
     await tx.create(scope, "TASK", "transaction-task", { missionId: "transaction-mission" });
     await tx.transaction(scope, async (nested) => {
       await nested.create(scope, "EVIDENCE", "transaction-evidence", { proof: "nested savepoint" });
+      await nested.transaction(scope, async (deepest) => {
+        await deepest.create(scope, "AUDIT_EVENT", "transaction-audit", { action: "nested twice" });
+      });
     });
   });
   const transactionClients = pool.clients.slice(beforeTransactionConnections);
@@ -156,8 +163,10 @@ async function main(): Promise<void> {
   const transactionSql = transactionClients[0].statements.map((entry) => entry.sql);
   if (transactionSql.filter((sql) => sql === "BEGIN").length !== 1 ||
       transactionSql.filter((sql) => sql === "COMMIT").length !== 1 ||
-      !transactionSql.some((sql) => sql.startsWith("SAVEPOINT happy_nested_")) ||
-      !transactionSql.some((sql) => sql.startsWith("RELEASE SAVEPOINT happy_nested_"))) {
+      !transactionSql.includes("SAVEPOINT happy_nested_1") ||
+      !transactionSql.includes("SAVEPOINT happy_nested_2") ||
+      !transactionSql.includes("RELEASE SAVEPOINT happy_nested_1") ||
+      !transactionSql.includes("RELEASE SAVEPOINT happy_nested_2")) {
     throw new Error("PostgreSQL transaction did not preserve one transaction and nested savepoint.");
   }
 
