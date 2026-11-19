@@ -128,3 +128,11 @@ Reviewed `supabase/drafts/20261119_file_mutation_atomic_consume_candidate.sql` a
 - Added sequential denial checks for suspended organization, suspended workspace, and CANCELLED execution request.
 - These are source-level harness additions only. The new scenarios have not yet been executed in CI or against a disposable PostgreSQL instance in this turn; no test pass is claimed.
 - The candidate remains design-only. No live Supabase migration/data write, merge, deployment, or `main` modification occurred. FILE READ/mutations remain default-deny.
+
+
+### PostgreSQL race harness output correction — 2026-11-19
+- Follow-up review found the consume-first organization-suspension race test had a malformed result-extraction command and used aligned psql output, so its expected boolean could not be reliably parsed.
+- Corrected the test connection to use quiet/unaligned/tuples-only output and the explicit grep -E '^(t|f)$' filter. Commit: df14946bb723b6c7e20a2c283a750433eed304e9.
+- This is a source correction only. The disposable PostgreSQL integration harness has not yet been executed against this exact head; no test pass is claimed.
+- The remaining sleep-based race coordination is a timing-based fixture and should be made deterministic or exercised repeatedly before treating the race assertions as conclusive.
+- No live Supabase DDL/data write, merge, deployment, or main change.
