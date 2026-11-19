@@ -237,4 +237,59 @@ psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
 actual="$(invoke_grant '10000000-0000-0000-0000-000000000016' 'cancelled-request-1' "$EXECUTOR")"
 expect_result f "$actual" 'cancelled execution request'
 
+
+# Forced organization-suspension race: suspension commits first, consume denies.
+seed_grant '10000000-0000-0000-0000-000000000017' 'suspend-first-1'
+psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+ BEGIN;
+ UPDATE private.organizations SET status='SUSPENDED' WHERE organization_id='$ORG';
+ SELECT pg_sleep(1.5);
+ COMMIT;" &
+suspend_first_pid=$!
+sleep 0.2
+actual="$(invoke_grant '10000000-0000-0000-0000-000000000017' 'suspend-first-1' "$EXECUTOR")"
+wait "$suspend_first_pid"
+expect_result f "$actual" 'organization suspension commits before consume'
+audit_count="$(psql "$DATABASE_URL" -XqAt -c "SELECT count(*) FROM private.file_mutation_approval_events WHERE grant_id='10000000-0000-0000-0000-000000000017';")"
+expect_result 0 "$audit_count" 'no audit after suspension-first race'
+
+# Forced reverse order: consume commits first; later suspension cannot retroactively deny it.
+seed_grant '10000000-0000-0000-0000-000000000018' 'consume-first-suspend-1'
+psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+ BEGIN;
+ SET LOCAL ROLE authenticated;
+ SET LOCAL request.jwt.claim.sub = '$EXECUTOR';
+ SELECT public.consume_file_mutation_approval_grant(
+  '10000000-0000-0000-0000-000000000018','$ORG','$WS',
+  'consume-first-suspend-1','task-consume-first-suspend-1','mission-consume-first-suspend-1',
+  'file-consume-first-suspend-1','MODIFY','source-consume-first-suspend-1',NULL,'$DIGEST'
+ );
+ SELECT pg_sleep(1.5);
+ COMMIT;" > /tmp/happy-txn-consume-first-suspend.out &
+consume_first_pid=$!
+sleep 0.2
+psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+ UPDATE private.organizations SET status='SUSPENDED' WHERE organization_id='$ORG';"
+wait "$consume_first_pid"
+consume_first_result="$(grep -E '^(t|f)
+ /tmp/happy-txn-consume-first-suspend.out | tail -n 1)"
+expect_result t "$consume_first_result" 'consume commits before later suspension'
+audit_count="$(psql "$DATABASE_URL" -XqAt -c "SELECT count(*) FROM private.file_mutation_approval_events WHERE grant_id='10000000-0000-0000-0000-000000000018' AND event_type='CONSUMED';")"
+expect_result 1 "$audit_count" 'one audit after consume-first race'
+
+# Forced request-cancellation race: cancellation commits first, consume denies.
+seed_grant '10000000-0000-0000-0000-000000000019' 'cancel-first-1'
+psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+ BEGIN;
+ UPDATE private.execution_requests SET status='CANCELLED' WHERE request_id='cancel-first-1';
+ SELECT pg_sleep(1.5);
+ COMMIT;" &
+cancel_first_pid=$!
+sleep 0.2
+actual="$(invoke_grant '10000000-0000-0000-0000-000000000019' 'cancel-first-1' "$EXECUTOR")"
+wait "$cancel_first_pid"
+expect_result f "$actual" 'request cancellation commits before consume'
+audit_count="$(psql "$DATABASE_URL" -XqAt -c "SELECT count(*) FROM private.file_mutation_approval_events WHERE grant_id='10000000-0000-0000-0000-000000000019';")"
+expect_result 0 "$audit_count" 'no audit after cancellation-first race'
+
 echo "PASS: migration-candidate RPC; JWT-derived executor; distinct principals; exact binding; expiry/replay; live approver/executor membership and role checks; one audit; concurrent single winner; revoke-vs-consume serialization; anon invocation denial."
