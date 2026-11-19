@@ -228,3 +228,67 @@ export class SupabaseNamedExecutorGrantStore implements NamedExecutorGrantStore 
     }
   }
 }
+
+
+/**
+ * A narrow RPC boundary for the transactional consume function. The supplied
+ * client MUST be a server-side, user-scoped Supabase client carrying the
+ * executor's verified JWT. A service-role client is not valid here because
+ * auth.uid() must resolve to the end-user executor inside PostgreSQL.
+ */
+export interface VerifiedExecutorUserScopedRpcClient {
+  rpc(
+    functionName: "consume_file_mutation_approval_grant",
+    args: Record<string, unknown>,
+  ): Promise<DatabaseResult>;
+}
+
+/**
+ * Production-shaped adapter for the database transaction candidate.
+ * Grant discovery may use a separate trusted private-schema reader, but the
+ * final consume always runs through the executor's user-scoped JWT RPC client.
+ * No requester/executor/approver IDs are sent to the RPC: the database derives
+ * them from auth.uid(), the durable execution request, and the persisted grant.
+ */
+export class SupabaseTransactionalNamedExecutorGrantStore implements NamedExecutorGrantStore {
+  constructor(
+    private readonly lookupStore: Pick<NamedExecutorGrantStore, "getApprovedGrant">,
+    private readonly executorRpcClient: VerifiedExecutorUserScopedRpcClient,
+  ) {}
+
+  getApprovedGrant(
+    scope: { organizationId: string; workspaceId: string },
+    binding: NamedExecutorGrantLookup,
+  ): Promise<NamedExecutorGrant | null> {
+    return this.lookupStore.getApprovedGrant(scope, binding);
+  }
+
+  async consumeApprovedGrant(
+    scope: { organizationId: string; workspaceId: string },
+    grantId: string,
+    binding: NamedExecutorGrantBinding,
+    _consumedAt: string,
+  ): Promise<boolean> {
+    try {
+      const result = await this.executorRpcClient.rpc(
+        "consume_file_mutation_approval_grant",
+        {
+          p_grant_id: grantId,
+          p_organization_id: scope.organizationId,
+          p_workspace_id: scope.workspaceId,
+          p_request_id: binding.requestId,
+          p_task_id: binding.taskId,
+          p_mission_id: binding.missionId,
+          p_target_entity_id: binding.targetEntityId,
+          p_operation: binding.operation,
+          p_source_path: binding.sourcePath,
+          p_destination_path: binding.destinationPath,
+          p_input_digest: binding.inputDigest,
+        },
+      );
+      return !result.error && result.data === true;
+    } catch {
+      return false;
+    }
+  }
+}
