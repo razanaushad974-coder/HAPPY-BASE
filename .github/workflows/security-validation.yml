@@ -11,6 +11,7 @@ on:
       - "src/core/approval/**"
       - "src/core/tenant/**"
       - "src/core/execution/**"
+      - "src/core/evidence/**"
       - "src/core/orchestration/**"
       - "src/core/mission/**"
       - "src/core/persistence/**"
@@ -19,6 +20,7 @@ on:
       - "src/core/verification/**"
       - "src/tests/core/approval/**"
       - "src/tests/core/tenant/**"
+      - "src/tests/core/evidence/**"
       - "src/tests/core/orchestration/**"
       - "src/tests/core/mission/**"
       - "src/tests/core/persistence/**"
@@ -64,6 +66,8 @@ jobs:
         run: npx --yes tsx@4.23.15 src/tests/core/persistence/async-persistent-memory.test.ts
       - name: Async HAPPY state store contract
         run: npx --yes tsx@4.23.15 src/tests/core/state/async-happy-state-store.test.ts
+      - name: Async tenant evidence contract
+        run: npx --yes tsx@4.23.15 src/tests/core/evidence/async-evidence-service.test.ts
       - name: Orchestration and mission harnesses
         run: npx --yes tsx@4.23.15 src/tests/core/orchestration/orchestration.test.ts && npx --yes tsx@4.23.15 src/tests/core/mission/mission-task-graph.test.ts
       - name: ESLint
