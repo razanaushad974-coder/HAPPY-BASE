@@ -1,0 +1,53 @@
+name: HAPPY security validation
+
+on:
+  pull_request:
+    branches:
+      - main
+      - happy/server-verified-pipeline-approval
+    paths:
+      - "src/core/approval/**"
+      - "src/core/tenant/**"
+      - "src/core/execution/**"
+      - "src/tests/core/approval/**"
+      - "src/tests/core/tenant/**"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig.json"
+      - ".github/workflows/security-validation.yml"
+  push:
+    branches:
+      - security/durable-file-mutation-grants
+
+permissions:
+  contents: read
+
+concurrency:
+  group: happy-security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Typecheck, tests, lint, audit, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: TypeScript
+        run: npx tsc --noEmit
+      - name: Security harnesses
+        run: npm run test:security
+      - name: ESLint
+        run: npm run lint
+      - name: Dependency audit
+        run: npm audit --audit-level=low
+      - name: Production build
+        run: npm run build
