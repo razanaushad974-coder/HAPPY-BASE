@@ -138,6 +138,53 @@ expect_result f "$actual" 'revocation commits before consume'
 audit_count="$(psql "$DATABASE_URL" -XqAt -c "SELECT count(*) FROM private.file_mutation_approval_events WHERE grant_id='10000000-0000-0000-0000-000000000009';")"
 expect_result 0 "$audit_count" 'no audit on denied consume'
 
+seed_grant '10000000-0000-0000-0000-000000000011' 'role-downgrade-race-1'
+psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+ BEGIN;
+ UPDATE private.organization_memberships SET role='MEMBER'
+ WHERE organization_id='$ORG' AND user_id='$APPROVER';
+ SELECT pg_sleep(1.5);
+ COMMIT;" &
+downgrade_pid=$!
+sleep 0.2
+actual="$(invoke_grant '10000000-0000-0000-0000-000000000011' 'role-downgrade-race-1' "$EXECUTOR")"
+wait "$downgrade_pid"
+expect_result f "$actual" 'role downgrade commits before consume'
+audit_count="$(psql "$DATABASE_URL" -XqAt -c "SELECT count(*) FROM private.file_mutation_approval_events WHERE grant_id='10000000-0000-0000-0000-000000000011';")"
+expect_result 0 "$audit_count" 'no audit on role-downgrade denied consume'
+
+seed_grant '10000000-0000-0000-0000-000000000012' 'null-binding-1'
+actual="$(psql "$DATABASE_URL" -XqAt -v ON_ERROR_STOP=1 -c "
+ BEGIN;
+ SET LOCAL ROLE authenticated;
+ SET LOCAL request.jwt.claim.sub = '$EXECUTOR';
+ SELECT public.consume_file_mutation_approval_grant(
+  '10000000-0000-0000-0000-000000000012','$ORG','$WS',
+  'null-binding-1','task-null-binding-1','mission-null-binding-1',
+  NULL,'MODIFY','source-null-binding-1',NULL,'$DIGEST'
+ );
+ COMMIT;" | grep -E '^(t|f)
+actual="$(invoke_grant '10000000-0000-0000-0000-000000000010' 'consume-before-revoke-1' "$EXECUTOR")"
+expect_result t "$actual" 'consume before later revocation'
+psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+ UPDATE private.organization_memberships SET status='REVOKED'
+ WHERE organization_id='$ORG' AND user_id='$APPROVER';"
+
+if psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+ SET ROLE anon;
+ SELECT public.consume_file_mutation_approval_grant(
+  '10000000-0000-0000-0000-000000000010','$ORG','$WS',
+  'consume-before-revoke-1','task-consume-before-revoke-1','mission-consume-before-revoke-1',
+  'file-consume-before-revoke-1','MODIFY','source-consume-before-revoke-1',NULL,'$DIGEST'
+ );" >/dev/null 2>&1; then
+  echo "FAIL: anon role invoked privileged consume RPC" >&2
+  exit 1
+fi
+
+echo "PASS: migration-candidate RPC; JWT-derived executor; distinct principals; exact binding; expiry/replay; live approver/executor membership and role checks; one audit; concurrent single winner; revoke-vs-consume serialization; anon invocation denial."
+ | tail -n 1)"
+expect_result f "$actual" 'NULL target binding'
+
 seed_grant '10000000-0000-0000-0000-000000000010' 'consume-before-revoke-1'
 actual="$(invoke_grant '10000000-0000-0000-0000-000000000010' 'consume-before-revoke-1' "$EXECUTOR")"
 expect_result t "$actual" 'consume before later revocation'
