@@ -15,12 +15,11 @@ psql_base=(psql -X -v ON_ERROR_STOP=1)
 set role authenticated;
 select set_config('request.jwt.claim.sub',
   '30000000-0000-4000-8000-000000000003', false);
-insert into public.happy_tenant_records
-  (organization_id, workspace_id, user_id, entity_type, record_id, version, data)
-values
-  ('10000000-0000-4000-8000-000000000001',
-   '20000000-0000-4000-8000-000000000002',
-   auth.uid(), 'MISSION', 'cas-concurrent-race', 1, '{"goal":"race"}');
+select * from public.happy_create_tenant_record(
+  '10000000-0000-4000-8000-000000000001',
+  '20000000-0000-4000-8000-000000000002',
+  'MISSION', 'cas-concurrent-race', '{"goal":"race"}'
+);
 SQL
 
 holder_log="$(mktemp)"
