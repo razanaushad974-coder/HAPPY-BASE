@@ -63,6 +63,8 @@ jobs:
         run: npm run test:security
       - name: Async tenant persistence contract
         run: npx --yes tsx@4.23.15 src/tests/core/persistence/async-tenant-repository.test.ts
+      - name: Persistence provider durability contract
+        run: npx --yes tsx@4.23.15 src/tests/core/persistence/persistence-provider-durability.test.ts
       - name: Async tenant memory contract
         run: npx --yes tsx@4.23.15 src/tests/core/persistence/async-persistent-memory.test.ts
       - name: Async HAPPY state store contract
