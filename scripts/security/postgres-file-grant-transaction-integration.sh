@@ -81,6 +81,21 @@ invoke_grant() {
 }
 
 
+
+wait_for_lock_holder_sleep() {
+  local application_name="$1"
+  local attempt sleeping
+  for attempt in $(seq 1 200); do
+    sleeping="$(psql "$DATABASE_URL" -XqAt -c "SELECT count(*) FROM pg_stat_activity WHERE application_name='$application_name' AND state='active' AND wait_event='PgSleep';")"
+    if [[ "$sleeping" -gt 0 ]]; then
+      return 0
+    fi
+    sleep 0.05
+  done
+  echo "FAIL: timed out waiting for PostgreSQL lock holder to acquire lock: $application_name" >&2
+  return 1
+}
+
 wait_for_lock_wait() {
   local application_name="$1"
   local attempt waiting
@@ -169,13 +184,14 @@ audit_count="$(psql "$DATABASE_URL" -XqAt -c "SELECT count(*) FROM private.file_
 expect_result 1 "$audit_count" 'concurrent audit count'
 
 seed_grant '10000000-0000-0000-0000-000000000009' 'revoke-race-1'
-psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+PGAPPNAME=happy-revoke-lock-holder psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
  BEGIN;
  UPDATE private.organization_memberships SET status='REVOKED'
  WHERE organization_id='$ORG' AND user_id='$APPROVER';
  SELECT pg_sleep(15);
  COMMIT;" &
 revoke_pid=$!
+wait_for_lock_holder_sleep happy-revoke-lock-holder
 invoke_grant '10000000-0000-0000-0000-000000000009' 'revoke-race-1' "$EXECUTOR" "$DIGEST" 'happy-revoke-consumer' > /tmp/happy-revoke-consumer.out &
 revoke_consumer_pid=$!
 wait_for_lock_wait happy-revoke-consumer
@@ -187,13 +203,14 @@ audit_count="$(psql "$DATABASE_URL" -XqAt -c "SELECT count(*) FROM private.file_
 expect_result 0 "$audit_count" 'no audit on denied consume'
 
 seed_grant '10000000-0000-0000-0000-000000000011' 'role-downgrade-race-1'
-psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+PGAPPNAME=happy-downgrade-lock-holder psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
  BEGIN;
  UPDATE private.organization_memberships SET role='MEMBER'
  WHERE organization_id='$ORG' AND user_id='$APPROVER';
  SELECT pg_sleep(15);
  COMMIT;" &
 downgrade_pid=$!
+wait_for_lock_holder_sleep happy-downgrade-lock-holder
 invoke_grant '10000000-0000-0000-0000-000000000011' 'role-downgrade-race-1' "$EXECUTOR" "$DIGEST" 'happy-downgrade-consumer' > /tmp/happy-downgrade-consumer.out &
 downgrade_consumer_pid=$!
 wait_for_lock_wait happy-downgrade-consumer
@@ -261,12 +278,13 @@ expect_result f "$actual" 'cancelled execution request'
 
 # Forced organization-suspension race: suspension commits first, consume denies.
 seed_grant '10000000-0000-0000-0000-000000000017' 'suspend-first-1'
-psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+PGAPPNAME=happy-suspend-first-lock-holder psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
  BEGIN;
  UPDATE private.organizations SET status='SUSPENDED' WHERE organization_id='$ORG';
  SELECT pg_sleep(15);
  COMMIT;" &
 suspend_first_pid=$!
+wait_for_lock_holder_sleep happy-suspend-first-lock-holder
 invoke_grant '10000000-0000-0000-0000-000000000017' 'suspend-first-1' "$EXECUTOR" "$DIGEST" 'happy-suspend-first-consumer' > /tmp/happy-suspend-first-consumer.out &
 suspend_consumer_pid=$!
 wait_for_lock_wait happy-suspend-first-consumer
@@ -291,6 +309,7 @@ PGAPPNAME=happy-consume-first-blocker psql "$DATABASE_URL" -XqAt -v ON_ERROR_STO
  SELECT pg_sleep(15);
  COMMIT;" > /tmp/happy-txn-consume-first-suspend.out &
 consume_first_pid=$!
+wait_for_lock_holder_sleep happy-consume-first-blocker
 PGAPPNAME=happy-consume-first-suspender psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
  UPDATE private.organizations SET status='SUSPENDED' WHERE organization_id='$ORG';" &
 suspender_pid=$!
@@ -304,12 +323,13 @@ expect_result 1 "$audit_count" 'one audit after consume-first race'
 
 # Forced request-cancellation race: cancellation commits first, consume denies.
 seed_grant '10000000-0000-0000-0000-000000000019' 'cancel-first-1'
-psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+PGAPPNAME=happy-cancel-first-lock-holder psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
  BEGIN;
  UPDATE private.execution_requests SET status='CANCELLED' WHERE request_id='cancel-first-1';
  SELECT pg_sleep(15);
  COMMIT;" &
 cancel_first_pid=$!
+wait_for_lock_holder_sleep happy-cancel-first-lock-holder
 invoke_grant '10000000-0000-0000-0000-000000000019' 'cancel-first-1' "$EXECUTOR" "$DIGEST" 'happy-cancel-first-consumer' > /tmp/happy-cancel-first-consumer.out &
 cancel_consumer_pid=$!
 wait_for_lock_wait happy-cancel-first-consumer
