@@ -22,6 +22,8 @@ Do not register a Postgres/Supabase provider or claim multi-instance durability 
 | `src/core/evidence/repository.ts` | `InMemoryEvidenceRepository` stores records in a process-local `Map`. | Evidence disappears on process restart and is not durable or queryable across workers/instances. |
 | `src/core/evidence/service.ts` | Delegates capture/get/list operations to an injected `EvidenceRepository`. | The service boundary is suitable for adapter injection, but current engine composition selects the in-memory implementation. |
 | `src/core/state/async-happy-state-store.ts` and `src/core/persistence/async-tenant-repository.ts` | Adapter-injected async repository facade with complete org/workspace/user scope and version-aware update/delete contracts. | Good target contract; no production Postgres adapter or orchestration composition is established by these files. |
+| `src/core/persistence/provider-registry.ts` | Registry reports `FILE` as `AVAILABLE` and `durable: true`, while Postgres/Supabase remain `NOT_YET_CONNECTED`. | The generic `durable` flag is ambiguous: a local file can survive a process restart on one host, but does not provide transactional, tenant-isolated, multi-instance runtime durability. Product/API wording must distinguish local persistence from production-grade durability. |
+| `src/core/state/types.ts` and `src/core/state/factory.ts` | Legacy `TenantScope.userId` is optional and `createTenantScope()` validates only organization/workspace; the async repository contract separately requires complete scope. | Do not reuse the legacy factory as proof of an authenticated principal. The production server boundary must provide a verified non-empty user ID before constructing the async store. |
 | `src/core/persistence/adapters/in-memory-tenant-adapter.ts` | Deterministic in-memory adapter for tests/development. | Test adapter only; it is not a production substitute and its in-process behavior does not prove database atomicity. |
 
 ## Concrete correctness and security gaps to close
@@ -32,7 +34,7 @@ Do not register a Postgres/Supabase provider or claim multi-instance durability 
 4. **Lifecycle and authorization:** membership changes, approval state transitions, execution request ownership, and task/mission relationships need transactionally enforced rules.
 5. **Evidence durability:** evidence metadata and provenance need durable tenant-scoped storage. Blob/object storage, if introduced, must bind immutable object identity/checksum to the evidence record and verify access independently.
 6. **Multi-process behavior:** migrations must prove duplicate-create handling, concurrent CAS single-winner behavior, transaction rollback, and process/worker coordination against PostgreSQL.
-7. **Migration safety:** no production migration or adapter activation until schema ownership, grants, RLS policies, indexes, retention, backup/restore, and rollback are reviewed.
+7. **Provider truthfulness:** distinguish local single-host file persistence from transactional multi-instance durability; do not advertise the generic FILE `durable: true` flag as production durability.\n8. **Migration safety:** no production migration or adapter activation until schema ownership, grants, RLS policies, indexes, retention, backup/restore, and rollback are reviewed.
 
 ## Required production adapter contract
 
