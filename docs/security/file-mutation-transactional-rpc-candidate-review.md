@@ -30,7 +30,7 @@ This means the production consume client must be a server-side, user-scoped Supa
 - scripts/security/postgres-file-grant-transaction-integration.sh
   - Runs the candidate against a disposable PostgreSQL database.
   - Stubs only auth.users and auth.uid() to emulate the Supabase database contract; it does not test the external JWT verifier or a live Supabase deployment.
-  - Tests distinct requester/approver/executor, JWT executor mismatch, exact digest binding, expiry, replay, revoked/demoted approver, revoked executor, one audit event, concurrent single-winner consumption, revocation-first blocking, consume-first serialization, and anon EXECUTE denial.
+  - Tests distinct requester/approver/executor, JWT executor mismatch, exact digest binding, expiry, replay, revoked/demoted approver, revoked executor, one audit event, concurrent single-winner consumption, revocation-first blocking, consume-first serialization, role-downgrade race, NULL target binding denial, and anon EXECUTE denial.
 
 - .github/workflows/postgres-security-integration.yml
   - Runs the original fixture and this candidate-RPC integration script in an isolated PostgreSQL 17 service container.
