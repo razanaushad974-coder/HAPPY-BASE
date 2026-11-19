@@ -119,3 +119,12 @@ Reviewed `supabase/drafts/20261119_file_mutation_atomic_consume_candidate.sql` a
 - The design candidate now requires active approver membership in the exact organization/workspace, while keeping FOUNDER/ADMIN authority exclusively organization-role based. Workspace role does not confer approval authority.
 - Executor and approver workspace-membership rows are locked in deterministic user-ID order. The disposable PostgreSQL harness now includes a revoked-approver-workspace denial case.
 - This is still a design/test candidate only. CI must validate the updated disposable PostgreSQL script. No live Supabase migration/data write, merge, deployment, or `main` modification.
+
+
+## FILE approval suspension/cancellation race follow-up (2026-11-19)
+
+- Extended the disposable PostgreSQL candidate harness with forced organization-suspension-first and consume-first schedules. Suspension-first must deny consumption without an audit event; consume-first must succeed at its serialization point, with a later suspension not retroactively undoing the consumed grant.
+- Added a forced request-cancellation-first schedule. Cancellation must commit before consume, which must then deny without an audit event.
+- Added sequential denial checks for suspended organization, suspended workspace, and CANCELLED execution request.
+- These are source-level harness additions only. The new scenarios have not yet been executed in CI or against a disposable PostgreSQL instance in this turn; no test pass is claimed.
+- The candidate remains design-only. No live Supabase migration/data write, merge, deployment, or `main` modification occurred. FILE READ/mutations remain default-deny.
