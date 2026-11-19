@@ -191,3 +191,13 @@ Reviewed `supabase/drafts/20261119_file_mutation_atomic_consume_candidate.sql` a
 - Added `TenantBoundTransactionAdapter`, which checks exact organization, workspace, and user equality before every read/list/create/update/delete and binds delegated calls to the original scope. Nested transaction callbacks are wrapped again.
 - Applied the scope-bound facade at both the async state-store boundary and the in-memory test-adapter boundary. Added a regression test that attempts to switch from user A to user B inside a transaction and expects `INVALID_TENANT_SCOPE`.
 - This is defense-in-depth at the application contract. A production adapter must still enforce tenant scope in SQL predicates and RLS; callback wrappers are not a substitute for database authorization.
+
+
+
+
+### Persistence provider capability labeling — 2026-11-19
+
+- The provider registry previously exposed a single `durable: true` flag for FILE, POSTGRES, SUPABASE, and SQLITE, even when database providers were `NOT_YET_CONNECTED`. That conflated persistence at rest, local-host durability, and production transactional availability.
+- Added `durabilityScope`: MEMORY = `PROCESS_LOCAL`; FILE = `SINGLE_HOST_FILE`; unconnected database providers = `NOT_CONNECTED`. The legacy `durable` boolean remains for compatibility: MEMORY false, FILE true (local file persistence), and unavailable database providers false until connected.
+- Added a standalone provider contract test and wired it into the security-validation workflow.
+- No provider was connected or activated; no runtime storage migration was performed.
