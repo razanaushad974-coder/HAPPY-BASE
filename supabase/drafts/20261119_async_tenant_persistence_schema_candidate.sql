@@ -358,13 +358,13 @@ grant execute on function public.happy_delete_tenant_record(uuid, uuid, text, te
 --    approval candidate revokes private schema usage from authenticated and
 --    grants it to service_role. This helper therefore needs a deliberately
 --    reviewed owner/privilege design; do not assume it can read those tables.
--- 3. Verify function owner, BYPASSRLS, FORCE ROW LEVEL SECURITY behavior,
+-- 3. Verify function owners, BYPASSRLS, FORCE ROW LEVEL SECURITY behavior,
 --    table grants, function grants, and auth.uid() with real user JWTs.
--- 4. Implement reviewed CAS update/delete RPCs before enabling those writes;
---    direct authenticated UPDATE/DELETE is deliberately revoked. Test cross-user,
+-- 4. Direct authenticated UPDATE/DELETE is deliberately revoked; only the
+--    conditional CAS RPCs above may mutate existing records. Test cross-user,
 --    cross-workspace, suspended/revoked membership, duplicate create, stale CAS
---    update/delete, concurrent writers, and rollback using
---    disposable PostgreSQL plus actual Supabase JWT integration.
+--    update/delete, concurrent writers, and rollback using disposable PostgreSQL
+--    plus actual Supabase JWT integration.
 -- 5. Decide retention, audit/event coupling, payload size limits, and entity
 --    lifecycle constraints. This generic record table does not replace typed
 --    relational constraints for approval/execution lifecycle tables.
