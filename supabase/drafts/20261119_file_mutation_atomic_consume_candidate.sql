@@ -108,7 +108,10 @@ alter table private.file_mutation_approval_events enable row level security;
 revoke all on schema private from public, anon, authenticated;
 revoke all on all tables in schema private from public, anon, authenticated;
 grant usage on schema private to service_role;
-grant select, insert, update, delete on all tables in schema private to service_role;
+grant select, insert, update on private.organizations, private.workspaces,
+  private.organization_memberships, private.workspace_memberships,
+  private.execution_requests, private.file_mutation_approval_grants to service_role;
+grant select, insert on private.file_mutation_approval_events to service_role;
 
 create or replace function public.consume_file_mutation_approval_grant(
   p_grant_id uuid,
