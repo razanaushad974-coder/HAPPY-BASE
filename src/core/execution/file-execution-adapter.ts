@@ -138,6 +138,18 @@ export interface FileMutationAuthorizer {
   ): Promise<boolean>;
 }
 
+/**
+ * FILE READs require an independently scoped server-side authorization
+ * decision. This must validate the authenticated session, tenant membership,
+ * and server-resolved workspace/path scope; targetReference is not authority.
+ */
+export interface FileReadAuthorizer {
+  authorizeRead(
+    request: ExecutionRequest,
+    operation: WorkspaceFileOperationRequest,
+  ): Promise<boolean>;
+}
+
 export class FileExecutionAdapter
   implements ExecutionAdapter
 {
@@ -147,6 +159,7 @@ export class FileExecutionAdapter
     private readonly executor: WorkspaceCodeExecutor =
       new WorkspaceCodeExecutor(),
     private readonly mutationAuthorizer?: FileMutationAuthorizer,
+    private readonly readAuthorizer?: FileReadAuthorizer,
   ) {}
 
   status(): AdapterStatus {
@@ -209,32 +222,29 @@ export class FileExecutionAdapter
       };
     }
 
-    if (operation.action !== "READ") {
-      let authorized = false;
+    let authorized = false;
+    try {
+      authorized = operation.action === "READ"
+        ? this.readAuthorizer !== undefined &&
+          await this.readAuthorizer.authorizeRead(request, operation)
+        : this.mutationAuthorizer !== undefined &&
+          await this.mutationAuthorizer.authorize(request, operation);
+    } catch {
+      // Both read and mutation authorization failures must fail closed.
+      authorized = false;
+    }
 
-      try {
-        authorized =
-          this.mutationAuthorizer !== undefined &&
-          await this.mutationAuthorizer.authorize(
-            request,
-            operation,
-          );
-      } catch {
-        // Authorization failures must never fall through to file mutation.
-        authorized = false;
-      }
-
-      if (!authorized) {
-        return {
-          ...baseResult(
-            request,
-            "WAITING_APPROVAL",
-            startedAt,
-          ),
-          error:
-            "File mutation requires a server-verified approval authorizer.",
-        };
-      }
+    if (!authorized) {
+      return {
+        ...baseResult(
+          request,
+          operation.action === "READ" ? "BLOCKED" : "WAITING_APPROVAL",
+          startedAt,
+        ),
+        error: operation.action === "READ"
+          ? "File READ requires a server-verified scoped read authorizer."
+          : "File mutation requires a server-verified approval authorizer.",
+      };
     }
 
     const result =
