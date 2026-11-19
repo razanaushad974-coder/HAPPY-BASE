@@ -20,6 +20,7 @@ export type EntityType =
   | "TASK"
   | "EXECUTION"
   | "VERIFICATION"
+  | "VERIFICATION_REQUEST"
   | "EVIDENCE"
   | "MEMORY"
   | "APPROVAL"
