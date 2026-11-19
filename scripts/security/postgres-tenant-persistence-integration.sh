@@ -129,12 +129,11 @@ set role authenticated;
 select set_config('request.jwt.claim.sub',
   '30000000-0000-4000-8000-000000000003', false);
 
-insert into public.happy_tenant_records
-  (organization_id, workspace_id, user_id, entity_type, record_id, version, data)
-values
-  ('10000000-0000-4000-8000-000000000001',
-   '20000000-0000-4000-8000-000000000002',
-   auth.uid(), 'MISSION', 'mission-cas', 1, '{"goal":"initial"}');
+select * from public.happy_create_tenant_record(
+  '10000000-0000-4000-8000-000000000001',
+  '20000000-0000-4000-8000-000000000002',
+  'MISSION', 'mission-cas', '{"goal":"initial"}'
+);
 
 do $checks$
 declare
@@ -190,12 +189,11 @@ begin
 end
 $checks$;
 
-insert into public.happy_tenant_records
-  (organization_id, workspace_id, user_id, entity_type, record_id, version, data)
-values
-  ('10000000-0000-4000-8000-000000000001',
-   '20000000-0000-4000-8000-000000000002',
-   auth.uid(), 'MISSION', 'private-to-user-a', 1, '{"goal":"private"}');
+select * from public.happy_create_tenant_record(
+  '10000000-0000-4000-8000-000000000001',
+  '20000000-0000-4000-8000-000000000002',
+  'MISSION', 'private-to-user-a', '{"goal":"private"}'
+);
 
 select set_config('request.jwt.claim.sub',
   '40000000-0000-4000-8000-000000000004', false);
@@ -230,13 +228,23 @@ begin
   if v_visible <> 0 then raise exception 'revoked workspace member can read tenant rows'; end if;
 
   begin
+    perform public.happy_create_tenant_record(
+      '10000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000002',
+      'MISSION', 'revoked-rpc-create', '{"goal":"denied"}'
+    );
+    raise exception 'revoked workspace member create RPC unexpectedly succeeded';
+  exception when insufficient_privilege then null;
+  end;
+
+  begin
     insert into public.happy_tenant_records
       (organization_id, workspace_id, user_id, entity_type, record_id, version, data)
     values
       ('10000000-0000-4000-8000-000000000001',
        '20000000-0000-4000-8000-000000000002',
-       auth.uid(), 'MISSION', 'revoked-insert', 1, '{"goal":"denied"}');
-    raise exception 'revoked workspace member insert unexpectedly succeeded';
+       auth.uid(), 'MISSION', 'revoked-direct-insert', 1, '{"goal":"denied"}');
+    raise exception 'direct authenticated INSERT unexpectedly succeeded';
   exception when insufficient_privilege then null;
   end;
 end
@@ -246,6 +254,9 @@ reset role;
 
 do $privileges$
 begin
+  if has_table_privilege('authenticated', 'public.happy_tenant_records', 'INSERT') then
+    raise exception 'authenticated has direct INSERT privilege';
+  end if;
   if has_table_privilege('authenticated', 'public.happy_tenant_records', 'UPDATE') then
     raise exception 'authenticated has direct UPDATE privilege';
   end if;
