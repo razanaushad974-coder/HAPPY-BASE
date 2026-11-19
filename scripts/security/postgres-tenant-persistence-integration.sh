@@ -267,6 +267,12 @@ begin
   if has_table_privilege('authenticated', 'public.happy_tenant_records', 'INSERT') then
     raise exception 'authenticated has direct INSERT privilege';
   end if;
+  if has_function_privilege('authenticated', 'public.happy_lock_active_tenant_scope(uuid,uuid)', 'EXECUTE') then
+    raise exception 'authenticated can invoke the internal membership lock helper';
+  end if;
+  if has_function_privilege('service_role', 'public.happy_create_tenant_record(uuid,uuid,text,text,jsonb)', 'EXECUTE') then
+    raise exception 'service_role can invoke the user-scoped create RPC';
+  end if;
   if has_table_privilege('authenticated', 'public.happy_tenant_records', 'UPDATE') then
     raise exception 'authenticated has direct UPDATE privilege';
   end if;
