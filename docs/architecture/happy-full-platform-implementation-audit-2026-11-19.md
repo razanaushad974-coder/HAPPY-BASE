@@ -12,6 +12,7 @@ Evidence observed:
 - The security feature branch contains 208 tracked files, 177 under `src/`, and 55 test/spec files; it adds tenant and approval security work, but it remains a draft PR chain and is not merged to `main`.
 - `src/app/page.tsx` on `main` is the unmodified Next.js starter screen; `src/app/layout.tsx` still uses Create Next App metadata.
 - `HappyOrchestrationEngine` uses a local JSON-file persistence adapter and in-memory evidence repository. The current pipeline loops over dependency-ready tasks sequentially; durable crash recovery and complete scheduler lifecycle remain unverified.
+- Tenant work now includes a server identity composition boundary and stricter user-principal enforcement in scoped state creation/read. These are core contracts and tests, not proof of a live authenticated route or production Supabase session wiring.
 - `VerificationEngine` explicitly returns PARTIAL for required criteria because semantic outcome verification is not connected.
 - The PR8 branch removes caller-supplied `request.approved` as proof, but the trusted approval verifier/store/session adapters still require real production composition.
 - FILE mutation authorization remains fail-closed pending durable grant creation/approval/revocation and production wiring. The candidate SQL is not an applied migration.
@@ -41,7 +42,7 @@ Evidence observed:
 | Memory | PARTIAL | Scoped memory models and search/recall services exist; current pipeline uses file-backed state, and durable shared memory, retention, deletion, and retrieval quality need integration. |
 | Knowledge / ingestion | PARTIAL | Chunking, ingestion, and knowledge tests exist; production vector store, embedding provider, indexing lifecycle, and retrieval evaluation are not verified. |
 | Persistence / runtime state | PARTIAL | State repositories and serialization exist; main orchestration uses JSON files, not a verified transactional multi-instance store. |
-| Tenant / authorization | PARTIAL | PR8 branch contains canonical membership/context and grant prototypes; production schema reconciliation, identity/session provider, RLS verification, and route coverage remain. |
+| Tenant / authorization | PARTIAL | The branch now composes a verified server-identity provider with canonical active organization/workspace membership resolution, and scoped state creation rejects mismatched or missing user principals. A concrete Supabase auth-session provider, route wiring, production schema reconciliation, RLS verification, and live integration remain. |
 | Approval / change control | PARTIAL | Approval models and verifier tests exist; durable end-to-end request, approve/reject/revoke/expire, and resume lifecycle are not fully composed. |
 | Verification / evidence | PARTIAL | Evidence capture and verification contracts exist; verifier explicitly marks semantic criteria PARTIAL; evidence repository is in-memory in pipeline composition. |
 | Self-build / builder | PARTIAL | Build/self-build domain and tests exist; safe end-to-end builder, preview, approval, rollback, and deployment lifecycle need integration. |
@@ -61,7 +62,7 @@ Evidence observed:
 
 ## Critical integration blockers (ordered)
 
-1. **Authenticated server boundary and canonical tenant scope** — no route may trust caller-supplied user/org/workspace identifiers. Compose verified session identity, active membership checks, tenant scope, and route-level authorization.
+1. **Authenticated server boundary and canonical tenant scope** — a fail-closed identity-plus-membership composition helper now exists, and scoped state creation enforces the user principal. It is not yet wired to an actual HTTP route or a concrete Supabase auth-session implementation; no route may trust caller-supplied user/org/workspace identifiers.
 2. **Durable transactional persistence** — replace the orchestration's JSON-file runtime dependency with the canonical tenant-scoped store; define concurrency/versioning, audit, recovery, and retention.
 3. **Approval lifecycle** — persist and atomically decide approvals; derive approver from verified session; revalidate role/membership; bind approval to exact mission/task/action/resource; resume only from durable verified decisions.
 4. **Complete mission scheduler** — execute all ready DAG tasks in dependency order, persist each transition, handle retries/failure/cancel, and resume after approval without duplicate execution.
