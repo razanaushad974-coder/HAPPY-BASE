@@ -36,11 +36,11 @@ async function main(): Promise<void> {
   let stored: NamedExecutorGrant | null = null;
   let consumed = false;
   let consumeCount = 0;
-  let lookupSeen: NamedExecutorGrantLookup | null = null;
+  const captureState: { lookup?: NamedExecutorGrantLookup } = {};
 
   const store: NamedExecutorGrantStore = {
     async getApprovedGrant(_scope, lookup) {
-      lookupSeen = lookup;
+      captureState.lookup = lookup;
       return stored ? { ...stored } : null;
     },
     async consumeApprovedGrant(_scope, grantId, binding, consumedAt) {
@@ -84,8 +84,8 @@ async function main(): Promise<void> {
     () => now,
   );
   assert(!(await capture.authorize(request, operation)), "Lookup capture should not authorize without a persisted grant.");
-  assert(lookupSeen !== null, "Expected canonical binding lookup.");
-  const lookup = lookupSeen as NamedExecutorGrantLookup;
+  const lookup = captureState.lookup;
+  assert(lookup !== undefined, "Expected canonical binding lookup.");
   stored = {
     ...lookup, grantId: "grant-1", approverUserId: "approver-B",
     requiredRole: "FOUNDER", status: "APPROVED",
@@ -94,8 +94,8 @@ async function main(): Promise<void> {
 
   assert(await authorizer.authorize(request, operation), "Distinct requester/approver/executor grant should authorize.");
   assert(consumed && stored.status === "CONSUMED", "Grant was not consumed.");
-  assert(lookupSeen?.executorUserId === "executor-C", "Lookup did not bind the named executor.");
-  assert(lookupSeen?.requesterUserId === "requester-A", "Lookup did not bind the requester.");
+  assert(captureState.lookup?.executorUserId === "executor-C", "Lookup did not bind the named executor.");
+  assert(captureState.lookup?.requesterUserId === "requester-A", "Lookup did not bind the requester.");
   assert(stored.approverUserId === "approver-B", "Persisted approver identity was not retained.");
   assert(!(await authorizer.authorize(request, operation)), "Consumed grant replay was accepted.");
 
