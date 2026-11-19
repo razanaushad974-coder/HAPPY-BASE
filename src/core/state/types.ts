@@ -51,7 +51,6 @@ export function assertTenantScope(
 
     if (
         scope.userId !== undefined &&
-        record.userId !== undefined &&
         record.userId !== scope.userId
     ) {
         throw new Error("USER_SCOPE_VIOLATION");
