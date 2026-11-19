@@ -67,11 +67,27 @@ export interface PostgresTenantSessionProvider {
  * membership, JWT claim GUC behavior, and function ownership require deployment
  * review. This class does not authenticate a JWT itself.
  */
+export interface PgTenantSessionOptions {
+  statementTimeoutMs?: number;
+  idleTransactionTimeoutMs?: number;
+}
+
 export class PgPoolTenantSessionProvider implements PostgresTenantSessionProvider {
+  private readonly statementTimeoutMs: number;
+  private readonly idleTransactionTimeoutMs: number;
+
   constructor(
     private readonly pool: PgPoolLike,
     private readonly identities: VerifiedServerIdentityProvider,
-  ) {}
+    options: PgTenantSessionOptions = {},
+  ) {
+    this.statementTimeoutMs = options.statementTimeoutMs ?? 15_000;
+    this.idleTransactionTimeoutMs = options.idleTransactionTimeoutMs ?? 30_000;
+    if (!Number.isInteger(this.statementTimeoutMs) || this.statementTimeoutMs < 1 ||
+        !Number.isInteger(this.idleTransactionTimeoutMs) || this.idleTransactionTimeoutMs < 1) {
+      throw new RangeError("PostgreSQL session timeouts must be positive integer milliseconds.");
+    }
+  }
 
   withSession<T>(
     scope: CompleteTenantScope,
@@ -103,8 +119,8 @@ export class PgPoolTenantSessionProvider implements PostgresTenantSessionProvide
       transactionOpen = true;
       await client.query("SET LOCAL ROLE authenticated");
       await client.query(
-        "select set_config('request.jwt.claim.sub', $1, true), set_config('request.jwt.claims', json_build_object('sub', $1, 'role', 'authenticated')::text, true)",
-        [identity.userId],
+        "select set_config('request.jwt.claim.sub', $1, true), set_config('request.jwt.claims', json_build_object('sub', $1, 'role', 'authenticated')::text, true), set_config('statement_timeout', $2, true), set_config('idle_in_transaction_session_timeout', $3, true)",
+        [identity.userId, `${this.statementTimeoutMs}ms`, `${this.idleTransactionTimeoutMs}ms`],
       );
 
       const result = await operation(client);
