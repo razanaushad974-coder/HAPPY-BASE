@@ -158,3 +158,10 @@ Reviewed `supabase/drafts/20261119_file_mutation_atomic_consume_candidate.sql` a
 - Added `platform/full-happy-audit-and-integration` to the PostgreSQL integration workflow's push branches, so the isolated PostgreSQL fixture runs directly on this feature branch as well as its configured PR targets. Workflow commit: `01becf38a8620c144576b0961bc945511cfa4598`.
 - The available GitHub workflow-run wrapper filters to pull-request-triggered runs and does not expose push-triggered runs; no exact-head Actions result can be verified through that endpoint. Commit combined status currently exposes only Vercel build-rate-limit failures, not PostgreSQL job results. No pass is claimed.
 - No production Supabase change, merge, deployment, or `main` modification.
+
+
+### PostgreSQL race harness CI finding and correction — 2026-11-19
+- The push-triggered PostgreSQL workflow ran on the exact prior head `759532dec948451f2ffd717354fbff6ddcad3484` (run `44522466897`). The baseline authorization/concurrency harness passed; the transactional FILE grant harness stopped at the first forced race because it did not observe the named lock waiter within its bounded wait.
+- Root cause in the test harness was environment propagation: the `PGAPPNAME=...` assignment was placed before a shell-function invocation, rather than directly on the child `psql` process. The helper now accepts an explicit application name and sets `PGAPPNAME` on the actual `psql` invocation. All four consume-first/denial race contenders use that parameter; the consume-first/suspender SQL session already sets its own application name directly.
+- Correction commit: `7ea717f88fabcf186243af5d20eb70b7e33322f5`. The corrected script has not yet been executed by CI at this commit; no race-harness pass is claimed. Re-run verification is pending.
+- The failed run used an isolated disposable PostgreSQL 17.12 service; no production Supabase or application data was accessed or modified.
