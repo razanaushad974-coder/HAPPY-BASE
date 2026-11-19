@@ -185,7 +185,10 @@ actual="$(psql "$DATABASE_URL" -XqAt -v ON_ERROR_STOP=1 -c "
   'null-binding-1','task-null-binding-1','mission-null-binding-1',
   NULL,'MODIFY','source-null-binding-1',NULL,'$DIGEST'
  );
- COMMIT;" | grep -E '^(t|f)
+ COMMIT;" | grep -E '^(t|f)$' | tail -n 1)"
+expect_result f "$actual" 'NULL target binding'
+
+seed_grant '10000000-0000-0000-0000-000000000010' 'consume-before-revoke-1'
 actual="$(invoke_grant '10000000-0000-0000-0000-000000000010' 'consume-before-revoke-1' "$EXECUTOR")"
 expect_result t "$actual" 'consume before later revocation'
 psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
@@ -204,8 +207,6 @@ if psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
 fi
 
 echo "PASS: migration-candidate RPC; JWT-derived executor; distinct principals; exact binding; expiry/replay; live approver/executor membership and role checks; one audit; concurrent single winner; revoke-vs-consume serialization; anon invocation denial."
- | tail -n 1)"
-expect_result f "$actual" 'NULL target binding'
 
 seed_grant '10000000-0000-0000-0000-000000000010' 'consume-before-revoke-1'
 actual="$(invoke_grant '10000000-0000-0000-0000-000000000010' 'consume-before-revoke-1' "$EXECUTOR")"
