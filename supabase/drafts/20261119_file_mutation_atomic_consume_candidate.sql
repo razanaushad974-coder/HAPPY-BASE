@@ -92,6 +92,60 @@ create table private.file_mutation_approval_events (
   unique (grant_id, event_type)
 );
 
+-- Immutable approval binding and monotonic state transitions. The only
+-- APPROVED -> CONSUMED path is the transactional SECURITY DEFINER RPC below.
+create or replace function private.guard_file_mutation_grant_update()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog
+as $guard$
+begin
+  if row(
+    new.request_id, new.task_id, new.mission_id, new.requester_user_id,
+    new.executor_user_id, new.approver_user_id, new.organization_id,
+    new.workspace_id, new.target_entity_type, new.target_entity_id,
+    new.operation, new.source_path, new.destination_path, new.input_digest,
+    new.required_role, new.expires_at, new.created_at
+  ) is distinct from row(
+    old.request_id, old.task_id, old.mission_id, old.requester_user_id,
+    old.executor_user_id, old.approver_user_id, old.organization_id,
+    old.workspace_id, old.target_entity_type, old.target_entity_id,
+    old.operation, old.source_path, old.destination_path, old.input_digest,
+    old.required_role, old.expires_at, old.created_at
+  ) then
+    raise exception 'FILE approval grant binding is immutable';
+  end if;
+
+  if old.status = 'PENDING'
+     and new.status in ('APPROVED','REJECTED','REVOKED','EXPIRED')
+     and new.decided_at is not null
+     and new.consumed_at is null then
+    return new;
+  end if;
+
+  if old.status = 'APPROVED'
+     and new.status in ('REVOKED','EXPIRED')
+     and new.decided_at is not null
+     and new.consumed_at is null then
+    return new;
+  end if;
+
+  if old.status = 'APPROVED'
+     and new.status = 'CONSUMED'
+     and new.decided_at is not null
+     and new.consumed_at is not null then
+    return new;
+  end if;
+
+  raise exception 'Invalid FILE approval grant state transition';
+end;
+$guard$;
+
+create trigger file_mutation_grant_guard_update
+before update on private.file_mutation_approval_grants
+for each row execute function private.guard_file_mutation_grant_update();
+
 create index file_grants_scope_request_idx
   on private.file_mutation_approval_grants (organization_id, workspace_id, request_id);
 create index file_grants_scope_status_expiry_idx
@@ -110,8 +164,9 @@ revoke all on all tables in schema private from public, anon, authenticated;
 grant usage on schema private to service_role;
 grant select, insert, update on private.organizations, private.workspaces,
   private.organization_memberships, private.workspace_memberships,
-  private.execution_requests, private.file_mutation_approval_grants to service_role;
-grant select, insert on private.file_mutation_approval_events to service_role;
+  private.execution_requests to service_role;
+grant select, insert on private.file_mutation_approval_grants,
+  private.file_mutation_approval_events to service_role;
 
 create or replace function public.consume_file_mutation_approval_grant(
   p_grant_id uuid,
