@@ -13,7 +13,7 @@ import type {
 type DatabaseError = { message?: string } | null;
 type DatabaseResult = { data: unknown; error: DatabaseError };
 
-interface SupabaseQuery {
+export interface SupabasePrivateQuery {
   select(columns: string): SupabaseQuery;
   update(values: Record<string, unknown>): SupabaseQuery;
   eq(column: string, value: string | number | boolean): SupabaseQuery;
@@ -22,8 +22,8 @@ interface SupabaseQuery {
   maybeSingle(): Promise<DatabaseResult>;
 }
 
-interface SupabaseSchemaClient {
-  from(table: string): SupabaseQuery;
+export interface SupabasePrivateSchema {
+  from(table: string): SupabasePrivateQuery;
 }
 
 /**
@@ -32,7 +32,7 @@ interface SupabaseSchemaClient {
  * adapter or a service-role client to browser code.
  */
 export interface SupabasePrivateSchemaClient {
-  schema(name: "private"): SupabaseSchemaClient;
+  schema(name: "private"): SupabasePrivateSchema;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
