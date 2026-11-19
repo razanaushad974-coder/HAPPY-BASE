@@ -34,6 +34,10 @@ async function main(): Promise<void> {
     createdAt: new Date().toISOString(),
   };
   await verifier.registerRequest(request);
+  const storedRequest = await ownerStore.verificationRequest<VerificationRequest>().get(request.id);
+  if (!storedRequest || storedRequest.entityType !== "VERIFICATION_REQUEST") {
+    throw new Error("Verification request was not stored in its dedicated entity type.");
+  }
 
   let unregisteredDenied = false;
   try {
@@ -80,7 +84,10 @@ async function main(): Promise<void> {
     throw new Error("Verification accepted mismatched provenance or duplicate evidence IDs.");
   }
   const persisted = await verifier.get(result.id);
-  if (!persisted || persisted.requestId !== request.id) throw new Error("Result was not persisted.");
+  const persistedResultRecord = await ownerStore.verification().get(result.id);
+  if (!persisted || persisted.requestId !== request.id || persistedResultRecord?.entityType !== "VERIFICATION") {
+    throw new Error("Verification result was not persisted in the result entity type.");
+  }
   if ((await verifier.forRequest(" verify-1 ")).length !== 1) throw new Error("Request result lookup failed.");
   if (await otherVerifier.get(result.id)) throw new Error("Verification result leaked across tenant users.");
 
