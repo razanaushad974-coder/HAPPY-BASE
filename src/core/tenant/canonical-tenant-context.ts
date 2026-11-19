@@ -119,3 +119,48 @@ export async function resolveCanonicalTenantContext(
     return null;
   }
 }
+
+
+/**
+ * Server-session boundary used by route composition. The requested tenant
+ * scope is only a selector; actor identity is always loaded from the trusted
+ * server identity provider and membership is resolved before any state access.
+ */
+export interface VerifiedServerIdentityProvider {
+  getVerifiedIdentity(): Promise<VerifiedTenantIdentity | null>;
+}
+
+export type AuthenticatedTenantResolution =
+  | { status: "AUTHENTICATED"; context: CanonicalTenantContext }
+  | { status: "UNAUTHENTICATED" | "TENANT_ACCESS_DENIED" };
+
+/**
+ * Fail-closed composition helper for server routes. It deliberately accepts
+ * no user ID from the request and never falls back to caller-provided identity.
+ */
+export async function resolveAuthenticatedTenantContext(
+  identities: VerifiedServerIdentityProvider,
+  requestedScope: RequestedTenantScope,
+  memberships: CanonicalTenantMembershipStore,
+): Promise<AuthenticatedTenantResolution> {
+  let identity: VerifiedTenantIdentity | null;
+  try {
+    identity = await identities.getVerifiedIdentity();
+  } catch {
+    return { status: "UNAUTHENTICATED" };
+  }
+
+  if (!identity?.userId?.trim()) {
+    return { status: "UNAUTHENTICATED" };
+  }
+
+  const context = await resolveCanonicalTenantContext(
+    identity,
+    requestedScope,
+    memberships,
+  );
+
+  return context
+    ? { status: "AUTHENTICATED", context }
+    : { status: "TENANT_ACCESS_DENIED" };
+}
