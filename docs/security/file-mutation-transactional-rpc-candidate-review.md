@@ -25,12 +25,13 @@ This means the production consume client must be a server-side, user-scoped Supa
   - Consumption timestamp comes from clock_timestamp() once, and expiry is checked against that same timestamp and repeated in the UPDATE predicate.
   - Exact binding uses IS DISTINCT FROM so NULL caller values cannot turn a failed comparison into SQL NULL that accidentally passes an IF.
   - One audit row is inserted in the same transaction after the grant transition.
+  - Database triggers require new grants to start PENDING, freeze all immutable binding/expiry fields, and allow only the documented decision/revocation/consumption state transitions. The service role has no direct UPDATE privilege on grant or audit rows.
   - Audit event privileges are append-only for service_role (SELECT/INSERT; no UPDATE/DELETE).
 
 - scripts/security/postgres-file-grant-transaction-integration.sh
   - Runs the candidate against a disposable PostgreSQL database.
   - Stubs only auth.users and auth.uid() to emulate the Supabase database contract; it does not test the external JWT verifier or a live Supabase deployment.
-  - Tests distinct requester/approver/executor, JWT executor mismatch, exact digest binding, expiry, replay, revoked/demoted approver, revoked executor, one audit event, concurrent single-winner consumption, revocation-first blocking, consume-first serialization, role-downgrade race, NULL target binding denial, and anon EXECUTE denial.
+  - Tests distinct requester/approver/executor, JWT executor mismatch, exact digest binding, expiry, replay, revoked/demoted approver, revoked executor, one audit event, concurrent single-winner consumption, revocation-first blocking, consume-first serialization, role-downgrade race, NULL target binding denial, and anon EXECUTE denial. The fixture seeds grants through PENDING → APPROVED so the insert/transition guards are exercised.
 
 - .github/workflows/postgres-security-integration.yml
   - Runs the original fixture and this candidate-RPC integration script in an isolated PostgreSQL 17 service container.
