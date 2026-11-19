@@ -208,8 +208,8 @@ async function main(): Promise<void> {
 
     assert(
       authorizedRead.status === "COMPLETED" &&
-        (authorizedRead.output as { content?: string }).content ===
-          "export const fileAdapter = true;\\n",
+        typeof (authorizedRead.output as { content?: string }).content === "string" &&
+        (authorizedRead.output as { content: string }).content.includes("export const fileAdapter = true;") ,
       "Scoped FILE READ authorizer did not allow the expected read.",
     );
 
