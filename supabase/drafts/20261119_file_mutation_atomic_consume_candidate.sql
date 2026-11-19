@@ -117,6 +117,11 @@ begin
     raise exception 'FILE approval grant binding is immutable';
   end if;
 
+  if old.status <> 'PENDING'
+     and new.decided_at is distinct from old.decided_at then
+    raise exception 'FILE approval decision timestamp is immutable';
+  end if;
+
   if old.status = 'PENDING'
      and new.status in ('APPROVED','REJECTED','REVOKED','EXPIRED')
      and new.decided_at is not null
