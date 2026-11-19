@@ -2,6 +2,7 @@ import type { TenantScope } from "../../state/types";
 import type { EntityType } from "../types";
 import {
   TenantPersistenceError,
+  TenantBoundTransactionAdapter,
   type AsyncTenantPersistenceAdapter,
   type TenantPersistedRecord,
   type TenantRecordQuery,
@@ -132,7 +133,8 @@ export class InMemoryTenantPersistenceAdapter implements AsyncTenantPersistenceA
         structuredClone(record),
       ]),
     );
-    const result = await operation(transactionAdapter);
+    const boundTransaction = new TenantBoundTransactionAdapter(scope, transactionAdapter);
+    const result = await operation(boundTransaction);
     this.records = transactionAdapter.records;
     return result;
   }
