@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:security": "tsx src/tests/core/approval/file-mutation-approval-authorizer.test.ts && tsx src/tests/core/execution/file-execution-adapter.test.ts && tsx src/tests/core/execution/workspace-code-executor.test.ts && tsx src/tests/core/execution/code-execution-live.test.ts"
+    "test:security": "npx --yes tsx@4.23.15 src/tests/core/approval/file-mutation-approval-authorizer.test.ts && npx --yes tsx@4.23.15 src/tests/core/execution/file-execution-adapter.test.ts && npx --yes tsx@4.23.15 src/tests/core/execution/workspace-code-executor.test.ts && npx --yes tsx@4.23.15 src/tests/core/execution/code-execution-live.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.22.0",
@@ -24,7 +24,6 @@
     "eslint": "^9",
     "eslint-config-next": "16.4.6",
     "tailwindcss": "^4",
-    "tsx": "4.23.15",
     "typescript": "^5"
   }
 }
