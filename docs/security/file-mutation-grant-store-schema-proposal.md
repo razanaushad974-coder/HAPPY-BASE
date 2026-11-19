@@ -142,3 +142,23 @@ The Supabase JS query builder must express this as one UPDATE request with all e
 - A direct CODE-capability bypass was found: `CodeExecutionAdapter` instantiated `WorkspaceCodeExecutor` and called `execute()` without the FILE grant authorizer. The PR now removes that direct executor dependency and keeps CODE contract-only (`NOT_YET_CONNECTED`) until a server-owned execution service is composed. The existing CODE adapter regression harness expects this contract, but it has not yet been executed.
 - The runtime call-site audit of execution/orchestration/workspace service files found `WorkspaceCodeExecutor` construction only in `FileExecutionAdapter` after the CODE adapter change. Keep low-level executor entry points internal to trusted server composition; repeat the call-site audit whenever new execution adapters or entry points are added.
 - Generate the migration via `supabase migration new`, review it, run Supabase security advisors and RLS tests, then request explicit approval before applying anywhere.
+
+
+## Named-executor implementation addendum (2026-11-19)
+
+A separate core verifier now exists at `src/core/approval/named-executor-file-mutation-authorizer.ts`. It supports three independently sourced principals while remaining unwired from production composition:
+
+- requester: supplied only by a context provider that must load the durable server-owned execution request;
+- executor: current validated server session plus canonical active tenant membership;
+- approver: persisted grant decision, independently reloaded as an active tenant member and rechecked for current FOUNDER/ADMIN role.
+
+The first supported policy is named executor, not any-member delegation. The persisted grant must contain immutable `executor_user_id`. The schema proposal above is still design-only and must be amended before migration generation:
+
+```sql
+alter table private.file_mutation_approval_grants
+  add column executor_user_id uuid not null references auth.users(id) on delete restrict;
+```
+
+For a new table, include `executor_user_id` at creation rather than applying the illustrative ALTER statement. The unique/candidate lookup index should include `organization_id, workspace_id, request_id, executor_user_id, status, expires_at`. The exact atomic consume predicate must include `requester_user_id`, `approver_user_id`, and `executor_user_id` plus every immutable operation binding. The approver must not be equated to the executor.
+
+The new verifier's dependency contracts are not adapters: no Supabase membership provider, durable grant store, approval-decision workflow, or server composition root has been implemented. The legacy same-actor verifier remains unchanged. FILE mutation remains default-deny unless a trusted authorizer is explicitly composed. The core test harness validates distinct identities, named-executor mismatch, approver membership/role revocation, tenant mismatch, operation tampering, replay, concurrent single-winner consumption, and store failure; this fake-store test does not prove database atomicity.
