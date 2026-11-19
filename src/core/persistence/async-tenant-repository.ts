@@ -92,6 +92,67 @@ function requireCompleteScope(
   }
 }
 
+
+/**
+ * Restricts a transaction callback to the exact tenant scope that opened it.
+ * A transaction callback must never receive an adapter that can be redirected
+ * to another organization, workspace, or user by supplying a different scope.
+ */
+export class TenantBoundTransactionAdapter implements AsyncTenantPersistenceAdapter {
+  constructor(
+    private readonly scope: TenantScope & { userId: string },
+    private readonly adapter: AsyncTenantPersistenceAdapter,
+  ) {}
+
+  private assertScope(scope: TenantScope & { userId: string }): void {
+    if (
+      scope.organizationId !== this.scope.organizationId ||
+      scope.workspaceId !== this.scope.workspaceId ||
+      scope.userId !== this.scope.userId
+    ) {
+      throw new TenantPersistenceError(
+        "INVALID_TENANT_SCOPE",
+        "A transaction cannot access records outside its bound tenant and principal.",
+      );
+    }
+  }
+
+  get<T>(scope: TenantScope & { userId: string }, entityType: EntityType, id: string) {
+    this.assertScope(scope);
+    return this.adapter.get<T>(this.scope, entityType, id);
+  }
+
+  list<T>(scope: TenantScope & { userId: string }, query?: TenantRecordQuery) {
+    this.assertScope(scope);
+    return this.adapter.list<T>(this.scope, query);
+  }
+
+  create<T>(scope: TenantScope & { userId: string }, entityType: EntityType, id: string, data: T) {
+    this.assertScope(scope);
+    return this.adapter.create(this.scope, entityType, id, data);
+  }
+
+  update<T>(scope: TenantScope & { userId: string }, entityType: EntityType, id: string, expectedVersion: number, data: T) {
+    this.assertScope(scope);
+    return this.adapter.update(this.scope, entityType, id, expectedVersion, data);
+  }
+
+  delete(scope: TenantScope & { userId: string }, entityType: EntityType, id: string, expectedVersion: number) {
+    this.assertScope(scope);
+    return this.adapter.delete(this.scope, entityType, id, expectedVersion);
+  }
+
+  transaction<T>(
+    scope: TenantScope & { userId: string },
+    operation: (transaction: AsyncTenantPersistenceAdapter) => Promise<T>,
+  ): Promise<T> {
+    this.assertScope(scope);
+    return this.adapter.transaction(this.scope, async (transaction) =>
+      operation(new TenantBoundTransactionAdapter(this.scope, transaction)),
+    );
+  }
+}
+
 /**
  * Tenant-aware repository facade. It refuses to operate without a complete
  * principal scope and requires an expected version for every mutation after
