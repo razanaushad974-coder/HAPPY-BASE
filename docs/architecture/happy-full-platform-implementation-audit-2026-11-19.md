@@ -143,3 +143,12 @@ Reviewed `supabase/drafts/20261119_file_mutation_atomic_consume_candidate.sql` a
 - Final script commit: 686efec77b12cabd048c924aa7522c4c97b26b32. The block now uses psql quiet/unaligned/tuples-only output and filters the standalone boolean row; the file tail is intact and the malformed fragment is absent on re-fetch.
 - This is source-level verification only. The disposable PostgreSQL integration harness remains unexecuted on this exact revision, and its sleep-based race coordination remains timing-sensitive. No test pass is claimed.
 - No live Supabase changes, merge, deployment, or main-branch changes.
+
+
+### Deterministic PostgreSQL race coordination update — 2026-11-19
+- Replaced fixed 200 ms contender-start assumptions in all five approval races (approver revocation, role downgrade, organization suspension first, consume first vs suspension, and request cancellation) with a bounded poll of `pg_stat_activity` for the named contender's actual `wait_event_type='Lock'`.
+- Each contender now has a unique `PGAPPNAME`; the fixture does not release the lock-holder transaction until the expected contender is observed waiting. Lock-holder windows are 15 seconds; waiter detection is bounded to 10 seconds (200 × 50 ms), after which the test fails closed.
+- The consume-first race likewise waits until the organization-suspension UPDATE is actually blocked behind the consumed grant's transaction before allowing the consume transaction to commit.
+- Source commit: `9a5751cb4672f472adc1127cfd3064623e151720`. The PostgreSQL workflow's PR base filter now includes `security/durable-file-mutation-grants`, matching the active platform PR base.
+- GitHub Actions run has not yet been observed for this exact head; no test pass is claimed. Vercel statuses remain build-rate-limited and are not evidence of PostgreSQL or application validation.
+- No live Supabase changes, merge, deployment, or `main` modification.
