@@ -13,6 +13,7 @@ on:
       - "src/core/execution/**"
       - "src/core/orchestration/**"
       - "src/core/mission/**"
+      - "src/core/persistence/**"
       - "src/core/verification/**"
       - "src/tests/core/approval/**"
       - "src/tests/core/tenant/**"
@@ -53,6 +54,8 @@ jobs:
         run: npx tsc --noEmit
       - name: Security harnesses
         run: npm run test:security
+      - name: Async tenant persistence contract
+        run: npx --yes tsx@4.23.15 src/tests/core/persistence/async-tenant-repository.test.ts
       - name: Orchestration and mission harnesses
         run: npx --yes tsx@4.23.15 src/tests/core/orchestration/orchestration.test.ts && npx --yes tsx@4.23.15 src/tests/core/mission/mission-task-graph.test.ts
       - name: ESLint
