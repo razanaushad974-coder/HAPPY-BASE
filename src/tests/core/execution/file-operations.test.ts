@@ -16,6 +16,13 @@ import {
   WorkspaceCodeExecutor,
 } from "../../../core/execution/workspace-code-executor";
 
+import type {
+  ResolvedReference,
+} from "../../../core/context/types";
+import type {
+  ExecutionRequest,
+} from "../../../core/execution/types";
+
 function assert(
   condition: boolean,
   message: string,
@@ -27,10 +34,10 @@ function assert(
 
 function request(
   action: string,
-  targetReference: object,
+  targetReference: ResolvedReference,
   input: unknown,
   overrides: Record<string, unknown> = {},
-): any {
+): ExecutionRequest {
   return {
     id: `file-op-${action.toLowerCase()}`,
     taskId: "task-file-ops",

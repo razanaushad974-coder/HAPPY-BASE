@@ -8,6 +8,10 @@ import {
   BrowserExecutionAdapter,
 } from "../../../core/execution/browser-execution-adapter";
 
+import type {
+  ExecutionRequest,
+} from "../../../core/execution/types";
+
 function assert(
   condition: boolean,
   message: string,
@@ -83,7 +87,7 @@ function makeRequest(
   url: string,
   input: Record<string, unknown>,
   overrides: Record<string, unknown> = {},
-): any {
+): ExecutionRequest {
   return {
     id:
       `browser-${action.toLowerCase()}`,

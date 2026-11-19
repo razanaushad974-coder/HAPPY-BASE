@@ -137,7 +137,7 @@ async function main(): Promise<void> {
         },
         targetReference: target,
         requiresApproval: true,
-        approved: true,
+        approved: false,
         risk: "HIGH",
         createdAt: new Date().toISOString(),
       });
@@ -151,6 +151,66 @@ async function main(): Promise<void> {
         readFileSync(file, "utf8") ===
           "export const fileAdapter = true;\n",
       "Authorized FILE mutation output mismatch.",
+    );
+
+    const deniedRead = await adapter.execute({
+      id: "file-read-denied-test",
+      taskId: "task-file-read",
+      missionId: "mission-file",
+      capability: "FILE",
+      action: "READ",
+      input: {
+        operation: "READ",
+        path: "src/file-adapter-test.ts",
+      },
+      targetReference: target,
+      requiresApproval: false,
+      approved: true,
+      risk: "LOW",
+      createdAt: new Date().toISOString(),
+    });
+
+    assert(
+      deniedRead.status === "BLOCKED" &&
+        deniedRead.output === undefined,
+      "FILE READ without a scoped read authorizer was not denied.",
+    );
+
+    const authorizedReadAdapter = new FileExecutionAdapter(
+      executor,
+      undefined,
+      {
+        async authorizeRead(request, operation) {
+          return (
+            request.id === "file-read-authorized-test" &&
+            operation.action === "READ" &&
+            operation.path === "src/file-adapter-test.ts"
+          );
+        },
+      },
+    );
+    const authorizedRead = await authorizedReadAdapter.execute({
+      id: "file-read-authorized-test",
+      taskId: "task-file-read",
+      missionId: "mission-file",
+      capability: "FILE",
+      action: "READ",
+      input: {
+        operation: "READ",
+        path: "src/file-adapter-test.ts",
+      },
+      targetReference: target,
+      requiresApproval: false,
+      approved: false,
+      risk: "LOW",
+      createdAt: new Date().toISOString(),
+    });
+
+    assert(
+      authorizedRead.status === "COMPLETED" &&
+        typeof (authorizedRead.output as { content?: string }).content === "string" &&
+        (authorizedRead.output as { content: string }).content.includes("export const fileAdapter = true;") ,
+      "Scoped FILE READ authorizer did not allow the expected read.",
     );
 
     const throwingAdapter =
@@ -227,6 +287,8 @@ async function main(): Promise<void> {
       forgedApprovedFlagDenied: true,
       defaultDenyMutationGate: true,
       injectedAuthorizerPath: true,
+      unauthenticatedReadDenied: true,
+      scopedReadAuthorizerPath: true,
       authorizerExceptionFailsClosed: true,
       approvalGate: true,
       pathSafetyInherited: true,

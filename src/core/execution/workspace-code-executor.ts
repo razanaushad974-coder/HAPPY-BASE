@@ -1,8 +1,10 @@
 import {
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -11,7 +13,9 @@ import {
 import {
   dirname,
   isAbsolute,
+  relative,
   resolve,
+  sep,
 } from "node:path";
 
 export type WorkspaceFileOperation =
@@ -77,21 +81,42 @@ export class WorkspaceCodeExecutor {
       );
     }
 
-    const root = resolve(this.workspaceRoot);
-    const candidate = resolve(root, relativePath);
-
-    const rootPrefix =
-      process.platform === "win32"
-        ? `${root}\\`
-        : `${root}/`;
+    const realRoot = realpathSync(resolve(this.workspaceRoot));
+    const candidate = resolve(realRoot, relativePath);
+    const relativeCandidate = relative(realRoot, candidate);
 
     if (
-      candidate !== root &&
-      !candidate.startsWith(rootPrefix)
+      relativeCandidate === ".." ||
+      relativeCandidate.startsWith(`..${sep}`) ||
+      isAbsolute(relativeCandidate)
     ) {
       throw new Error(
         `Workspace path escapes configured root: ${relativePath}`,
       );
+    }
+
+    // Reject every existing symlink component, including a dangling final
+    // symlink. existsSync() follows symlinks and returns false for dangling
+    // links, which could otherwise redirect a CREATE outside the workspace.
+    let current = realRoot;
+    for (const segment of relativeCandidate.split(sep).filter(Boolean)) {
+      current = resolve(current, segment);
+      try {
+        if (lstatSync(current).isSymbolicLink()) {
+          throw new Error(
+            `Workspace symlinks are not allowed: ${relativePath}`,
+          );
+        }
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          "code" in error &&
+          error.code === "ENOENT"
+        ) {
+          break;
+        }
+        throw error;
+      }
     }
 
     return candidate;
@@ -107,45 +132,103 @@ export class WorkspaceCodeExecutor {
       return {
         status: "BLOCKED",
         changedFiles,
+        errors: ["No approved workspace file changes were supplied."],
+      };
+    }
+
+    const snapshots = new Map<
+      string,
+      { existed: boolean; content?: string }
+    >();
+    const seenPaths = new Set<string>();
+
+    // Validate the entire batch before the first write. This prevents a
+    // predictable later failure from leaving earlier files partially applied.
+    try {
+      for (const change of changes) {
+        if (change.action !== "CREATE" && change.action !== "MODIFY") {
+          throw new Error(`Unsupported batch action: ${change.action}`);
+        }
+        if (typeof change.content !== "string") {
+          throw new Error(`${change.action} requires file content: ${change.path}`);
+        }
+
+        const target = this.resolveSafePath(change.path);
+        if (seenPaths.has(target)) {
+          throw new Error(`Duplicate path in workspace change batch: ${change.path}`);
+        }
+        seenPaths.add(target);
+
+        const existed = existsSync(target);
+        if (change.action === "CREATE" && existed) {
+          throw new Error(`Cannot CREATE existing file: ${change.path}`);
+        }
+        if (change.action === "MODIFY" && !existed) {
+          throw new Error(`Cannot MODIFY missing file: ${change.path}`);
+        }
+
+        let previousContent: string | undefined;
+        if (existed) {
+          previousContent = readFileSync(target, "utf8");
+          if (
+            change.expectedPreviousContentHash &&
+            simpleHash(previousContent) !== change.expectedPreviousContentHash
+          ) {
+            throw new Error(`Previous-content hash mismatch: ${change.path}`);
+          }
+        }
+        snapshots.set(target, { existed, content: previousContent });
+      }
+    } catch (error) {
+      return {
+        status: "FAILED",
+        changedFiles,
         errors: [
-          "No approved workspace file changes were supplied.",
+          error instanceof Error ? error.message : String(error),
         ],
       };
     }
 
     for (const change of changes) {
-      try {
-        const result = this.executeOperation({
-          action: change.action,
-          path: change.path,
-          content: change.content,
-          expectedPreviousContentHash:
-            change.expectedPreviousContentHash,
-        });
+      const result = this.executeOperation({
+        action: change.action,
+        path: change.path,
+        content: change.content,
+        expectedPreviousContentHash: change.expectedPreviousContentHash,
+      });
 
-        if (result.status !== "COMPLETED") {
-          errors.push(...result.errors);
-          break;
+      if (result.status !== "COMPLETED") {
+        errors.push(...result.errors);
+
+        // Best-effort rollback in reverse order; report any rollback failure.
+        for (const appliedPath of [...changedFiles].reverse()) {
+          try {
+            const target = this.resolveSafePath(appliedPath);
+            const snapshot = snapshots.get(target);
+            if (snapshot?.existed) {
+              writeFileSync(target, snapshot.content ?? "", "utf8");
+            } else {
+              rmSync(target, { force: true });
+            }
+          } catch (rollbackError) {
+            errors.push(
+              `Rollback failed for ${appliedPath}: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+            );
+          }
         }
 
-        changedFiles.push(
-          ...result.changedFiles,
-        );
-      } catch (error) {
-        errors.push(
-          error instanceof Error
-            ? error.message
-            : String(error),
-        );
-        break;
+        return {
+          status: "FAILED",
+          changedFiles: [],
+          errors,
+        };
       }
+
+      changedFiles.push(...result.changedFiles);
     }
 
     return {
-      status:
-        errors.length === 0
-          ? "COMPLETED"
-          : "FAILED",
+      status: "COMPLETED",
       changedFiles,
       errors,
     };

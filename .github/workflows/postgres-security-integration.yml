@@ -1,0 +1,59 @@
+name: HAPPY PostgreSQL security integration
+
+on:
+  pull_request:
+    branches:
+      - main
+      - security/file-mutation-authorizer
+      - happy/server-verified-pipeline-approval
+    paths:
+      - "scripts/security/postgres-grant-integration.sh"
+      - "scripts/security/postgres-file-grant-transaction-integration.sh"
+      - "supabase/drafts/**"
+      - ".github/workflows/postgres-security-integration.yml"
+      - "src/core/approval/**"
+      - "src/core/tenant/**"
+  push:
+    branches:
+      - security/durable-file-mutation-grants
+
+permissions:
+  contents: read
+
+concurrency:
+  group: happy-postgres-security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  postgres-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: happy_security_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d happy_security_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: PostgreSQL version
+        run: psql "$DATABASE_URL" -c "select version();"
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/happy_security_test
+      - name: Run isolated PostgreSQL authorization and concurrency checks
+        run: bash scripts/security/postgres-grant-integration.sh
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/happy_security_test
+      - name: Run transactional FILE grant RPC integration checks
+        run: bash scripts/security/postgres-file-grant-transaction-integration.sh
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/happy_security_test

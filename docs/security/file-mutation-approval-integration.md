@@ -33,3 +33,19 @@ Before enabling file mutations, add the integration in the actual authenticated 
 Do not implement the authorizer by checking `ExecutionRequest.approved` or by accepting actor, role, tenant, or approval claims from request input. Until the server runtime and durable store exist on the target branch, mutations intentionally remain blocked. The injected test authorizer is only a contract test double, not a production implementation.
 
 This change is defense-in-depth for the direct-adapter bypass. It does not claim that all other execution adapters or every possible direct use of the low-level workspace executor are secured.
+
+
+## Additional boundary finding: FILE READ authorization
+
+The current adapter deliberately bypasses the mutation-grant authorizer for `READ`. Source inspection confirms:
+
+- `FileExecutionAdapter.canExecute()` accepts a FILE target and the `READ` action without an authenticated session or tenant-scope check.
+- `FileExecutionAdapter.execute()` calls `WorkspaceCodeExecutor.executeOperation()` for READ without consulting the mutation authorizer.
+- `ExecutionEngine.execute()` performs capability/adapter checks and the legacy caller-controlled approval gate, but does not authenticate the actor or resolve organization/workspace membership.
+- The low-level executor resolves paths relative to its configured workspace root; it does not itself bind a read to a user, organization, or workspace membership record.
+
+This inspection does **not** establish an unauthenticated remote exploit: the current target branch has no production server composition/API route wiring that exposes this engine. It does establish that the adapter/engine are not independently safe as an untrusted request boundary.
+
+**Containment now added in PR #8:** `FileExecutionAdapter` accepts a separate `FileReadAuthorizer` contract and requires it for every READ. Missing authorizer, denial, or exception returns BLOCKED before the executor is called. Mutation grants remain a separate authorization path. The regression harness now verifies that a READ with no read authorizer is denied and that an explicitly injected scoped read authorizer can permit a read. This is a fail-closed adapter contract, not yet a production session/tenant-aware implementation; do not wire a permissive authorizer or expose READ until the server composition supplies verified identity, canonical tenant membership, and server-resolved workspace/path scope.
+
+Before exposing FILE READ through any API, agent tool, browser session, or multi-tenant workspace, require a validated server session, canonical tenant/workspace membership, and a server-resolved workspace root/path scope for every read. Do not rely on `targetReference.entityType === FILE` as authorization. Add regression tests for cross-user, cross-workspace, traversal, and unauthorized READ attempts. This is separate from the one-time mutation grant: READ may use a scoped read policy rather than a mutation grant, but it must not be unauthenticated.
