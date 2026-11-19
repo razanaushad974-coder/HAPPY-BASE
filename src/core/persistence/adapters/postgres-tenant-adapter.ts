@@ -283,11 +283,7 @@ class PostgresTransactionAdapter implements AsyncTenantPersistenceAdapter {
     const serialized = validateRecordInput(id, data);
     try {
       const result = await this.client.query<TenantDbRow>(
-        `insert into public.happy_tenant_records
-           (organization_id, workspace_id, user_id, entity_type, record_id, version, data)
-         values ($1, $2, auth.uid(), $3, $4, 1, $5::jsonb)
-         returning organization_id, workspace_id, user_id, entity_type, record_id,
-                   version, data, created_at, updated_at`,
+        "select * from public.happy_create_tenant_record($1, $2, $3, $4, $5::jsonb)",
         [this.scope.organizationId, this.scope.workspaceId, entityType, id, serialized],
       );
       if (!result.rows[0]) throw new Error("PostgreSQL create returned no record.");
