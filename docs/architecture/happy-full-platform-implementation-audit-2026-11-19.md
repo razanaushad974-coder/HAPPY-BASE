@@ -181,3 +181,13 @@ Reviewed `supabase/drafts/20261119_file_mutation_atomic_consume_candidate.sql` a
 - Added deterministic test-only snapshot transaction behavior to `InMemoryTenantPersistenceAdapter`; successful callbacks commit the cloned snapshot, while thrown errors discard it. State-store tests cover two-entity commit, rollback, and cross-user isolation.
 - This is an adapter contract and test fixture only. The in-memory implementation is not concurrent transaction isolation, PostgreSQL atomicity, durability, or RLS evidence. A production PostgreSQL adapter must pin one connection for the callback, begin/commit/rollback correctly, enforce all three scope dimensions in every SQL statement and at RLS, and retain atomic expected-version writes.
 - The current Supabase project still has no confirmed HAPPY application tables/migration history in the previously inspected inventory. No production adapter, schema migration, database write, or orchestration cutover is claimed.
+
+
+
+
+### Transaction tenant-scope hardening — 2026-11-19
+
+- Review found that the first transaction callback contract exposed the adapter's full scope-accepting methods. A callback could therefore attempt to supply a different user/workspace/organization even though the transaction had been opened for one tenant.
+- Added `TenantBoundTransactionAdapter`, which checks exact organization, workspace, and user equality before every read/list/create/update/delete and binds delegated calls to the original scope. Nested transaction callbacks are wrapped again.
+- Applied the scope-bound facade at both the async state-store boundary and the in-memory test-adapter boundary. Added a regression test that attempts to switch from user A to user B inside a transaction and expects `INVALID_TENANT_SCOPE`.
+- This is defense-in-depth at the application contract. A production adapter must still enforce tenant scope in SQL predicates and RLS; callback wrappers are not a substitute for database authorization.
