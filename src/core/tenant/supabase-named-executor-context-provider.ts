@@ -13,10 +13,7 @@ import {
 } from "./canonical-tenant-context";
 import type {
   SupabasePrivateSchemaClient,
-  SupabasePrivateQuery,
 } from "./supabase-private-tenant-stores";
-
-type DbResult = { data: unknown; error: { message?: string } | null };
 
 export interface VerifiedServerIdentityProvider {
   /** Must call the server-side Supabase auth claims/session verifier. */
