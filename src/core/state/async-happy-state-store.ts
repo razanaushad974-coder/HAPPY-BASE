@@ -18,7 +18,10 @@ export class AsyncHappyStateStore {
     operation: (transactionStore: AsyncHappyStateStore) => Promise<T>,
   ): Promise<T> {
     return this.adapter.transaction(this.scope, async (transactionAdapter) =>
-      operation(new AsyncHappyStateStore(\n        new TenantBoundTransactionAdapter(this.scope, transactionAdapter),\n        this.scope,\n      )),
+      operation(new AsyncHappyStateStore(
+        new TenantBoundTransactionAdapter(this.scope, transactionAdapter),
+        this.scope,
+      )),
     );
   }
 
