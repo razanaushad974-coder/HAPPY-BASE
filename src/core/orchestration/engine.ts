@@ -8,6 +8,8 @@ import {
 import { PersistentMemoryService } from "../memory/persistent-service";
 import { ReasoningOrchestrator } from "../reasoning/orchestrator";
 import { MissionOrchestrator } from "../mission/orchestrator";
+import { MissionEngine } from "../mission/mission-engine";
+import { TaskGraphEngine } from "../mission/task-graph";
 
 import {
     ExecutionAdapterRegistry,
@@ -1022,89 +1024,49 @@ contextSummary:
         // PERSIST
         // ==================================================
 
-        const finalStatus:
-            HappyPipelineResult["status"] =
-            executionResult.status ===
-                "NOT_YET_CONNECTED"
-                ? "NOT_YET_CONNECTED"
-                : verificationResult.status ===
-                    "PASSED"
-                    ? "COMPLETED"
-                    : verificationResult.status ===
-                        "PARTIAL"
-                        ? "PARTIAL"
-                        : "FAILED";
-
-        const finalStage:
-            HappyPipelineResult["currentStage"] =
-            finalStatus === "COMPLETED"
-                ? "COMPLETE"
-                : finalStatus ===
-                    "NOT_YET_CONNECTED"
-                    ? "NOT_YET_CONNECTED"
-                    : "BLOCKED";
-
-        const finalResult = {
-            requestId:
-                request.id,
-            status:
-                finalStatus,
-            currentStage:
-                finalStage,
+        const finalResult: HappyPipelineResult = {
+            requestId: request.id,
+            status: finalStatus,
+            currentStage: finalStage,
             trace: {
-                requestId:
-                    request.id,
+                requestId: request.id,
                 stages: [
                     ...stages,
                     {
-                        stage: "PERSIST" as const,
-                        status: "COMPLETED" as const,
+                        stage: "PERSIST",
+                        status: "COMPLETED",
                         summary:
-                            "Pipeline state persisted to file-backed state.",
+                            "Mission, task transitions, executions, verification and evidence references persisted.",
                     },
                 ],
-                currentStage:
-                    finalStage,
-                status:
-                    finalStatus,
+                currentStage: finalStage,
+                status: finalStatus,
                 startedAt,
-                completedAt:
-                    new Date().toISOString(),
+                completedAt: new Date().toISOString(),
             },
-            missionId:
-                missionSnapshot.mission.id,
-            planId:
-                plan.id,
-            executionRequestId:
-                executionResult.requestId,
-            verificationRequestId:
-                verificationRequest.id,
-            evidenceIds:
-                verificationResult.evidenceIds,
-            persisted:
-                true,
+            missionId: currentMission.id,
+            planId: plan.id,
+            executionRequestId,
+            verificationRequestId,
+            evidenceIds: [...new Set(allEvidenceIds)],
+            persisted: true,
         };
 
         await state.audit().create(
             `audit-final-${request.id}`,
             {
-                event:
-                    "PIPELINE_COMPLETED",
-                requestId:
-                    request.id,
+                event: "PIPELINE_FINALIZED",
+                requestId: request.id,
                 finalStatus,
-                missionId:
-                    missionSnapshot.mission.id,
-                planId:
-                    plan.id,
-                executionRequestId:
-                    executionResult.requestId,
-                verificationRequestId:
-                    verificationRequest.id,
-                trace:
-                    finalResult.trace,
-                createdAt:
-                    new Date().toISOString(),
+                missionId: currentMission.id,
+                planId: plan.id,
+                executionRequestId,
+                verificationRequestId,
+                completedTaskIds: currentMission.completedTaskIds,
+                blockedTaskIds: currentMission.blockedTaskIds,
+                failedTaskIds: currentMission.failedTaskIds,
+                trace: finalResult.trace,
+                createdAt: new Date().toISOString(),
             },
             request.userId,
         );
