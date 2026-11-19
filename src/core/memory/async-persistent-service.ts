@@ -76,6 +76,7 @@ export class AsyncPersistentMemoryService {
     const results = rows
       .map((row) => row.data)
       .filter((memory) => {
+        if (memory.expiresAt && Date.parse(memory.expiresAt) <= Date.now()) return false;
         if (query.projectId && memory.projectId !== query.projectId) return false;
         if (query.missionId && memory.missionId !== query.missionId) return false;
         if (query.taskId && memory.taskId !== query.taskId) return false;
@@ -94,6 +95,9 @@ export class AsyncPersistentMemoryService {
     id: string,
     patch: Partial<Pick<HappyMemory, "value" | "confidence" | "expiresAt">>,
   ): Promise<HappyMemory> {
+    if (patch.value !== undefined && !patch.value.trim()) {
+      throw new Error("Memory value cannot be empty.");
+    }
     const existing = await this.repository.get(id);
     if (!existing) throw new Error(`Memory not found: ${id}`);
 
