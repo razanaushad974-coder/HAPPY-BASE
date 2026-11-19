@@ -71,6 +71,25 @@ async function main(): Promise<void> {
     throw new Error("Committed transaction did not preserve atomic entity writes and tenant scope.");
   }
 
+  await otherUser.mission().create("private-other-user", { goal: "private" });
+  let crossTenantTransactionDenied = false;
+  try {
+    await adapter.transaction(
+      { organizationId: "org-a", workspaceId: "workspace-a", userId: "user-a" },
+      async (transactionAdapter) => transactionAdapter.get(
+        { organizationId: "org-a", workspaceId: "workspace-a", userId: "user-b" },
+        "MISSION",
+        "private-other-user",
+      ),
+    );
+  } catch (error) {
+    crossTenantTransactionDenied = error instanceof TenantPersistenceError &&
+      error.code === "INVALID_TENANT_SCOPE";
+  }
+  if (!crossTenantTransactionDenied) {
+    throw new Error("Transaction adapter allowed a callback to switch authenticated principal scope.");
+  }
+
   const deleted = await owner.mission().delete("mission-1", updated.version);
   if (!deleted || await owner.mission().get("mission-1")) {
     throw new Error("Async state store versioned delete failed.");
@@ -84,6 +103,7 @@ async function main(): Promise<void> {
     optimisticConcurrency: true,
     versionedDelete: true,
     transactionCommitAndRollback: true,
+    crossTenantTransactionScopeDenied: true,
     adapterDurability: "IN_MEMORY_TEST_ONLY",
   });
 }
