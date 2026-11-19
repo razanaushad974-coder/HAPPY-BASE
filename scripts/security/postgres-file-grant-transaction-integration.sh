@@ -95,6 +95,25 @@ expect_result f "$actual" 'replay'
 audit_count="$(psql "$DATABASE_URL" -XqAt -c "SELECT count(*) FROM private.file_mutation_approval_events WHERE grant_id='10000000-0000-0000-0000-000000000001' AND event_type='CONSUMED';")"
 expect_result 1 "$audit_count" 'exactly one audit event'
 
+# The service role may create pending grants but cannot bypass the approval RPC
+# to update a grant or rewrite its append-only audit history.
+if psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+ SET ROLE service_role;
+ UPDATE private.file_mutation_approval_grants
+ SET status='REVOKED'
+ WHERE grant_id='10000000-0000-0000-0000-000000000001';" >/dev/null 2>&1; then
+  echo "FAIL: service_role directly updated a grant" >&2
+  exit 1
+fi
+if psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+ SET ROLE service_role;
+ UPDATE private.file_mutation_approval_events
+ SET event_type='CONSUMED'
+ WHERE grant_id='10000000-0000-0000-0000-000000000001';" >/dev/null 2>&1; then
+  echo "FAIL: service_role rewrote an audit event" >&2
+  exit 1
+fi
+
 seed_grant '10000000-0000-0000-0000-000000000002' 'wrong-executor-1'
 actual="$(invoke_grant '10000000-0000-0000-0000-000000000002' 'wrong-executor-1' "$APPROVER")"
 expect_result f "$actual" 'wrong executor JWT'
