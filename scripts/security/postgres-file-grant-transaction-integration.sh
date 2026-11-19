@@ -214,4 +214,27 @@ if psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
   exit 1
 fi
 
+
+# Tenant suspension and request cancellation must serialize as hard denials.
+seed_grant '10000000-0000-0000-0000-000000000014' 'suspended-org-1'
+psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+ UPDATE private.organizations SET status='SUSPENDED'
+ WHERE organization_id='$ORG';"
+actual="$(invoke_grant '10000000-0000-0000-0000-000000000014' 'suspended-org-1' "$EXECUTOR")"
+expect_result f "$actual" 'suspended organization'
+
+seed_grant '10000000-0000-0000-0000-000000000015' 'suspended-workspace-1'
+psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+ UPDATE private.workspaces SET status='SUSPENDED'
+ WHERE organization_id='$ORG' AND workspace_id='$WS';"
+actual="$(invoke_grant '10000000-0000-0000-0000-000000000015' 'suspended-workspace-1' "$EXECUTOR")"
+expect_result f "$actual" 'suspended workspace'
+
+seed_grant '10000000-0000-0000-0000-000000000016' 'cancelled-request-1'
+psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+ UPDATE private.execution_requests SET status='CANCELLED'
+ WHERE request_id='cancelled-request-1';"
+actual="$(invoke_grant '10000000-0000-0000-0000-000000000016' 'cancelled-request-1' "$EXECUTOR")"
+expect_result f "$actual" 'cancelled execution request'
+
 echo "PASS: migration-candidate RPC; JWT-derived executor; distinct principals; exact binding; expiry/replay; live approver/executor membership and role checks; one audit; concurrent single winner; revoke-vs-consume serialization; anon invocation denial."
