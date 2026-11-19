@@ -1,4 +1,4 @@
-import type { AsyncTenantPersistenceAdapter } from "../persistence/async-tenant-repository";
+import { TenantBoundTransactionAdapter, type AsyncTenantPersistenceAdapter } from "../persistence/async-tenant-repository";
 import { AsyncTenantScopedRepository } from "../persistence/async-tenant-repository";
 import type { EntityType } from "../persistence/types";
 import type { TenantScope } from "./types";
@@ -18,7 +18,7 @@ export class AsyncHappyStateStore {
     operation: (transactionStore: AsyncHappyStateStore) => Promise<T>,
   ): Promise<T> {
     return this.adapter.transaction(this.scope, async (transactionAdapter) =>
-      operation(new AsyncHappyStateStore(transactionAdapter, this.scope)),
+      operation(new AsyncHappyStateStore(\n        new TenantBoundTransactionAdapter(this.scope, transactionAdapter),\n        this.scope,\n      )),
     );
   }
 
