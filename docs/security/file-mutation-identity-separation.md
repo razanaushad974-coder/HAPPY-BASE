@@ -64,3 +64,8 @@ This avoids accidentally turning an approval for one agent/session into a bearer
 ## Current implementation boundary
 
 The existing verifier still implements same-actor approval/execution. This contract is a design milestone only: it does not change that behavior, add a Supabase membership resolver, add a durable grant-store adapter, or enable FILE READ/mutations. The FILE adapter remains default-deny unless a trusted server-side authorizer is explicitly composed. Do not apply SQL, deploy, or merge based on this document.
+
+
+## Self-approval policy reconciliation (2026-11-19)
+
+**Authoritative rule: requester self-approval is prohibited.** This overrides the earlier illustrative regression-case bullet that listed requester-equals-approver as an allowed scenario. The requester may equal the named executor, but must not equal the approver. Enforce this in both the verifier and a database CHECK constraint before any membership lookup or grant consumption.
