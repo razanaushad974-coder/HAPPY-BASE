@@ -142,6 +142,25 @@ begin
 end;
 $guard$;
 
+create or replace function private.guard_file_mutation_grant_insert()
+returns trigger
+language plpgsql
+set search_path = pg_catalog
+as $insert_guard$
+begin
+  if new.status <> 'PENDING'
+     or new.decided_at is not null
+     or new.consumed_at is not null then
+    raise exception 'FILE approval grants must be created in PENDING state';
+  end if;
+  return new;
+end;
+$insert_guard$;
+
+create trigger file_mutation_grant_guard_insert
+before insert on private.file_mutation_approval_grants
+for each row execute function private.guard_file_mutation_grant_insert();
+
 create trigger file_mutation_grant_guard_update
 before update on private.file_mutation_approval_grants
 for each row execute function private.guard_file_mutation_grant_update();
