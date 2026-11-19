@@ -1,14 +1,26 @@
 import type { AsyncHappyStateStore } from "../state/async-happy-state-store";
 import type { AsyncEvidenceService } from "../evidence/async-service";
 import type { Evidence } from "../evidence/types";
+import type { Mission, MissionTask } from "../mission/types";
+import type { ExecutionRequest } from "../execution/types";
 import type { VerificationRequest, VerificationResult } from "./types";
 
+const REQUEST_KEY_PREFIX = "verification-request:";
+
+function isVerificationResult(value: unknown): value is VerificationResult {
+  return Boolean(
+    value && typeof value === "object" &&
+    "requestId" in value && "status" in value && "evidenceIds" in value,
+  );
+}
+
 /**
- * Tenant-scoped, append-only verification result service.
+ * Tenant-scoped verification lifecycle.
  *
- * It validates provenance links before associating evidence with a result.
- * It deliberately does not claim semantic success: without a connected
- * capability-specific verifier, criteria remain PARTIAL.
+ * Requests are registered only after their mission/task/execution ownership
+ * is checked against the same tenant repository. Results are append-only.
+ * This is a persistence contract; production durability still depends on a
+ * real adapter enforcing tenant scope and atomic uniqueness at storage level.
  */
 export class AsyncVerificationService {
   constructor(
@@ -16,38 +28,70 @@ export class AsyncVerificationService {
     private readonly evidence: AsyncEvidenceService,
   ) {}
 
-  async verify(
-    request: VerificationRequest,
-    observedEvidenceIds: string[],
-  ): Promise<VerificationResult> {
-    if (!request.id?.trim()) {
-      throw new Error("Verification request ID is required.");
+  async registerRequest(request: VerificationRequest): Promise<VerificationRequest> {
+    const normalized = this.normalizeRequest(request);
+    const [missionRecord, taskRecord] = await Promise.all([
+      this.state.mission<Mission>().get(normalized.missionId),
+      this.state.task<MissionTask>().get(normalized.taskId),
+    ]);
+    if (!missionRecord || !taskRecord) {
+      throw new Error("Verification mission and task must exist in the active tenant.");
     }
-    if (!request.missionId?.trim() || !request.taskId?.trim()) {
-      throw new Error("Verification mission ID and task ID are required.");
-    }
-    if (!Array.isArray(request.criteria)) {
-      throw new Error("Verification criteria must be an array.");
+    if (missionRecord.data.id !== normalized.missionId ||
+        taskRecord.data.id !== normalized.taskId ||
+        taskRecord.data.missionId !== normalized.missionId ||
+        !missionRecord.data.taskIds.includes(normalized.taskId)) {
+      throw new Error("Verification task does not belong to the requested mission.");
     }
 
-    const criteria = request.criteria;
-    const uniqueEvidenceIds = [...new Set(
-      observedEvidenceIds.filter((id) => typeof id === "string" && id.trim()).map((id) => id.trim()),
-    )];
-    const evidenceRows = await Promise.all(
-      uniqueEvidenceIds.map((id) => this.evidence.get(id)),
+    if (normalized.executionRequestId) {
+      const execution = await this.state.execution<ExecutionRequest>().get(normalized.executionRequestId);
+      if (!execution ||
+          execution.data.id !== normalized.executionRequestId ||
+          execution.data.missionId !== normalized.missionId ||
+          execution.data.taskId !== normalized.taskId) {
+        throw new Error("Verification execution request does not match the mission and task.");
+      }
+    }
+
+    await this.state.verification<VerificationRequest>().create(
+      REQUEST_KEY_PREFIX + normalized.id,
+      normalized,
     );
+    return normalized;
+  }
+
+  async verify(
+    requestId: string,
+    observedEvidenceIds: string[],
+  ): Promise<VerificationResult> {
+    const normalizedId = requestId.trim();
+    if (!normalizedId) throw new Error("Verification request ID is required.");
+    if (!Array.isArray(observedEvidenceIds)) {
+      throw new Error("Observed evidence IDs must be an array.");
+    }
+    const storedRequest = await this.state.verification<VerificationRequest>()
+      .get(REQUEST_KEY_PREFIX + normalizedId);
+    if (!storedRequest) {
+      throw new Error("Verification request is not registered in the active tenant.");
+    }
+    const request = storedRequest.data;
+
+    const uniqueEvidenceIds = [...new Set(
+      observedEvidenceIds
+        .filter((id) => typeof id === "string" && id.trim())
+        .map((id) => id.trim()),
+    )];
+    const evidenceRows = await Promise.all(uniqueEvidenceIds.map((id) => this.evidence.get(id)));
     const matchedEvidence = evidenceRows.filter(
       (item): item is Evidence => Boolean(item && this.matchesRequest(item, request)),
     );
     const evidenceIds = matchedEvidence.map((item) => item.id);
-    const requiredCriteria = criteria.filter((criterion) => criterion.required);
+    const requiredCriteria = request.criteria.filter((criterion) => criterion.required);
 
     let result: VerificationResult;
-    if (criteria.length === 0) {
-      result = {
-        id: `verification-result-${crypto.randomUUID()}`,
-        requestId: request.id.trim(),
+    if (request.criteria.length === 0) {
+      result = this.result(request, {
         status: "BLOCKED",
         confidence: "UNKNOWN",
         passedCriteria: [],
@@ -56,12 +100,9 @@ export class AsyncVerificationService {
         evidenceIds: [],
         summary: "Verification requires at least one criterion.",
         failureReason: "NO_CRITERIA",
-        verifiedAt: new Date().toISOString(),
-      };
+      });
     } else if (request.requiresEvidence && evidenceIds.length === 0) {
-      result = {
-        id: `verification-result-${crypto.randomUUID()}`,
-        requestId: request.id.trim(),
+      result = this.result(request, {
         status: "FAILED",
         confidence: "HIGH",
         passedCriteria: [],
@@ -70,23 +111,19 @@ export class AsyncVerificationService {
         evidenceIds: [],
         summary: "Required evidence is missing or does not match this verification request.",
         failureReason: "REQUIRED_EVIDENCE_MISSING_OR_MISMATCHED",
-        verifiedAt: new Date().toISOString(),
-      };
+      });
     } else {
-      result = {
-        id: `verification-result-${crypto.randomUUID()}`,
-        requestId: request.id.trim(),
+      result = this.result(request, {
         status: "PARTIAL",
         confidence: "LOW",
         passedCriteria: [],
         failedCriteria: [],
-        partialCriteria: (requiredCriteria.length > 0 ? requiredCriteria : criteria)
+        partialCriteria: (requiredCriteria.length > 0 ? requiredCriteria : request.criteria)
           .map((criterion) => criterion.id),
         evidenceIds,
         summary: "Evidence provenance was checked, but semantic outcome verification is not connected.",
         failureReason: "SEMANTIC_VERIFIER_NOT_CONNECTED",
-        verifiedAt: new Date().toISOString(),
-      };
+      });
     }
 
     await this.state.verification<VerificationResult>().create(result.id, result);
@@ -95,7 +132,7 @@ export class AsyncVerificationService {
 
   async get(id: string): Promise<VerificationResult | undefined> {
     const record = await this.state.verification<VerificationResult>().get(id);
-    return record?.data;
+    return record && isVerificationResult(record.data) ? record.data : undefined;
   }
 
   async forRequest(requestId: string): Promise<VerificationResult[]> {
@@ -104,17 +141,59 @@ export class AsyncVerificationService {
     const records = await this.state.verification<VerificationResult>().list();
     return records
       .map((record) => record.data)
-      .filter((result) => result.requestId === normalizedId);
+      .filter((result) => isVerificationResult(result) && result.requestId === normalizedId);
   }
 
-  private matchesRequest(
-    evidence: Evidence,
+  private normalizeRequest(request: VerificationRequest): VerificationRequest {
+    if (!request.id?.trim() || !request.missionId?.trim() || !request.taskId?.trim()) {
+      throw new Error("Verification, mission, and task IDs are required.");
+    }
+    if (!request.description?.trim() || !Array.isArray(request.criteria) ||
+        !Array.isArray(request.preferredMethods)) {
+      throw new Error("Verification description, criteria, and methods are required.");
+    }
+    const criteria = request.criteria.map((criterion) => ({
+      ...criterion,
+      id: criterion.id?.trim(),
+      description: criterion.description?.trim(),
+      expected: criterion.expected?.trim(),
+    }));
+    if (criteria.some((criterion) =>
+      !criterion.id || !criterion.description || !criterion.expected ||
+      typeof criterion.required !== "boolean")) {
+      throw new Error("Every verification criterion must have an ID, description, expected value, and required flag.");
+    }
+    if (new Set(criteria.map((criterion) => criterion.id)).size !== criteria.length) {
+      throw new Error("Verification criterion IDs must be unique.");
+    }
+    return {
+      ...structuredClone(request),
+      id: request.id.trim(),
+      missionId: request.missionId.trim(),
+      taskId: request.taskId.trim(),
+      executionRequestId: request.executionRequestId?.trim() || undefined,
+      description: request.description.trim(),
+      criteria,
+      preferredMethods: [...new Set(request.preferredMethods)],
+    };
+  }
+
+  private matchesRequest(evidence: Evidence, request: VerificationRequest): boolean {
+    return evidence.verificationRequestId === request.id &&
+      evidence.missionId === request.missionId &&
+      evidence.taskId === request.taskId &&
+      (evidence.executionRequestId || undefined) === (request.executionRequestId || undefined);
+  }
+
+  private result(
     request: VerificationRequest,
-  ): boolean {
-    return evidence.verificationRequestId === request.id.trim() &&
-      evidence.missionId === request.missionId.trim() &&
-      evidence.taskId === request.taskId.trim() &&
-      (evidence.executionRequestId || undefined) ===
-        (request.executionRequestId?.trim() || undefined);
+    fields: Omit<VerificationResult, "id" | "requestId" | "verifiedAt">,
+  ): VerificationResult {
+    return {
+      id: `verification-result-${crypto.randomUUID()}`,
+      requestId: request.id,
+      ...fields,
+      verifiedAt: new Date().toISOString(),
+    };
   }
 }
