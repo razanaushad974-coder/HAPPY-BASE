@@ -103,6 +103,25 @@ async function main(): Promise<void> {
   assert(currentGrant().approverUserId === "approver-B", "Persisted approver identity was not retained.");
   assert(!(await authorizer.authorize(request, operation)), "Consumed grant replay was accepted.");
 
+  // The requester cannot approve their own FILE mutation, even with a valid role.
+  stored = { ...currentGrant(), status: "APPROVED", consumedAt: undefined, approverUserId: "requester-A" };
+  let selfApprovalMembershipLookups = 0;
+  const selfApproval = new NamedExecutorFileMutationAuthorizer(
+    { async getContext() { return context; } },
+    store,
+    { async getActiveActor(userId) {
+      selfApprovalMembershipLookups += 1;
+      return userId === "requester-A" ? { userId, organizationIds: [scope.organizationId], workspaceIds: [scope.workspaceId] } : null;
+    } },
+    { async hasRequiredRole() { return true; } },
+    () => now,
+  );
+  const beforeSelfApproval = consumeCount;
+  assert(!(await selfApproval.authorize(request, operation)), "Requester self-approval was accepted.");
+  assert(selfApprovalMembershipLookups === 0, "Self-approval reached approver membership lookup.");
+  assert(consumeCount === beforeSelfApproval, "Self-approval reached atomic consume.");
+  stored = { ...currentGrant(), status: "APPROVED", consumedAt: undefined, approverUserId: "approver-B" };
+
   // Operation tampering must not reach the atomic consume step.
   stored = { ...currentGrant(), status: "APPROVED", consumedAt: undefined };
   const beforeTamper = consumeCount;
