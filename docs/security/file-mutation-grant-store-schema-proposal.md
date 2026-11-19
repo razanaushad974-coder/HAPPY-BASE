@@ -60,6 +60,7 @@ create table private.file_mutation_approval_grants (
   consumed_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
+  constraint file_mutation_grant_no_self_approval check (requester_user_id <> approver_user_id),
   constraint file_mutation_grant_decision_consistency check (
     (status = 'PENDING' and decided_at is null)
     or (status in ('APPROVED','REJECTED','REVOKED','EXPIRED','CONSUMED') and decided_at is not null)
