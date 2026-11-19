@@ -171,3 +171,13 @@ Reviewed `supabase/drafts/20261119_file_mutation_atomic_consume_candidate.sql` a
 - The first rerun after fixing `PGAPPNAME` reached the first forced membership-revocation race but timed out in the role-downgrade race. Log review showed the test started the contender immediately after launching the lock-holder process, without proving the holder had acquired the target row lock first; the observed lock wait was therefore scheduling-dependent.
 - The harness now assigns a distinct `PGAPPNAME` to each lock-holder session and waits until `pg_stat_activity` reports that holder active in `PgSleep` (the script reaches that statement only after the preceding UPDATE acquired its row lock) before launching the contender. The contender is then separately required to appear with `wait_event_type='Lock'`. This ordering is applied to all five forced races: membership revoke, role downgrade, organization suspension first, request cancellation first, and consume first / suspension second.
 - Correction commit: `089d1012c8727e5e15fb8d5467903a0df12eeebf`. Source inspection confirms all five lock-holder markers and waiter gates are present. The updated CI run has not yet completed; no PostgreSQL race-harness pass is claimed.
+
+
+
+
+### Async multi-record transaction contract — 2026-11-19
+
+- Added `AsyncTenantPersistenceAdapter.transaction(scope, operation)` and `AsyncHappyStateStore.transaction(operation)` so a future database adapter can execute related entity writes on one transaction-bound connection. The store callback receives a transaction-scoped state facade, preserving the original organization/workspace/user scope across repositories.
+- Added deterministic test-only snapshot transaction behavior to `InMemoryTenantPersistenceAdapter`; successful callbacks commit the cloned snapshot, while thrown errors discard it. State-store tests cover two-entity commit, rollback, and cross-user isolation.
+- This is an adapter contract and test fixture only. The in-memory implementation is not concurrent transaction isolation, PostgreSQL atomicity, durability, or RLS evidence. A production PostgreSQL adapter must pin one connection for the callback, begin/commit/rollback correctly, enforce all three scope dimensions in every SQL statement and at RLS, and retain atomic expected-version writes.
+- The current Supabase project still has no confirmed HAPPY application tables/migration history in the previously inspected inventory. No production adapter, schema migration, database write, or orchestration cutover is claimed.
