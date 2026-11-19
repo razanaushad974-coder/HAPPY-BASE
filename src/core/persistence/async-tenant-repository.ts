@@ -69,6 +69,12 @@ export interface AsyncTenantPersistenceAdapter {
     id: string,
     expectedVersion: number,
   ): Promise<boolean>;
+
+  /** Execute a group of scoped operations atomically on one storage transaction. */
+  transaction<T>(
+    scope: TenantScope & { userId: string },
+    operation: (transaction: AsyncTenantPersistenceAdapter) => Promise<T>,
+  ): Promise<T>;
 }
 
 function requireCompleteScope(
