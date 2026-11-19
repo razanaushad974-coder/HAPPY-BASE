@@ -201,3 +201,31 @@ Reviewed `supabase/drafts/20261119_file_mutation_atomic_consume_candidate.sql` a
 - Added `durabilityScope`: MEMORY = `PROCESS_LOCAL`; FILE = `SINGLE_HOST_FILE`; unconnected database providers = `NOT_CONNECTED`. The legacy `durable` boolean remains for compatibility: MEMORY false, FILE true (local file persistence), and unavailable database providers false until connected.
 - Added a standalone provider contract test and wired it into the security-validation workflow.
 - No provider was connected or activated; no runtime storage migration was performed.
+
+
+## Async tenant persistence schema candidate — 2026-11-19
+
+Added `supabase/drafts/20261119_async_tenant_persistence_schema_candidate.sql` as a **design-only** schema candidate. It was not applied or executed.
+
+### Contract mapping
+
+- Maps the current `AsyncTenantPersistenceAdapter` key to a composite primary key of organization, workspace, user, entity type, and record ID.
+- Includes every current `EntityType`, including the separate `VERIFICATION_REQUEST` entity.
+- Stores entity payload as JSONB while keeping tenant identity, version, and timestamps in typed columns.
+- Adds tenant-first indexes for exact-key access and entity-scoped listing.
+- Specifies create-at-version-1 and single-statement compare-and-swap update/delete semantics. A production adapter must not implement CAS as read-then-write.
+- Specifies that `transaction()` must use one real PostgreSQL transaction/connection. Independent PostgREST calls do not satisfy the transaction contract.
+- Adds a user-JWT / active-membership RLS policy proposal. Tenant IDs remain selectors; the database principal is derived from `auth.uid()`.
+
+### Blocking integration conflict
+
+The candidate intentionally depends on the canonical `private.organizations`, `private.workspaces`, `private.organization_memberships`, and `private.workspace_memberships` tables in the separate FILE approval SQL candidate. That candidate revokes `private` schema usage from `authenticated` and grants it to `service_role`. Therefore the proposed RLS helper's SECURITY DEFINER owner and ability to read those tables are **not yet established**. Do not assume the helper works or relax the private-schema grants to make it work. Resolve function ownership, RLS/BYPASSRLS, grants, and real-JWT behavior in a reviewed security design first.
+
+### Status
+
+- Schema and adapter semantics: DESIGN ONLY.
+- Production async Postgres/Supabase adapter: NOT IMPLEMENTED.
+- Live schema compatibility / migration history: NOT VERIFIED.
+- RLS and real-JWT integration: NOT VERIFIED.
+- PostgreSQL CAS/concurrency/rollback tests for this schema: NOT RUN.
+- No live Supabase DDL/data write, merge, deployment, or `main` modification.
