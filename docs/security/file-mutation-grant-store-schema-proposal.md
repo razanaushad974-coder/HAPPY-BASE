@@ -163,3 +163,49 @@ alter table private.file_mutation_approval_grants
 For a new table, include `executor_user_id` at creation rather than applying the illustrative ALTER statement. The unique/candidate lookup index should include `organization_id, workspace_id, request_id, executor_user_id, status, expires_at`. The exact atomic consume predicate must include `requester_user_id`, `approver_user_id`, and `executor_user_id` plus every immutable operation binding. The approver must not be equated to the executor.
 
 The new verifier's dependency contracts are not adapters: no Supabase membership provider, durable grant store, approval-decision workflow, or server composition root has been implemented. The legacy same-actor verifier remains unchanged. FILE mutation remains default-deny unless a trusted authorizer is explicitly composed. The core test harness validates distinct identities, named-executor mismatch, approver membership/role revocation, tenant mismatch, operation tampering, replay, concurrent single-winner consumption, and store failure; this fake-store test does not prove database atomicity.
+
+
+
+## Canonical schema reconciliation v2 (2026-11-19) — authoritative addendum
+
+This section supersedes the earlier same-actor text and the illustrative grant-table SQL above wherever they conflict. It remains a design artifact, not an applied migration.
+
+### Verified starting point
+
+Read-only inspection of connected project `hsuxeebljhjwyxeuztzz` (PostgreSQL 17.6) found Supabase-managed schemas/tables only; no HAPPY application tables and no project migration-history rows. The Auth schema contains `auth.users.id` as UUID, so user foreign keys can be typed UUID. There is no existing application organization/workspace key type to reuse. Therefore UUID tenant keys below are a proposed new contract, not a claim about an existing schema. Do not deploy this design until the target project and tenant lifecycle are confirmed.
+
+### Canonical identity and tenant model
+
+- `private.organizations`: UUID primary key, lifecycle status ACTIVE/SUSPENDED/ARCHIVED.
+- `private.workspaces`: UUID primary key and organization_id FK; workspace belongs to exactly one organization.
+- `private.organization_memberships`: unique (organization_id,user_id), status ACTIVE/SUSPENDED/REVOKED, role text governed by a server-side allowlist.
+- `private.workspace_memberships`: unique (organization_id,workspace_id,user_id), same lifecycle statuses, role text governed by a server-side allowlist; composite FK ensures workspace belongs to that organization.
+- `private.execution_requests`: durable server-owned request identity; immutable request/task/mission/tenant/requester/executor fields, state, and created_at. The current in-memory `ExecutionRequest` interface is not a durable source of requester identity and cannot replace this table.
+- `private.file_mutation_approval_grants`: immutable operation binding plus requester, named executor, approver, required role, decision status/timestamps, expiry and one-time consumption.
+- `private.file_mutation_approval_events`: append-only decision/revocation/consumption audit metadata; never file content or secret values.
+
+Tenant IDs are UUID in this proposed schema; core TypeScript contracts currently type them as strings, which is compatible at runtime but requires strict UUID validation at the Supabase boundary.
+
+### Identity and approval invariants
+
+1. Requester is loaded from the durable execution request, not `ExecutionRequest` JSON or caller claims.
+2. Executor is the current verified server session subject and must equal immutable `executor_user_id`.
+3. Approver is loaded from the persisted grant decision and independently revalidated for active organization and workspace membership plus current FOUNDER/ADMIN role.
+4. **Self-approval is prohibited:** `requester_user_id <> approver_user_id`. The database CHECK and verifier must both enforce this before membership lookup/consume. Requester may equal executor; approver must differ from requester.
+5. The current code uses `FOUNDER | ADMIN` for grant roles. Canonical membership role values must be explicitly mapped to this approval policy; do not silently accept arbitrary non-empty roles.
+6. Membership status must be checked on every sensitive request. JWT metadata and cached membership are not authorization sources.
+7. Grant expiry is server bounded. A grant may transition PENDING -> APPROVED/REJECTED, APPROVED -> REVOKED/CONSUMED/EXPIRED; no terminal-state rewrite or re-approval.
+8. Grant consumption and revocation are conditional single-row transitions. A race has exactly one winner.
+9. Grant binding includes immutable executor_user_id, requester_user_id, approver_user_id, tenant, request/task/mission, FILE target, operation, source/destination path, and digest.
+10. All application tables live in non-exposed `private`; no client grants or policies are added. Server-only access remains a separate trust boundary. A service-role client bypasses RLS, so every query still enforces exact tenant predicates and returned-row validation.
+
+### Implementation gates
+
+- Confirm the intended Supabase project/environment and UUID tenant-ID contract.
+- Add a durable execution-request table before implementing the context provider.
+- Define role allowlists and FOUNDER/ADMIN mapping before role resolver implementation.
+- Implement membership store, approval workflow, grant store and append-only audit events as separate server-only adapters.
+- Add real Postgres tests for RLS denial, cross-tenant lookup, revoked membership/role, no-self-approval, revoke-vs-consume race, and two concurrent consumers.
+- Only then generate a reviewed migration with the Supabase CLI and request explicit approval before applying it.
+
+No schema, SQL, RLS policy, migration, or database record was changed in this work.
