@@ -262,3 +262,18 @@ The adapter is not wired into provider registry or production routes. The reposi
 ### Contract tests and limits
 
 Added `src/tests/core/persistence/postgres-tenant-adapter.test.ts` and a CI step. It uses a fake PostgreSQL pool to verify query scoping, auth-derived identity, CAS error mapping, one-connection transactions, nested savepoints, rollback, and identity mismatch denial. This is an adapter contract test only; it is **not** a PostgreSQL engine, RLS, real JWT, or concurrency integration test. No live database was contacted.
+
+
+### Disposable PostgreSQL engine coverage
+
+Added `scripts/security/postgres-tenant-persistence-integration.sh` and a PostgreSQL 17 service to the validation workflow. The harness creates isolated auth/private tenant fixtures, applies the design-only tenant schema candidate to the disposable CI database, then checks:
+
+- authenticated user can insert/read only their own tenant row;
+- a second active user cannot read or mutate the first user's row;
+- revoked workspace membership is denied by RLS;
+- update/delete CAS increments versions and rejects stale versions;
+- missing delete returns false without leaking cross-tenant existence;
+- authenticated direct UPDATE/DELETE and service-role direct SELECT are not granted;
+- a database transaction rollback removes the uncommitted row.
+
+The harness stubs `auth.uid()` using PostgreSQL's local JWT-claim setting. It exercises PostgreSQL, RLS, and SQL functions, but does **not** validate Supabase JWT signatures, production function ownership, real Supabase grants, multi-session race behavior, or production schema compatibility. It runs only against an ephemeral CI PostgreSQL 17 service.
