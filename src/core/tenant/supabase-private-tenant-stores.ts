@@ -127,11 +127,6 @@ export class SupabaseNamedExecutorGrantStore implements NamedExecutorGrantStore 
       let query = this.client.schema(PRIVATE)
         .from("file_mutation_approval_grants")
         .select(GRANT_COLUMNS)
-        .eq("grant_id", ""); // replaced below with binding lookup only; grant ID is discovered by exact binding
-      // Start a fresh query to keep the predicate explicit and auditable.
-      query = this.client.schema(PRIVATE)
-        .from("file_mutation_approval_grants")
-        .select(GRANT_COLUMNS)
         .eq("organization_id", scope.organizationId)
         .eq("workspace_id", scope.workspaceId)
         .eq("request_id", binding.requestId)
@@ -169,7 +164,7 @@ export class SupabaseNamedExecutorGrantStore implements NamedExecutorGrantStore 
       const organizationId = stringField(row, "organization_id");
       const workspaceId = stringField(row, "workspace_id");
       const targetEntityId = stringField(row, "target_entity_id");
-      const operation = stringField(row, "operation");
+      const operation = row.operation;
       const sourcePath = stringField(row, "source_path");
       const inputDigest = stringField(row, "input_digest");
       const expiresAt = stringField(row, "expires_at");
@@ -177,7 +172,8 @@ export class SupabaseNamedExecutorGrantStore implements NamedExecutorGrantStore 
       if (
         !grantId || !requestId || !taskId || !missionId || !requesterUserId ||
         !executorUserId || !approverUserId || !organizationId || !workspaceId ||
-        row.target_entity_type !== "FILE" || !targetEntityId || !operation ||
+        row.target_entity_type !== "FILE" || !targetEntityId ||
+        !["CREATE", "MODIFY", "COPY", "MOVE", "RENAME", "DELETE"].includes(String(operation)) ||
         !sourcePath || !inputDigest || !expiresAt ||
         (destinationPath !== null && typeof destinationPath !== "string")
       ) return null;
