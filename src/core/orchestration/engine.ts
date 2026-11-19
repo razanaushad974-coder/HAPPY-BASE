@@ -587,14 +587,6 @@ contextSummary:
         // TASK GRAPH
         // ==================================================
 
-        const firstTask =
-            missionSnapshot.graph.tasks.find(
-                (task) =>
-                    task.targetReference !==
-                    undefined,
-            ) ??
-            missionSnapshot.graph.tasks[0];
-
         for (
             const task of
             missionSnapshot.graph.tasks
@@ -606,7 +598,7 @@ contextSummary:
             );
         }
 
-        if (!firstTask) {
+        if (missionSnapshot.graph.tasks.length === 0) {
             addStage({
                 stage: "TASK_GRAPH",
                 status: "BLOCKED",
