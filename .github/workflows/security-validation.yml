@@ -14,11 +14,13 @@ on:
       - "src/core/orchestration/**"
       - "src/core/mission/**"
       - "src/core/persistence/**"
+      - "src/core/memory/**"
       - "src/core/verification/**"
       - "src/tests/core/approval/**"
       - "src/tests/core/tenant/**"
       - "src/tests/core/orchestration/**"
       - "src/tests/core/mission/**"
+      - "src/tests/core/persistence/**"
       - "package.json"
       - "package-lock.json"
       - "tsconfig.json"
@@ -56,6 +58,8 @@ jobs:
         run: npm run test:security
       - name: Async tenant persistence contract
         run: npx --yes tsx@4.23.15 src/tests/core/persistence/async-tenant-repository.test.ts
+      - name: Async tenant memory contract
+        run: npx --yes tsx@4.23.15 src/tests/core/persistence/async-persistent-memory.test.ts
       - name: Orchestration and mission harnesses
         run: npx --yes tsx@4.23.15 src/tests/core/orchestration/orchestration.test.ts && npx --yes tsx@4.23.15 src/tests/core/mission/mission-task-graph.test.ts
       - name: ESLint
