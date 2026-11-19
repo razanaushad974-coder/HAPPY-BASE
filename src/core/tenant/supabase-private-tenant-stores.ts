@@ -14,11 +14,11 @@ type DatabaseError = { message?: string } | null;
 type DatabaseResult = { data: unknown; error: DatabaseError };
 
 export interface SupabasePrivateQuery {
-  select(columns: string): SupabaseQuery;
-  update(values: Record<string, unknown>): SupabaseQuery;
-  eq(column: string, value: string | number | boolean): SupabaseQuery;
-  is(column: string, value: null | boolean): SupabaseQuery;
-  gt(column: string, value: string): SupabaseQuery;
+  select(columns: string): SupabasePrivateQuery;
+  update(values: Record<string, unknown>): SupabasePrivateQuery;
+  eq(column: string, value: string | number | boolean): SupabasePrivateQuery;
+  is(column: string, value: null | boolean): SupabasePrivateQuery;
+  gt(column: string, value: string): SupabasePrivateQuery;
   maybeSingle(): Promise<DatabaseResult>;
 }
 
