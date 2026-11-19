@@ -153,7 +153,8 @@ export class NamedExecutorFileMutationAuthorizer implements FileMutationAuthoriz
           grant.sourcePath !== lookup.sourcePath ||
           grant.destinationPath !== lookup.destinationPath ||
           grant.inputDigest !== lookup.inputDigest ||
-          !grant.approverUserId.trim()) return false;
+          !grant.approverUserId.trim() ||
+          grant.approverUserId === requesterId) return false;
 
       const now = this.now();
       const expiry = Date.parse(grant.expiresAt);
