@@ -207,23 +207,3 @@ if psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
 fi
 
 echo "PASS: migration-candidate RPC; JWT-derived executor; distinct principals; exact binding; expiry/replay; live approver/executor membership and role checks; one audit; concurrent single winner; revoke-vs-consume serialization; anon invocation denial."
-
-seed_grant '10000000-0000-0000-0000-000000000010' 'consume-before-revoke-1'
-actual="$(invoke_grant '10000000-0000-0000-0000-000000000010' 'consume-before-revoke-1' "$EXECUTOR")"
-expect_result t "$actual" 'consume before later revocation'
-psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
- UPDATE private.organization_memberships SET status='REVOKED'
- WHERE organization_id='$ORG' AND user_id='$APPROVER';"
-
-if psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
- SET ROLE anon;
- SELECT public.consume_file_mutation_approval_grant(
-  '10000000-0000-0000-0000-000000000010','$ORG','$WS',
-  'consume-before-revoke-1','task-consume-before-revoke-1','mission-consume-before-revoke-1',
-  'file-consume-before-revoke-1','MODIFY','source-consume-before-revoke-1',NULL,'$DIGEST'
- );" >/dev/null 2>&1; then
-  echo "FAIL: anon role invoked privileged consume RPC" >&2
-  exit 1
-fi
-
-echo "PASS: migration-candidate RPC; JWT-derived executor; distinct principals; exact binding; expiry/replay; live approver/executor membership and role checks; one audit; concurrent single winner; revoke-vs-consume serialization; anon invocation denial."
