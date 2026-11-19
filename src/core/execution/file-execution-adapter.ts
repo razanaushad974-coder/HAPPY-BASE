@@ -177,20 +177,10 @@ export class FileExecutionAdapter
     const startedAt =
       new Date().toISOString();
 
-    if (
-      request.requiresApproval &&
-      !request.approved
-    ) {
-      return {
-        ...baseResult(
-          request,
-          "WAITING_APPROVAL",
-          startedAt,
-        ),
-        error:
-          "File execution requires explicit approval.",
-      };
-    }
+    // FILE mutation authorization is decided exclusively by the injected
+    // server-side persisted-grant authorizer below. The caller-controlled
+    // requiresApproval/approved booleans are not proof and must not block a
+    // valid one-time grant or authorize a mutation by themselves.
 
     if (!this.canExecute(request)) {
       return {
