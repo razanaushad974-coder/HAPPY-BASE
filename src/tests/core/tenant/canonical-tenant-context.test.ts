@@ -1,8 +1,10 @@
 import {
   resolveCanonicalTenantContext,
+  resolveAuthenticatedTenantContext,
   type CanonicalTenantMembershipStore,
   type OrganizationMembershipRecord,
   type WorkspaceMembershipRecord,
+  type VerifiedServerIdentityProvider,
 } from "../../../core/tenant/canonical-tenant-context";
 
 function assert(condition: boolean, message: string): asserts condition {
@@ -71,6 +73,43 @@ async function main(): Promise<void> {
   assert(await resolveCanonicalTenantContext(identity, scope, store({ workspace: { ...workspace, workspaceId: "other-workspace" } })) === null, "Mismatched workspace membership was accepted.");
   assert(await resolveCanonicalTenantContext(identity, scope, store({ failOrganization: true })) === null, "Organization store failure did not fail closed.");
   assert(await resolveCanonicalTenantContext(identity, scope, store({ failWorkspace: true })) === null, "Workspace store failure did not fail closed.");
+
+
+  const verifiedIdentityProvider: VerifiedServerIdentityProvider = {
+    async getVerifiedIdentity() {
+      return identity;
+    },
+  };
+  const authenticated = await resolveAuthenticatedTenantContext(
+    verifiedIdentityProvider,
+    scope,
+    store(),
+  );
+  assert(authenticated.status === "AUTHENTICATED", "Verified server identity was not composed with active tenant membership.");
+  if (authenticated.status === "AUTHENTICATED") {
+    assert(authenticated.context.actor.userId === "verified-user-1", "Authenticated tenant actor did not come from the verified session.");
+  }
+
+  const unauthenticated = await resolveAuthenticatedTenantContext(
+    { async getVerifiedIdentity() { return null; } },
+    scope,
+    store(),
+  );
+  assert(unauthenticated.status === "UNAUTHENTICATED", "Missing server session did not fail closed.");
+
+  const identityProviderFailure = await resolveAuthenticatedTenantContext(
+    { async getVerifiedIdentity() { throw new Error("auth provider unavailable"); } },
+    scope,
+    store(),
+  );
+  assert(identityProviderFailure.status === "UNAUTHENTICATED", "Identity provider failure did not fail closed.");
+
+  const tenantDenied = await resolveAuthenticatedTenantContext(
+    verifiedIdentityProvider,
+    { ...scope, workspaceId: "attacker-selected-workspace" },
+    store(),
+  );
+  assert(tenantDenied.status === "TENANT_ACCESS_DENIED", "Unmatched caller-selected workspace was accepted.");
 
   console.log("Canonical tenant membership contract: PASS");
 }
