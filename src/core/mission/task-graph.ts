@@ -19,8 +19,21 @@ export class TaskGraphEngine {
       ids.add(task.id);
     }
 
+    const missionIds = new Set(tasks.map((task) => task.missionId));
+    if (missionIds.size > 1) {
+      errors.push("Task graph cannot contain tasks from multiple missions.");
+    }
+
     for (const task of tasks) {
+      const dependencyIds = new Set<string>();
       for (const dependencyId of task.dependencyIds) {
+        if (dependencyIds.has(dependencyId)) {
+          errors.push(
+            `Task ${task.id} contains duplicate dependency ${dependencyId}.`,
+          );
+        }
+        dependencyIds.add(dependencyId);
+
         if (!ids.has(dependencyId)) {
           errors.push(
             `Task ${task.id} references missing dependency ${dependencyId}.`,

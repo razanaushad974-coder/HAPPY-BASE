@@ -113,6 +113,35 @@ if (!graphEngine.hasCycle(invalidTasks)) {
   throw new Error("Cycle detection failed.");
 }
 
+const crossMissionTasks: MissionTask[] = [
+  { ...firstTask, id: "cross-mission-a", dependencyIds: [] },
+  {
+    ...secondTask,
+    id: "cross-mission-b",
+    missionId: "different-mission",
+    dependencyIds: ["cross-mission-a"],
+  },
+];
+if (graphEngine.validate(crossMissionTasks).valid) {
+  throw new Error("Cross-mission task graph was accepted.");
+}
+
+const duplicateDependencyTasks: MissionTask[] = [
+  {
+    ...firstTask,
+    id: "duplicate-dependency-task",
+    dependencyIds: ["duplicate-dependency-root", "duplicate-dependency-root"],
+  },
+  {
+    ...secondTask,
+    id: "duplicate-dependency-root",
+    dependencyIds: [],
+  },
+];
+if (graphEngine.validate(duplicateDependencyTasks).valid) {
+  throw new Error("Duplicate task dependency was accepted.");
+}
+
 const blockedPlan = reasoning.createExecutionPlan({
   goal: "Build an application.",
   unresolvedQuestions: [
