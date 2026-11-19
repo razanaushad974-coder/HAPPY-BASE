@@ -1,4 +1,4 @@
-import type { VerifiedServerIdentityProvider } from "../../tenant/canonical-tenant-context";
+import type { VerifiedServerIdentityProvider, VerifiedTenantIdentity } from "../../tenant/canonical-tenant-context";
 import type { TenantScope } from "../../state/types";
 import {
   requireCompleteScope,
@@ -86,7 +86,7 @@ export class PgPoolTenantSessionProvider implements PostgresTenantSessionProvide
   ): Promise<T> {
     requireCompleteScope(scope);
 
-    let identity;
+    let identity: VerifiedTenantIdentity | null;
     try {
       identity = await this.identities.getVerifiedIdentity();
     } catch {
@@ -350,8 +350,12 @@ class PostgresTransactionAdapter implements AsyncTenantPersistenceAdapter {
       await this.client.query(`RELEASE SAVEPOINT ${savepoint}`);
       return result;
     } catch (error) {
-      await this.client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
-      await this.client.query(`RELEASE SAVEPOINT ${savepoint}`);
+      try {
+        await this.client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+        await this.client.query(`RELEASE SAVEPOINT ${savepoint}`);
+      } catch {
+        // Preserve the callback/query failure; the outer transaction will roll back.
+      }
       throw error;
     }
   }
