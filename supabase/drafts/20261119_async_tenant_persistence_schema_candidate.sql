@@ -175,7 +175,7 @@ revoke all on function public.happy_has_active_tenant_scope(uuid, uuid)
 grant execute on function public.happy_has_active_tenant_scope(uuid, uuid)
   to authenticated;
 
-revoke all on public.happy_tenant_records from public, anon;
+revoke all on public.happy_tenant_records from public, anon, service_role;
 grant select, insert on public.happy_tenant_records to authenticated;
 revoke update, delete on public.happy_tenant_records from authenticated;
 
@@ -207,8 +207,9 @@ revoke update, delete on public.happy_tenant_records from authenticated;
 --       RETURNING record_id;
 --   If no row returns, use a scope-bound existence check to distinguish
 --   RECORD_NOT_FOUND from VERSION_CONFLICT. Never widen that diagnostic query.
---   No such RPCs are implemented by this candidate, so the production adapter
---   remains NOT_CONNECTED until that security review and implementation exist.
+--   The RPC candidates are defined below. They are not deployable until the
+--   function-owner, role grants, membership-table access, and real-JWT tests
+--   have been reviewed and verified. The production adapter remains NOT_CONNECTED.
 --
 -- Atomic compare-and-swap write RPCs. They derive the principal from auth.uid(),
 -- never accept user_id as a parameter, and are the only authenticated update/delete
