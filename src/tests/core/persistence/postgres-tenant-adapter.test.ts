@@ -90,11 +90,11 @@ async function main(): Promise<void> {
     throw new Error("PostgreSQL adapter did not map the inserted tenant record.");
   }
   const createClient = pool.clients[0];
-  const insert = createClient.statements.find((entry) =>
-    entry.sql.includes("insert into public.happy_tenant_records"),
+  const createRpc = createClient.statements.find((entry) =>
+    entry.sql.includes("happy_create_tenant_record"),
   );
-  if (!insert?.sql.includes("auth.uid()") || insert.values?.includes(scope.userId)) {
-    throw new Error("PostgreSQL create trusted a caller-supplied user ID.");
+  if (!createRpc || createRpc.values?.includes(scope.userId)) {
+    throw new Error("PostgreSQL create RPC did not derive identity inside the database.");
   }
   const claimSetup = createClient.statements.find((entry) =>
     entry.sql.includes("request.jwt.claim.sub"),
