@@ -30,6 +30,7 @@ export class AsyncHappyStateStore {
   task<T = unknown>() { return this.repository<T>("TASK"); }
   execution<T = unknown>() { return this.repository<T>("EXECUTION"); }
   verification<T = unknown>() { return this.repository<T>("VERIFICATION"); }
+  verificationRequest<T = unknown>() { return this.repository<T>("VERIFICATION_REQUEST"); }
   evidence<T = unknown>() { return this.repository<T>("EVIDENCE"); }
   memory<T = unknown>() { return this.repository<T>("MEMORY"); }
   approval<T = unknown>() { return this.repository<T>("APPROVAL"); }
