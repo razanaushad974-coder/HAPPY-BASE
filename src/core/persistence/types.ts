@@ -26,13 +26,22 @@ export type EntityType =
   | "APPROVAL"
   | "AUDIT_EVENT";
 
+export type PersistenceDurabilityScope =
+  | "PROCESS_LOCAL"
+  | "SINGLE_HOST_FILE"
+  | "TRANSACTIONAL_DATABASE"
+  | "NOT_CONNECTED";
+
 export interface PersistenceConfig {
   provider: PersistenceProvider;
   status: PersistenceStatus;
   databaseName?: string;
   schemaName?: string;
   connectionConfigured: boolean;
+  /** Whether the selected provider is designed to persist data beyond process memory. */
   durable: boolean;
+  /** Operational scope of that durability; not a claim that the provider is connected. */
+  durabilityScope?: PersistenceDurabilityScope;
 }
 
 export interface PersistedRecord<T> {
