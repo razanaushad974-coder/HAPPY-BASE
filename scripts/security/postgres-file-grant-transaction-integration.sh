@@ -46,7 +46,8 @@ INSERT INTO private.organization_memberships VALUES
 ON CONFLICT (organization_id,user_id) DO UPDATE
  SET status=excluded.status, role=excluded.role;
 INSERT INTO private.workspace_memberships VALUES
- ('$ORG','$WS','$EXECUTOR','ACTIVE','MEMBER')
+ ('$ORG','$WS','$EXECUTOR','ACTIVE','MEMBER'),
+ ('$ORG','$WS','$APPROVER','ACTIVE','MEMBER')
 ON CONFLICT (organization_id,workspace_id,user_id) DO UPDATE SET status='ACTIVE';
 INSERT INTO private.execution_requests
  (request_id,task_id,mission_id,requester_user_id,executor_user_id,organization_id,workspace_id,status)
@@ -135,6 +136,13 @@ expect_result f "$actual" 'demoted approver role'
 seed_grant '10000000-0000-0000-0000-000000000007' 'revoked-executor-1' 'ACTIVE' 'ADMIN' 'REVOKED'
 actual="$(invoke_grant '10000000-0000-0000-0000-000000000007' 'revoked-executor-1' "$EXECUTOR")"
 expect_result f "$actual" 'revoked executor membership'
+
+seed_grant '10000000-0000-0000-0000-000000000013' 'revoked-approver-workspace-1'
+psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+ UPDATE private.workspace_memberships SET status='REVOKED'
+ WHERE organization_id='$ORG' AND workspace_id='$WS' AND user_id='$APPROVER';"
+actual="$(invoke_grant '10000000-0000-0000-0000-000000000013' 'revoked-approver-workspace-1' "$EXECUTOR")"
+expect_result f "$actual" 'revoked approver workspace membership'
 
 seed_grant '10000000-0000-0000-0000-000000000008' 'concurrent-1'
 invoke_grant '10000000-0000-0000-0000-000000000008' 'concurrent-1' "$EXECUTOR" > /tmp/happy-txn-consume-a.out & p1=$!
