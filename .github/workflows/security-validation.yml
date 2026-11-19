@@ -25,6 +25,7 @@ on:
   push:
     branches:
       - security/durable-file-mutation-grants
+      - platform/full-happy-audit-and-integration
 
 permissions:
   contents: read
