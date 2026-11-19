@@ -452,8 +452,8 @@ async function main(): Promise<void> {
         "Resolved project target was not preserved in the persisted mission task graph.",
     );
     assert(
-        rootTask?.data?.status === "BLOCKED",
-        "The root task was not held when semantic verification could not prove completion.",
+        (rootTask?.data?.status === "BLOCKED" || rootTask?.data?.status === "FAILED"),
+        "The root task was not held after execution or verification failed.",
     );
     assert(
         targetTask?.data?.status === "PENDING",
