@@ -173,7 +173,7 @@ psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
  BEGIN;
  UPDATE private.organization_memberships SET status='REVOKED'
  WHERE organization_id='$ORG' AND user_id='$APPROVER';
- SELECT pg_sleep(5);
+ SELECT pg_sleep(15);
  COMMIT;" &
 revoke_pid=$!
 PGAPPNAME=happy-revoke-consumer invoke_grant '10000000-0000-0000-0000-000000000009' 'revoke-race-1' "$EXECUTOR" > /tmp/happy-revoke-consumer.out &
@@ -191,7 +191,7 @@ psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
  BEGIN;
  UPDATE private.organization_memberships SET role='MEMBER'
  WHERE organization_id='$ORG' AND user_id='$APPROVER';
- SELECT pg_sleep(5);
+ SELECT pg_sleep(15);
  COMMIT;" &
 downgrade_pid=$!
 PGAPPNAME=happy-downgrade-consumer invoke_grant '10000000-0000-0000-0000-000000000011' 'role-downgrade-race-1' "$EXECUTOR" > /tmp/happy-downgrade-consumer.out &
@@ -264,7 +264,7 @@ seed_grant '10000000-0000-0000-0000-000000000017' 'suspend-first-1'
 psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
  BEGIN;
  UPDATE private.organizations SET status='SUSPENDED' WHERE organization_id='$ORG';
- SELECT pg_sleep(5);
+ SELECT pg_sleep(15);
  COMMIT;" &
 suspend_first_pid=$!
 PGAPPNAME=happy-suspend-first-consumer invoke_grant '10000000-0000-0000-0000-000000000017' 'suspend-first-1' "$EXECUTOR" > /tmp/happy-suspend-first-consumer.out &
@@ -288,7 +288,7 @@ PGAPPNAME=happy-consume-first-blocker psql "$DATABASE_URL" -XqAt -v ON_ERROR_STO
   'consume-first-suspend-1','task-consume-first-suspend-1','mission-consume-first-suspend-1',
   'file-consume-first-suspend-1','MODIFY','source-consume-first-suspend-1',NULL,'$DIGEST'
  );
- SELECT pg_sleep(5);
+ SELECT pg_sleep(15);
  COMMIT;" > /tmp/happy-txn-consume-first-suspend.out &
 consume_first_pid=$!
 PGAPPNAME=happy-consume-first-suspender psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
@@ -307,7 +307,7 @@ seed_grant '10000000-0000-0000-0000-000000000019' 'cancel-first-1'
 psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
  BEGIN;
  UPDATE private.execution_requests SET status='CANCELLED' WHERE request_id='cancel-first-1';
- SELECT pg_sleep(5);
+ SELECT pg_sleep(15);
  COMMIT;" &
 cancel_first_pid=$!
 PGAPPNAME=happy-cancel-first-consumer invoke_grant '10000000-0000-0000-0000-000000000019' 'cancel-first-1' "$EXECUTOR" > /tmp/happy-cancel-first-consumer.out &
