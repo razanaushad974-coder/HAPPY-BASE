@@ -220,3 +220,79 @@ console.log({
   retryCount: retried.retryCount,
 });
 
+
+
+// Multi-branch DAG scheduling: independent roots are both eligible, and a
+// dependent task becomes eligible only after its own prerequisite completes.
+const branchA = {
+  ...firstTask,
+  id: "dag-root-a",
+  missionId: "dag-mission",
+  status: "PENDING" as const,
+  dependencyIds: [],
+  dependentTaskIds: [],
+};
+const branchB = {
+  ...firstTask,
+  id: "dag-root-b",
+  missionId: "dag-mission",
+  status: "PENDING" as const,
+  dependencyIds: [],
+  dependentTaskIds: [],
+};
+const childA = {
+  ...firstTask,
+  id: "dag-child-a",
+  missionId: "dag-mission",
+  status: "PENDING" as const,
+  dependencyIds: ["dag-root-a"],
+  dependentTaskIds: [],
+};
+const childB = {
+  ...firstTask,
+  id: "dag-child-b",
+  missionId: "dag-mission",
+  status: "PENDING" as const,
+  dependencyIds: ["dag-root-b"],
+  dependentTaskIds: [],
+};
+const dagTasks = [branchA, branchB, childA, childB];
+const initialDag = graphEngine.buildGraph(dagTasks);
+const initialReady = graphEngine.getReadyTasks(initialDag);
+if (
+  initialReady.length !== 2 ||
+  !initialReady.some((task) => task.id === "dag-root-a") ||
+  !initialReady.some((task) => task.id === "dag-root-b")
+) {
+  throw new Error("Independent DAG roots were not both scheduled.");
+}
+
+const afterRootA = graphEngine.buildGraph(
+  dagTasks.map((task) =>
+    task.id === "dag-root-a"
+      ? { ...task, status: "COMPLETED" as const }
+      : task,
+  ),
+);
+const afterRootAReady = graphEngine.getReadyTasks(afterRootA);
+if (
+  afterRootAReady.length !== 2 ||
+  !afterRootAReady.some((task) => task.id === "dag-root-b") ||
+  !afterRootAReady.some((task) => task.id === "dag-child-a")
+) {
+  throw new Error("Completing one root did not release only its dependent branch.");
+}
+
+const afterRootBFailure = graphEngine.buildGraph(
+  dagTasks.map((task) =>
+    task.id === "dag-root-b"
+      ? { ...task, status: "FAILED" as const }
+      : task,
+  ),
+);
+const afterRootBFailureReady = graphEngine.getReadyTasks(afterRootBFailure);
+if (
+  afterRootBFailureReady.some((task) => task.id === "dag-child-b")
+) {
+  throw new Error("A failed prerequisite incorrectly released its dependent task.");
+}
