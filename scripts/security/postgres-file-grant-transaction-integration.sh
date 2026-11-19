@@ -271,7 +271,7 @@ sleep 0.2
 psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
  UPDATE private.organizations SET status='SUSPENDED' WHERE organization_id='$ORG';"
 wait "$consume_first_pid"
-consume_first_result="$(grep -E '^(t|f)
+consume_first_result="$(grep -E '^(t|f)$' /tmp/happy-txn-consume-first-suspend.out | tail -n 1)"
 expect_result t "$consume_first_result" 'consume commits before later suspension'
 audit_count="$(psql "$DATABASE_URL" -XqAt -c "SELECT count(*) FROM private.file_mutation_approval_events WHERE grant_id='10000000-0000-0000-0000-000000000018' AND event_type='CONSUMED';")"
 expect_result 1 "$audit_count" 'one audit after consume-first race'
@@ -291,25 +291,4 @@ expect_result f "$actual" 'request cancellation commits before consume'
 audit_count="$(psql "$DATABASE_URL" -XqAt -c "SELECT count(*) FROM private.file_mutation_approval_events WHERE grant_id='10000000-0000-0000-0000-000000000019';")"
 expect_result 0 "$audit_count" 'no audit after cancellation-first race'
 
-echo "PASS: migration-candidate RPC; JWT-derived executor; distinct principals; exact binding; expiry/replay; live approver/executor membership and role checks; one audit; concurrent single winner; revoke-vs-consume serialization; anon invocation denial."
- /tmp/happy-txn-consume-first-suspend.out | tail -n 1)"
-expect_result t "$consume_first_result" 'consume commits before later suspension'
-audit_count="$(psql "$DATABASE_URL" -XqAt -c "SELECT count(*) FROM private.file_mutation_approval_events WHERE grant_id='10000000-0000-0000-0000-000000000018' AND event_type='CONSUMED';")"
-expect_result 1 "$audit_count" 'one audit after consume-first race'
-
-# Forced request-cancellation race: cancellation commits first, consume denies.
-seed_grant '10000000-0000-0000-0000-000000000019' 'cancel-first-1'
-psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
- BEGIN;
- UPDATE private.execution_requests SET status='CANCELLED' WHERE request_id='cancel-first-1';
- SELECT pg_sleep(1.5);
- COMMIT;" &
-cancel_first_pid=$!
-sleep 0.2
-actual="$(invoke_grant '10000000-0000-0000-0000-000000000019' 'cancel-first-1' "$EXECUTOR")"
-wait "$cancel_first_pid"
-expect_result f "$actual" 'request cancellation commits before consume'
-audit_count="$(psql "$DATABASE_URL" -XqAt -c "SELECT count(*) FROM private.file_mutation_approval_events WHERE grant_id='10000000-0000-0000-0000-000000000019';")"
-expect_result 0 "$audit_count" 'no audit after cancellation-first race'
-
-echo "PASS: migration-candidate RPC; JWT-derived executor; distinct principals; exact binding; expiry/replay; live approver/executor membership and role checks; one audit; concurrent single winner; revoke-vs-consume serialization; anon invocation denial."
+echo "PASS: migration-candidate RPC; JWT-derived executor; distinct principals; exact binding; expiry/replay; live approver/executor membership and role checks; one audit; concurrent single winner; revoke-vs-consume serialization; organization suspension and request cancellation races; anon invocation denial."
