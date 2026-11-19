@@ -8,6 +8,8 @@ on:
       - happy/server-verified-pipeline-approval
     paths:
       - "scripts/security/postgres-grant-integration.sh"
+      - "scripts/security/postgres-file-grant-transaction-integration.sh"
+      - "supabase/drafts/**"
       - ".github/workflows/postgres-security-integration.yml"
       - "src/core/approval/**"
       - "src/core/tenant/**"
@@ -49,5 +51,9 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/happy_security_test
       - name: Run isolated PostgreSQL authorization and concurrency checks
         run: bash scripts/security/postgres-grant-integration.sh
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/happy_security_test
+      - name: Run transactional FILE grant RPC integration checks
+        run: bash scripts/security/postgres-file-grant-transaction-integration.sh
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/happy_security_test
