@@ -277,3 +277,8 @@ Added `scripts/security/postgres-tenant-persistence-integration.sh` and a Postgr
 - a database transaction rollback removes the uncommitted row.
 
 The harness stubs `auth.uid()` using PostgreSQL's local JWT-claim setting. It exercises PostgreSQL, RLS, and SQL functions, but does **not** validate Supabase JWT signatures, production function ownership, real Supabase grants, multi-session race behavior, or production schema compatibility. It runs only against an ephemeral CI PostgreSQL 17 service.
+
+
+### Concurrent CAS race coverage
+
+Added `scripts/security/postgres-tenant-cas-concurrency.sh`, invoked by the disposable PostgreSQL integration harness. It starts two independent PostgreSQL sessions against the same version-1 record, confirms the contender is actually waiting on a row lock, lets the holder commit version 2, and requires the contender to fail with SQLSTATE `40001`. The race uses a privileged test-session lock only because direct authenticated UPDATE is intentionally revoked; the winning write itself executes through the authenticated CAS RPC. This is isolated PostgreSQL concurrency evidence, not a hosted Supabase/JWT test.
