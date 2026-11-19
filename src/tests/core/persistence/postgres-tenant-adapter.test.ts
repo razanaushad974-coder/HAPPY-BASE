@@ -46,7 +46,7 @@ class FakePgClient implements PgClientLike {
     if (sql.includes("happy_update_tenant_record")) {
       return { rows: [{ ...dbRow, version: 2, data: { goal: "updated" } } as unknown as Row], rowCount: 1 };
     }
-    if (sql.includes("insert into public.happy_tenant_records")) {
+    if (sql.includes("happy_create_tenant_record")) {
       return { rows: [dbRow as unknown as Row], rowCount: 1 };
     }
     if (sql.includes("from public.happy_tenant_records")) {
