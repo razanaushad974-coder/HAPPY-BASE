@@ -238,11 +238,12 @@ begin
     from private.file_mutation_approval_grants g
    where g.grant_id = p_grant_id
    for update;
+  v_now := clock_timestamp();
   if not found
      or v_grant.status <> 'APPROVED'
      or v_grant.consumed_at is not null
      or v_grant.decided_at is null
-     or v_grant.expires_at <= clock_timestamp()
+     or v_grant.expires_at <= v_now
      or v_grant.organization_id is distinct from p_organization_id
      or v_grant.workspace_id is distinct from p_workspace_id
      or v_grant.request_id is distinct from p_request_id
@@ -262,13 +263,13 @@ begin
     return false;
   end if;
 
-  v_now := clock_timestamp();
   update private.file_mutation_approval_grants
      set status = 'CONSUMED',
          consumed_at = v_now
    where grant_id = p_grant_id
      and status = 'APPROVED'
-     and consumed_at is null;
+     and consumed_at is null
+     and expires_at > v_now;
   if not found then return false; end if;
 
   insert into private.file_mutation_approval_events
