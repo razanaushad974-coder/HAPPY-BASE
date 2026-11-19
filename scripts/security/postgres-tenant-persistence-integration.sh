@@ -146,6 +146,16 @@ begin
    where record_id = 'mission-cas';
   if v_visible <> 1 then raise exception 'owner cannot read own row through RLS'; end if;
 
+  begin
+    perform public.happy_create_tenant_record(
+      '10000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000002',
+      'MISSION', 'mission-cas', '{"goal":"duplicate"}'
+    );
+    raise exception 'duplicate tenant create unexpectedly succeeded';
+  exception when unique_violation then null;
+  end;
+
   select (public.happy_update_tenant_record(
     '10000000-0000-4000-8000-000000000001',
     '20000000-0000-4000-8000-000000000002',
