@@ -17,7 +17,8 @@ export type TenantPersistenceFailureCode =
   | "RECORD_ALREADY_EXISTS"
   | "VERSION_CONFLICT"
   | "INVALID_TENANT_SCOPE"
-  | "PERSISTENCE_NOT_CONNECTED";
+  | "PERSISTENCE_NOT_CONNECTED"
+  | "INVALID_RECORD_DATA";
 
 export class TenantPersistenceError extends Error {
   constructor(
