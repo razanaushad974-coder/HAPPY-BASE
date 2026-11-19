@@ -235,6 +235,268 @@ begin
      or p_input_digest is null
      or p_operation not in ('CREATE','MODIFY','COPY','MOVE','RENAME','DELETE')
      or p_input_digest !~ '^[0-9a-f]{64}
+  end if;
+
+  -- Non-locking hint read only to discover the approver ID for deterministic
+  -- membership lock ordering. The locked grant is re-read and fully checked.
+  select g.approver_user_id
+    into v_approver_user_id
+    from private.file_mutation_approval_grants g
+   where g.grant_id = p_grant_id
+     and g.organization_id = p_organization_id
+     and g.workspace_id = p_workspace_id;
+  if not found or v_approver_user_id is null then
+    return false;
+  end if;
+
+  -- Global lock order: organization -> workspace -> execution request ->
+  -- organization memberships ordered by user UUID -> executor workspace
+  -- membership -> grant. Revocation/demotion updates the same membership row.
+  select o.* into v_organization
+    from private.organizations o
+   where o.organization_id = p_organization_id
+   for update;
+  if not found or v_organization.status <> 'ACTIVE' then return false; end if;
+
+  select w.* into v_workspace
+    from private.workspaces w
+   where w.organization_id = p_organization_id
+     and w.workspace_id = p_workspace_id
+   for update;
+  if not found or v_workspace.status <> 'ACTIVE' then return false; end if;
+
+  select r.* into v_request
+    from private.execution_requests r
+   where r.request_id = p_request_id
+   for update;
+  if not found
+     or v_request.status <> 'READY'
+     or v_request.organization_id is distinct from p_organization_id
+     or v_request.workspace_id is distinct from p_workspace_id
+     or v_request.task_id is distinct from p_task_id
+     or v_request.mission_id is distinct from p_mission_id
+     or v_request.executor_user_id is distinct from v_executor_user_id then
+    return false;
+  end if;
+
+  for v_member in
+    select m.*
+      from private.organization_memberships m
+     where m.organization_id = p_organization_id
+       and m.user_id in (v_executor_user_id, v_approver_user_id)
+     order by m.user_id
+     for update
+  loop
+    if v_member.user_id = v_executor_user_id then
+      v_executor_org := v_member;
+    end if;
+    if v_member.user_id = v_approver_user_id then
+      v_approver_org := v_member;
+    end if;
+  end loop;
+
+  if v_executor_org.user_id is null
+     or v_executor_org.status <> 'ACTIVE'
+     or v_approver_org.user_id is null
+     or v_approver_org.status <> 'ACTIVE' then
+    return false;
+  end if;
+
+  -- Explicit role policy: FOUNDER is required for FOUNDER grants; ADMIN grants
+  -- accept only the explicit FOUNDER/ADMIN allowlist. No lexical hierarchy.
+  select wm.* into v_executor_workspace
+    from private.workspace_memberships wm
+   where wm.organization_id = p_organization_id
+     and wm.workspace_id = p_workspace_id
+     and wm.user_id = v_executor_user_id
+   for update;
+  if not found or v_executor_workspace.status <> 'ACTIVE' then return false; end if;
+
+  select g.* into v_grant
+    from private.file_mutation_approval_grants g
+   where g.grant_id = p_grant_id
+   for update;
+  v_now := clock_timestamp();
+  if not found
+     or v_grant.status <> 'APPROVED'
+     or v_grant.consumed_at is not null
+     or v_grant.decided_at is null
+     or v_grant.expires_at <= v_now
+     or v_grant.organization_id is distinct from p_organization_id
+     or v_grant.workspace_id is distinct from p_workspace_id
+     or v_grant.request_id is distinct from p_request_id
+     or v_grant.task_id is distinct from p_task_id
+     or v_grant.mission_id is distinct from p_mission_id
+     or v_grant.requester_user_id is distinct from v_request.requester_user_id
+     or v_grant.executor_user_id is distinct from v_executor_user_id
+     or v_grant.approver_user_id is distinct from v_approver_user_id
+     or v_grant.target_entity_type is distinct from 'FILE'
+     or v_grant.target_entity_id is distinct from p_target_entity_id
+     or v_grant.operation is distinct from p_operation
+     or v_grant.source_path is distinct from p_source_path
+     or v_grant.destination_path is distinct from p_destination_path
+     or v_grant.input_digest is distinct from p_input_digest
+     or (v_grant.required_role = 'FOUNDER' and v_approver_org.role <> 'FOUNDER')
+     or (v_grant.required_role = 'ADMIN' and v_approver_org.role not in ('FOUNDER','ADMIN')) then
+    return false;
+  end if;
+
+  update private.file_mutation_approval_grants
+     set status = 'CONSUMED',
+         consumed_at = v_now
+   where grant_id = p_grant_id
+     and status = 'APPROVED'
+     and consumed_at is null
+     and expires_at > v_now;
+  if not found then return false; end if;
+
+  insert into private.file_mutation_approval_events
+    (grant_id, actor_user_id, event_type, occurred_at)
+  values
+    (p_grant_id, v_executor_user_id, 'CONSUMED', v_now);
+
+  return true;
+end;
+$function$;
+
+revoke all on function public.consume_file_mutation_approval_grant(
+  uuid,uuid,uuid,text,text,text,text,text,text,text,text
+) from public, anon, service_role;
+grant execute on function public.consume_file_mutation_approval_grant(
+  uuid,uuid,uuid,text,text,text,text,text,text,text,text
+) to authenticated;
+ then
+    return false;
+  end if;
+
+  -- Non-locking hint read only to discover the approver ID for deterministic
+  -- membership lock ordering. The locked grant is re-read and fully checked.
+  select g.approver_user_id
+    into v_approver_user_id
+    from private.file_mutation_approval_grants g
+   where g.grant_id = p_grant_id
+     and g.organization_id = p_organization_id
+     and g.workspace_id = p_workspace_id;
+  if not found or v_approver_user_id is null then
+    return false;
+  end if;
+
+  -- Global lock order: organization -> workspace -> execution request ->
+  -- organization memberships ordered by user UUID -> executor workspace
+  -- membership -> grant. Revocation/demotion updates the same membership row.
+  select o.* into v_organization
+    from private.organizations o
+   where o.organization_id = p_organization_id
+   for update;
+  if not found or v_organization.status <> 'ACTIVE' then return false; end if;
+
+  select w.* into v_workspace
+    from private.workspaces w
+   where w.organization_id = p_organization_id
+     and w.workspace_id = p_workspace_id
+   for update;
+  if not found or v_workspace.status <> 'ACTIVE' then return false; end if;
+
+  select r.* into v_request
+    from private.execution_requests r
+   where r.request_id = p_request_id
+   for update;
+  if not found
+     or v_request.status <> 'READY'
+     or v_request.organization_id <> p_organization_id
+     or v_request.workspace_id <> p_workspace_id
+     or v_request.task_id <> p_task_id
+     or v_request.mission_id <> p_mission_id
+     or v_request.executor_user_id <> v_executor_user_id then
+    return false;
+  end if;
+
+  for v_member in
+    select m.*
+      from private.organization_memberships m
+     where m.organization_id = p_organization_id
+       and m.user_id in (v_executor_user_id, v_approver_user_id)
+     order by m.user_id
+     for update
+  loop
+    if v_member.user_id = v_executor_user_id then
+      v_executor_org := v_member;
+    end if;
+    if v_member.user_id = v_approver_user_id then
+      v_approver_org := v_member;
+    end if;
+  end loop;
+
+  if v_executor_org.user_id is null
+     or v_executor_org.status <> 'ACTIVE'
+     or v_approver_org.user_id is null
+     or v_approver_org.status <> 'ACTIVE' then
+    return false;
+  end if;
+
+  -- Explicit role policy: FOUNDER is required for FOUNDER grants; ADMIN grants
+  -- accept only the explicit FOUNDER/ADMIN allowlist. No lexical hierarchy.
+  select wm.* into v_executor_workspace
+    from private.workspace_memberships wm
+   where wm.organization_id = p_organization_id
+     and wm.workspace_id = p_workspace_id
+     and wm.user_id = v_executor_user_id
+   for update;
+  if not found or v_executor_workspace.status <> 'ACTIVE' then return false; end if;
+
+  select g.* into v_grant
+    from private.file_mutation_approval_grants g
+   where g.grant_id = p_grant_id
+   for update;
+  if not found
+     or v_grant.status <> 'APPROVED'
+     or v_grant.consumed_at is not null
+     or v_grant.decided_at is null
+     or v_grant.expires_at <= clock_timestamp()
+     or v_grant.organization_id <> p_organization_id
+     or v_grant.workspace_id <> p_workspace_id
+     or v_grant.request_id <> p_request_id
+     or v_grant.task_id <> p_task_id
+     or v_grant.mission_id <> p_mission_id
+     or v_grant.requester_user_id <> v_request.requester_user_id
+     or v_grant.executor_user_id <> v_executor_user_id
+     or v_grant.approver_user_id <> v_approver_user_id
+     or v_grant.target_entity_type <> 'FILE'
+     or v_grant.target_entity_id <> p_target_entity_id
+     or v_grant.operation <> p_operation
+     or v_grant.source_path <> p_source_path
+     or v_grant.destination_path is distinct from p_destination_path
+     or v_grant.input_digest <> p_input_digest
+     or (v_grant.required_role = 'FOUNDER' and v_approver_org.role <> 'FOUNDER')
+     or (v_grant.required_role = 'ADMIN' and v_approver_org.role not in ('FOUNDER','ADMIN')) then
+    return false;
+  end if;
+
+  v_now := clock_timestamp();
+  update private.file_mutation_approval_grants
+     set status = 'CONSUMED',
+         consumed_at = v_now
+   where grant_id = p_grant_id
+     and status = 'APPROVED'
+     and consumed_at is null;
+  if not found then return false; end if;
+
+  insert into private.file_mutation_approval_events
+    (grant_id, actor_user_id, event_type, occurred_at)
+  values
+    (p_grant_id, v_executor_user_id, 'CONSUMED', v_now);
+
+  return true;
+end;
+$function$;
+
+revoke all on function public.consume_file_mutation_approval_grant(
+  uuid,uuid,uuid,text,text,text,text,text,text,text,text
+) from public, anon, service_role;
+grant execute on function public.consume_file_mutation_approval_grant(
+  uuid,uuid,uuid,text,text,text,text,text,text,text,text
+) to authenticated;
+ then
     return false;
   end if;
 
