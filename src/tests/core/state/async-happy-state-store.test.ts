@@ -46,6 +46,31 @@ async function main(): Promise<void> {
     throw new Error("Async state store entity collections were not isolated.");
   }
 
+  let rolledBack = false;
+  try {
+    await owner.transaction(async (tx) => {
+      await tx.mission().create("mission-rollback", { goal: "must roll back" });
+      await tx.task().create("task-rollback", { missionId: "mission-rollback" });
+      throw new Error("force transaction rollback");
+    });
+  } catch (error) {
+    rolledBack = error instanceof Error && error.message === "force transaction rollback";
+  }
+  if (!rolledBack || await owner.mission().get("mission-rollback") ||
+      await owner.task().get("task-rollback")) {
+    throw new Error("Failed async state transaction did not roll back every entity.");
+  }
+
+  await owner.transaction(async (tx) => {
+    await tx.mission().create("mission-atomic", { goal: "commit together" });
+    await tx.task().create("task-atomic", { missionId: "mission-atomic" });
+  });
+  if (!(await owner.mission().get("mission-atomic")) ||
+      !(await owner.task().get("task-atomic")) ||
+      await otherUser.mission().get("mission-atomic")) {
+    throw new Error("Committed transaction did not preserve atomic entity writes and tenant scope.");
+  }
+
   const deleted = await owner.mission().delete("mission-1", updated.version);
   if (!deleted || await owner.mission().get("mission-1")) {
     throw new Error("Async state store versioned delete failed.");
@@ -58,6 +83,7 @@ async function main(): Promise<void> {
     principalIsolation: true,
     optimisticConcurrency: true,
     versionedDelete: true,
+    transactionCommitAndRollback: true,
     adapterDurability: "IN_MEMORY_TEST_ONLY",
   });
 }
