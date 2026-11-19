@@ -6,12 +6,18 @@ on:
       - main
       - security/file-mutation-authorizer
       - happy/server-verified-pipeline-approval
+      - security/durable-file-mutation-grants
     paths:
       - "src/core/approval/**"
       - "src/core/tenant/**"
       - "src/core/execution/**"
+      - "src/core/orchestration/**"
+      - "src/core/mission/**"
+      - "src/core/verification/**"
       - "src/tests/core/approval/**"
       - "src/tests/core/tenant/**"
+      - "src/tests/core/orchestration/**"
+      - "src/tests/core/mission/**"
       - "package.json"
       - "package-lock.json"
       - "tsconfig.json"
@@ -46,6 +52,8 @@ jobs:
         run: npx tsc --noEmit
       - name: Security harnesses
         run: npm run test:security
+      - name: Orchestration and mission harnesses
+        run: npx --yes tsx@4.23.15 src/tests/core/orchestration/orchestration.test.ts && npx --yes tsx@4.23.15 src/tests/core/mission/mission-task-graph.test.ts
       - name: ESLint
         run: npm run lint
       - name: Dependency audit
