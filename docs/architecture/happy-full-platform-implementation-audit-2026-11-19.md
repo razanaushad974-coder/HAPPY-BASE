@@ -111,3 +111,11 @@ Reviewed `supabase/drafts/20261119_file_mutation_atomic_consume_candidate.sql` a
 - Keep FILE read/mutations and any unconnected capability fail-closed.
 - Do not mark a module complete because a model, interface, placeholder, or unit test exists.
 - Revisit a finding only when new code, test evidence, or an integration result materially changes its status.
+
+
+## FILE approval workspace-scope follow-up (2026-11-19)
+
+- Reconciled a policy mismatch between the TypeScript approver membership provider and the draft transactional consume RPC: SQL previously checked only active organization membership for the approver, while the TypeScript resolver requires both organization and exact workspace membership.
+- The design candidate now requires active approver membership in the exact organization/workspace, while keeping FOUNDER/ADMIN authority exclusively organization-role based. Workspace role does not confer approval authority.
+- Executor and approver workspace-membership rows are locked in deterministic user-ID order. The disposable PostgreSQL harness now includes a revoked-approver-workspace denial case.
+- This is still a design/test candidate only. CI must validate the updated disposable PostgreSQL script. No live Supabase migration/data write, merge, deployment, or `main` modification.
