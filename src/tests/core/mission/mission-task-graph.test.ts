@@ -281,7 +281,7 @@ console.log({
   approvalGate:
     snapshot.mission.status === "WAITING_APPROVAL",
   progressAfterFirstTask: completed.mission.progressPercent,
-  retryCount: retried.retryCount,
+  retryCount: retriedTask?.retryCount,
 });
 
 
