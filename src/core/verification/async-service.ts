@@ -76,64 +76,75 @@ export class AsyncVerificationService {
     if (!Array.isArray(observedEvidenceIds)) {
       throw new Error("Observed evidence IDs must be an array.");
     }
-    const storedRequest = await this.state.verificationRequest<VerificationRequest>()
-      .get(normalizedId);
-    if (!storedRequest) {
-      throw new Error("Verification request is not registered in the active tenant.");
-    }
-    const request = storedRequest.data;
 
-    const uniqueEvidenceIds = [...new Set(
-      observedEvidenceIds
-        .filter((id) => typeof id === "string" && id.trim())
-        .map((id) => id.trim()),
-    )];
-    const evidenceRows = await Promise.all(uniqueEvidenceIds.map((id) => this.evidence.get(id)));
-    const matchedEvidence = evidenceRows.filter(
-      (item): item is Evidence => Boolean(item && this.matchesRequest(item, request)),
-    );
-    const evidenceIds = matchedEvidence.map((item) => item.id);
-    const requiredCriteria = request.criteria.filter((criterion) => criterion.required);
+    // Read the registered request, provenance records, and append the result
+    // within one tenant transaction. A verification result must describe one
+    // consistent storage view, not a mixture of reads taken before/after a
+    // concurrent evidence or request mutation.
+    return this.state.transaction(async (transactionState) => {
+      const storedRequest = await transactionState
+        .verificationRequest<VerificationRequest>()
+        .get(normalizedId);
+      if (!storedRequest) {
+        throw new Error("Verification request is not registered in the active tenant.");
+      }
+      const request = storedRequest.data;
 
-    let result: VerificationResult;
-    if (request.criteria.length === 0) {
-      result = this.result(request, {
-        status: "BLOCKED",
-        confidence: "UNKNOWN",
-        passedCriteria: [],
-        failedCriteria: [],
-        partialCriteria: [],
-        evidenceIds: [],
-        summary: "Verification requires at least one criterion.",
-        failureReason: "NO_CRITERIA",
-      });
-    } else if (request.requiresEvidence && evidenceIds.length === 0) {
-      result = this.result(request, {
-        status: "FAILED",
-        confidence: "HIGH",
-        passedCriteria: [],
-        failedCriteria: requiredCriteria.map((criterion) => criterion.id),
-        partialCriteria: [],
-        evidenceIds: [],
-        summary: "Required evidence is missing or does not match this verification request.",
-        failureReason: "REQUIRED_EVIDENCE_MISSING_OR_MISMATCHED",
-      });
-    } else {
-      result = this.result(request, {
-        status: "PARTIAL",
-        confidence: "LOW",
-        passedCriteria: [],
-        failedCriteria: [],
-        partialCriteria: (requiredCriteria.length > 0 ? requiredCriteria : request.criteria)
-          .map((criterion) => criterion.id),
-        evidenceIds,
-        summary: "Evidence provenance was checked, but semantic outcome verification is not connected.",
-        failureReason: "SEMANTIC_VERIFIER_NOT_CONNECTED",
-      });
-    }
+      const uniqueEvidenceIds = [...new Set(
+        observedEvidenceIds
+          .filter((id) => typeof id === "string" && id.trim())
+          .map((id) => id.trim()),
+      )];
+      const evidenceRows = await Promise.all(
+        uniqueEvidenceIds.map((id) => transactionState.evidence<Evidence>().get(id)),
+      );
+      const matchedEvidence = evidenceRows.filter(
+        (item): item is NonNullable<typeof item> =>
+          Boolean(item && this.matchesRequest(item.data, request)),
+      );
+      const evidenceIds = matchedEvidence.map((item) => item.id);
+      const requiredCriteria = request.criteria.filter((criterion) => criterion.required);
 
-    await this.state.verification<VerificationResult>().create(result.id, result);
-    return result;
+      let result: VerificationResult;
+      if (request.criteria.length === 0) {
+        result = this.result(request, {
+          status: "BLOCKED",
+          confidence: "UNKNOWN",
+          passedCriteria: [],
+          failedCriteria: [],
+          partialCriteria: [],
+          evidenceIds: [],
+          summary: "Verification requires at least one criterion.",
+          failureReason: "NO_CRITERIA",
+        });
+      } else if (request.requiresEvidence && evidenceIds.length === 0) {
+        result = this.result(request, {
+          status: "FAILED",
+          confidence: "HIGH",
+          passedCriteria: [],
+          failedCriteria: requiredCriteria.map((criterion) => criterion.id),
+          partialCriteria: [],
+          evidenceIds: [],
+          summary: "Required evidence is missing or does not match this verification request.",
+          failureReason: "REQUIRED_EVIDENCE_MISSING_OR_MISMATCHED",
+        });
+      } else {
+        result = this.result(request, {
+          status: "PARTIAL",
+          confidence: "LOW",
+          passedCriteria: [],
+          failedCriteria: [],
+          partialCriteria: (requiredCriteria.length > 0 ? requiredCriteria : request.criteria)
+            .map((criterion) => criterion.id),
+          evidenceIds,
+          summary: "Evidence provenance was checked, but semantic outcome verification is not connected.",
+          failureReason: "SEMANTIC_VERIFIER_NOT_CONNECTED",
+        });
+      }
+
+      await transactionState.verification<VerificationResult>().create(result.id, result);
+      return result;
+    });
   }
 
   async get(id: string): Promise<VerificationResult | undefined> {
