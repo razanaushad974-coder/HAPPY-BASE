@@ -4,6 +4,7 @@ import type {
 
 import type {
   Mission,
+  MissionStatus,
   MissionTask,
   TaskStatus,
 } from "./types";
@@ -292,7 +293,7 @@ export class MissionEngine {
       .map((item) => item.id);
     const total = updatedTasks.length;
 
-    let status = mission.status;
+    let status: MissionStatus = mission.status;
     if (failedTaskIds.length > 0) status = "FAILED";
     else if (blockedTaskIds.length > 0) status = "BLOCKED";
     else if (total > 0 && completedTaskIds.length === total) status = "COMPLETED";
