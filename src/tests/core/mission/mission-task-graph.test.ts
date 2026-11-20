@@ -2,7 +2,7 @@ import { ReasoningOrchestrator } from "../../../core/reasoning/orchestrator";
 import { MissionOrchestrator } from "../../../core/mission/orchestrator";
 import { TaskGraphEngine } from "../../../core/mission/task-graph";
 import { MissionEngine } from "../../../core/mission/mission-engine";
-import type { MissionTask } from "../../../core/mission/types";
+import type { MissionTask, TaskGraph } from "../../../core/mission/types";
 import type { ResolvedReference } from "../../../core/context/types";
 
 const reasoning = new ReasoningOrchestrator();
@@ -524,7 +524,7 @@ if (
 
 // Ready-task selection is also a trust boundary: callers may construct a
 // TaskGraph object directly without going through buildGraph().
-for (const [label, malformedGraph] of [
+const malformedReadyGraphs: Array<[string, TaskGraph]> = [
   [
     "duplicate task identity",
     {
@@ -545,7 +545,9 @@ for (const [label, malformedGraph] of [
     "mismatched mission identity",
     { ...initialDag, missionId: "another-mission" },
   ],
-] as const) {
+];
+
+for (const [label, malformedGraph] of malformedReadyGraphs) {
   let malformedGraphDenied = false;
   try {
     graphEngine.getReadyTasks(malformedGraph);
