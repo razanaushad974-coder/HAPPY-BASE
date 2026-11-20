@@ -565,8 +565,15 @@ contextSummary:
         // MISSION
         // ==================================================
 
+        // The plan retains WAITING_APPROVAL as its audit history, but a
+        // persisted approval has already been verified above. Seed the
+        // executable mission as READY only on that trusted verification path.
         const missionSnapshot =
-            this.mission.create(plan);
+            this.mission.create(
+                verifiedApproval
+                    ? { ...plan, status: "READY" }
+                    : plan,
+            );
 
         await state.mission().create(
             missionSnapshot.mission.id,
