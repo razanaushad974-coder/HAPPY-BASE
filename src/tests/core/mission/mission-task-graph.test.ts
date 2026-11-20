@@ -192,6 +192,24 @@ if (!prematureStartDenied) {
   throw new Error("MissionEngine allowed a dependent task to start before its prerequisite completed.");
 }
 
+let ambiguousTaskIdentityDenied = false;
+try {
+  missionEngine.updateTaskStatus(
+    readySnapshot.mission,
+    [
+      ...readySnapshot.graph.tasks,
+      { ...readySnapshot.graph.tasks[0] },
+    ],
+    readySnapshot.graph.tasks[0].id,
+    "RUNNING",
+  );
+} catch {
+  ambiguousTaskIdentityDenied = true;
+}
+if (!ambiguousTaskIdentityDenied) {
+  throw new Error("MissionEngine accepted duplicate persisted task IDs.");
+}
+
 let mission = readySnapshot.mission;
 let tasks = readySnapshot.graph.tasks;
 
