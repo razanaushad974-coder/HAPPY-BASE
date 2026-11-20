@@ -95,11 +95,15 @@ export class MissionEngine {
     mission: Mission;
     tasks: MissionTask[];
   } {
-    const target = tasks.find((task) => task.id === taskId);
-
-    if (!target) {
-      throw new Error(`Task not found: ${taskId}`);
+    const matchingTasks = tasks.filter((task) => task.id === taskId);
+    if (matchingTasks.length !== 1) {
+      throw new Error(
+        matchingTasks.length === 0
+          ? `Task not found: ${taskId}`
+          : `Task ID is ambiguous in the supplied mission snapshot: ${taskId}`,
+      );
     }
+    const target = matchingTasks[0];
     if (target.missionId !== mission.id || !mission.taskIds.includes(taskId)) {
       throw new Error(`Task ${taskId} does not belong to mission ${mission.id}.`);
     }
@@ -113,14 +117,15 @@ export class MissionEngine {
     // The transition API is also a trust boundary: callers must not be able
     // to bypass TaskGraphEngine scheduling by starting a dependent task early.
     if (status === "RUNNING" && target.status !== "RUNNING") {
-      const dependencies = target.dependencyIds.map((dependencyId) =>
-        tasks.find((task) => task.id === dependencyId),
-      );
-      if (dependencies.some((dependency, index) =>
-        !dependency ||
-        dependency.missionId !== mission.id ||
-        !mission.taskIds.includes(target.dependencyIds[index]) ||
-        dependency.status !== "COMPLETED"
+      const dependencies = target.dependencyIds.map((dependencyId) => ({
+        id: dependencyId,
+        matches: tasks.filter((task) => task.id === dependencyId),
+      }));
+      if (dependencies.some(({ id, matches }) =>
+        matches.length !== 1 ||
+        matches[0].missionId !== mission.id ||
+        !mission.taskIds.includes(id) ||
+        matches[0].status !== "COMPLETED"
       )) {
         throw new Error(
           `Task ${taskId} cannot run until every mission dependency is completed.`,
