@@ -404,6 +404,24 @@ const failed = missionEngine.updateTaskStatus(
   "FAILED",
 );
 
+let malformedRetryGraphDenied = false;
+try {
+  missionEngine.retryMissionTask(
+    failed.mission,
+    failed.tasks.map((task, index) =>
+      index === 1
+        ? { ...task, dependencyIds: [failed.tasks[0].id, failed.tasks[0].id] }
+        : task,
+    ),
+    nextReady[0].id,
+  );
+} catch {
+  malformedRetryGraphDenied = true;
+}
+if (!malformedRetryGraphDenied) {
+  throw new Error("MissionEngine accepted retry from a graph with duplicate dependencies.");
+}
+
 const retried = missionEngine.retryMissionTask(
   failed.mission,
   failed.tasks,
