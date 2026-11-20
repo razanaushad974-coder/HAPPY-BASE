@@ -216,8 +216,53 @@ try {
 } catch {
   duplicateMissionTaskIdsDenied = true;
 }
+
 if (!duplicateMissionTaskIdsDenied) {
   throw new Error("MissionEngine accepted duplicate IDs in mission.taskIds.");
+}
+
+// Direct status transitions must reject malformed dependency graphs even
+// when the caller bypasses TaskGraphEngine.buildGraph().
+const malformedTransitionSnapshots: Array<[string, MissionTask[]]> = [
+  [
+    "duplicate dependency",
+    readySnapshot.graph.tasks.map((task, index) =>
+      index === 1
+        ? { ...task, dependencyIds: [readySnapshot.graph.tasks[0].id, readySnapshot.graph.tasks[0].id] }
+        : task,
+    ),
+  ],
+  [
+    "missing dependency",
+    readySnapshot.graph.tasks.map((task, index) =>
+      index === 1 ? { ...task, dependencyIds: ["missing-dependency"] } : task,
+    ),
+  ],
+  [
+    "dependency cycle",
+    readySnapshot.graph.tasks.map((task, index) =>
+      index === 0
+        ? { ...task, dependencyIds: [readySnapshot.graph.tasks[readySnapshot.graph.tasks.length - 1].id] }
+        : task,
+    ),
+  ],
+];
+
+for (const [label, malformedTasks] of malformedTransitionSnapshots) {
+  let malformedTransitionDenied = false;
+  try {
+    missionEngine.updateTaskStatus(
+      readySnapshot.mission,
+      malformedTasks,
+      readySnapshot.graph.tasks[0].id,
+      "RUNNING",
+    );
+  } catch {
+    malformedTransitionDenied = true;
+  }
+  if (!malformedTransitionDenied) {
+    throw new Error(`MissionEngine accepted a direct transition with ${label}.`);
+  }
 }
 
 for (const blockedMissionStatus of [
