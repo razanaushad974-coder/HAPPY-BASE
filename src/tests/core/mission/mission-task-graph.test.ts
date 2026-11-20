@@ -294,6 +294,23 @@ if (
   throw new Error("Mission retry did not restore a consistent READY state.");
 }
 
+let ambiguousRetryIdentityDenied = false;
+try {
+  missionEngine.retryMissionTask(
+    failed.mission,
+    [
+      ...failed.tasks,
+      { ...failed.tasks.find((task) => task.id === nextReady[0].id)! },
+    ],
+    nextReady[0].id,
+  );
+} catch {
+  ambiguousRetryIdentityDenied = true;
+}
+if (!ambiguousRetryIdentityDenied) {
+  throw new Error("Mission retry accepted duplicate persisted task IDs.");
+}
+
 let invalidTransitionDenied = false;
 try {
   missionEngine.updateTaskStatus(
