@@ -109,6 +109,24 @@ export class MissionEngine {
         `Invalid task status transition: ${target.status} -> ${status}.`,
       );
     }
+
+    // The transition API is also a trust boundary: callers must not be able
+    // to bypass TaskGraphEngine scheduling by starting a dependent task early.
+    if (status === "RUNNING" && target.status !== "RUNNING") {
+      const dependencies = target.dependencyIds.map((dependencyId) =>
+        tasks.find((task) => task.id === dependencyId),
+      );
+      if (dependencies.some((dependency, index) =>
+        !dependency ||
+        dependency.missionId !== mission.id ||
+        !mission.taskIds.includes(target.dependencyIds[index]) ||
+        dependency.status !== "COMPLETED"
+      )) {
+        throw new Error(
+          `Task ${taskId} cannot run until every mission dependency is completed.`,
+        );
+      }
+    }
     if (target.status === status) {
       return { mission, tasks };
     }
