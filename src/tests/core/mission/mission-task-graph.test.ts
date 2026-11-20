@@ -220,6 +220,30 @@ if (!duplicateMissionTaskIdsDenied) {
   throw new Error("MissionEngine accepted duplicate IDs in mission.taskIds.");
 }
 
+for (const blockedMissionStatus of [
+  "WAITING_APPROVAL",
+  "CANCELLED",
+  "FAILED",
+  "BLOCKED",
+] as const) {
+  let executionDenied = false;
+  try {
+    missionEngine.updateTaskStatus(
+      { ...readySnapshot.mission, status: blockedMissionStatus },
+      readySnapshot.graph.tasks,
+      readySnapshot.graph.tasks[0].id,
+      "RUNNING",
+    );
+  } catch {
+    executionDenied = true;
+  }
+  if (!executionDenied) {
+    throw new Error(
+      `MissionEngine allowed task execution while mission was ${blockedMissionStatus}.`,
+    );
+  }
+}
+
 const readyTasks = graphEngine.getReadyTasks(
   readySnapshot.graph,
 );
