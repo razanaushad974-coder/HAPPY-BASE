@@ -75,3 +75,9 @@ A separate correctness hardening in this change rejects duplicate task IDs in `r
 ### Mission snapshot integrity
 
 Mission task transitions and retries now require the supplied task collection to match `mission.taskIds` exactly: declared IDs must be unique, every declared task must appear once, and no task from another mission or undeclared extra task may be included. This prevents a partial or widened caller-supplied snapshot from corrupting progress totals or causing a mission to be reported complete while declared work is missing. This is an in-memory input-integrity guard; it does not replace database constraints, version checks, or atomic writes.
+
+### Mission-level execution gate
+
+A task transition to `RUNNING` is now rejected unless its parent mission is in an executable state (`READY`, `RUNNING`, or `VERIFYING`). This closes a separate bypass where a caller could supply a still-pending task from a mission in `WAITING_APPROVAL`, `CANCELLED`, `FAILED`, or `BLOCKED` and start it directly. Retry remains an explicit operation that restores the failed mission/task to a retryable state; it does not grant a cancelled or approval-waiting mission permission to execute. Regression coverage exercises each denied mission state.
+
+This remains a state-machine guard over the supplied snapshot. It does not replace a persisted approval decision, atomic compare-and-swap, or transactionally enforced mission/task lifecycle at the durable storage boundary.
