@@ -259,6 +259,11 @@ export class MissionEngine {
     taskId: string,
   ): { mission: Mission; tasks: MissionTask[] } {
     assertMissionTaskSnapshot(mission, tasks);
+    if (mission.status !== "FAILED" && mission.status !== "BLOCKED") {
+      throw new Error(
+        `Mission ${mission.id} cannot retry tasks while in status ${mission.status}.`,
+      );
+    }
     const matchingTasks = tasks.filter((item) => item.id === taskId);
     if (matchingTasks.length !== 1) {
       throw new Error(
