@@ -210,8 +210,16 @@ export class MissionEngine {
     tasks: MissionTask[],
     taskId: string,
   ): { mission: Mission; tasks: MissionTask[] } {
-    const task = tasks.find((item) => item.id === taskId);
-    if (!task || task.missionId !== mission.id || !mission.taskIds.includes(taskId)) {
+    const matchingTasks = tasks.filter((item) => item.id === taskId);
+    if (matchingTasks.length !== 1) {
+      throw new Error(
+        matchingTasks.length === 0
+          ? `Task not found: ${taskId}`
+          : `Task ID is ambiguous in the supplied mission snapshot: ${taskId}`,
+      );
+    }
+    const task = matchingTasks[0];
+    if (task.missionId !== mission.id || !mission.taskIds.includes(taskId)) {
       throw new Error(`Task ${taskId} does not belong to mission ${mission.id}.`);
     }
 
