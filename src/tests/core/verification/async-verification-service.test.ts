@@ -1,4 +1,5 @@
 import { AsyncEvidenceService } from "../../../core/evidence/async-service";
+import type { Evidence } from "../../../core/evidence/types";
 import { InMemoryTenantPersistenceAdapter } from "../../../core/persistence/adapters/in-memory-tenant-adapter";
 import { createAsyncHappyStateStore } from "../../../core/state/async-factory";
 import { AsyncVerificationService } from "../../../core/verification/async-service";
@@ -76,7 +77,14 @@ async function main(): Promise<void> {
     title: "Wrong verification evidence", content: "Must not be attached.",
   });
 
-  const result = await verifier.verify(request.id, [valid.id, wrongTask.id, wrongExecution.id, wrongRequest.id, valid.id]);
+  const validRecord = await ownerStore.evidence<Evidence>().get(valid.id);
+  if (!validRecord) throw new Error("Valid evidence fixture was not persisted.");
+  const mismatchedStorageId = await ownerStore.evidence<Evidence>().create(
+    "evidence-storage-key",
+    { ...validRecord.data, id: "spoofed-evidence-id" },
+  );
+
+  const result = await verifier.verify(request.id, [valid.id, wrongTask.id, wrongExecution.id, wrongRequest.id, mismatchedStorageId.id, valid.id]);
   if (result.status !== "PARTIAL" || result.failureReason !== "SEMANTIC_VERIFIER_NOT_CONNECTED") {
     throw new Error("Evidence presence was incorrectly treated as semantic success.");
   }
