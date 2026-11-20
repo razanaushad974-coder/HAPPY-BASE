@@ -171,6 +171,27 @@ if (readyTasks.length !== 1) {
   throw new Error("Ready task calculation failed.");
 }
 
+const dependentBeforePrerequisite = readySnapshot.graph.tasks.find(
+  (task) => task.dependencyIds.length > 0,
+);
+if (!dependentBeforePrerequisite) {
+  throw new Error("Expected a dependent task in the ready mission graph.");
+}
+let prematureStartDenied = false;
+try {
+  missionEngine.updateTaskStatus(
+    readySnapshot.mission,
+    readySnapshot.graph.tasks,
+    dependentBeforePrerequisite.id,
+    "RUNNING",
+  );
+} catch {
+  prematureStartDenied = true;
+}
+if (!prematureStartDenied) {
+  throw new Error("MissionEngine allowed a dependent task to start before its prerequisite completed.");
+}
+
 let mission = readySnapshot.mission;
 let tasks = readySnapshot.graph.tasks;
 
