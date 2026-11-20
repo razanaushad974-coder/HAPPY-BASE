@@ -520,3 +520,39 @@ if (
 ) {
   throw new Error("A failed prerequisite incorrectly released its dependent task.");
 }
+
+
+// Ready-task selection is also a trust boundary: callers may construct a
+// TaskGraph object directly without going through buildGraph().
+for (const [label, malformedGraph] of [
+  [
+    "duplicate task identity",
+    {
+      ...initialDag,
+      tasks: [...initialDag.tasks, { ...initialDag.tasks[0] }],
+    },
+  ],
+  [
+    "missing dependency",
+    {
+      ...initialDag,
+      tasks: initialDag.tasks.map((task, index) =>
+        index === 0 ? { ...task, dependencyIds: ["missing-task"] } : task,
+      ),
+    },
+  ],
+  [
+    "mismatched mission identity",
+    { ...initialDag, missionId: "another-mission" },
+  ],
+] as const) {
+  let malformedGraphDenied = false;
+  try {
+    graphEngine.getReadyTasks(malformedGraph);
+  } catch {
+    malformedGraphDenied = true;
+  }
+  if (!malformedGraphDenied) {
+    throw new Error(`Ready-task selection accepted ${label}.`);
+  }
+}
