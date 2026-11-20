@@ -1,5 +1,4 @@
 import type { AsyncHappyStateStore } from "../state/async-happy-state-store";
-import type { AsyncEvidenceService } from "../evidence/async-service";
 import type { Evidence } from "../evidence/types";
 import type { Mission, MissionTask } from "../mission/types";
 import type { ExecutionRequest } from "../execution/types";
@@ -23,7 +22,6 @@ function isVerificationResult(value: unknown): value is VerificationResult {
 export class AsyncVerificationService {
   constructor(
     private readonly state: AsyncHappyStateStore,
-    private readonly evidence: AsyncEvidenceService,
   ) {}
 
   async registerRequest(request: VerificationRequest): Promise<VerificationRequest> {
@@ -98,9 +96,8 @@ export class AsyncVerificationService {
       const evidenceRows = await Promise.all(
         uniqueEvidenceIds.map((id) => transactionState.evidence<Evidence>().get(id)),
       );
-      const matchedEvidence = evidenceRows.filter(
-        (item): item is NonNullable<typeof item> =>
-          Boolean(item && this.matchesRequest(item.data, request)),
+      const matchedEvidence = evidenceRows.flatMap((item) =>
+        item && this.matchesRequest(item.data, request) ? [item] : [],
       );
       const evidenceIds = matchedEvidence.map((item) => item.id);
       const requiredCriteria = request.criteria.filter((criterion) => criterion.required);
