@@ -41,3 +41,33 @@ The evidence/verification path is separate:
 ## Explicit non-actions
 
 No production database writes, migrations, service-role bypass, deployment, merge, or changes to `main` were performed for this review.
+
+## Mission crash-recovery boundary (2026-11-20)
+
+A focused read of `src/core/orchestration/engine.ts` shows that the current mission loop persists a task as `RUNNING`, then creates its execution record, then calls the execution adapter, and only afterward persists the result and verification/evidence records. These are separate repository operations on the legacy synchronous state path; they are not one atomic transaction.
+
+This leaves two materially different crash windows:
+
+1. **Before dispatch:** the task can remain `RUNNING` without a durable execution request/result. A recovery worker cannot safely assume that work began.
+2. **After dispatch, before result persistence:** an external side effect may have occurred while the persisted execution record still looks incomplete. Blindly replaying the task can duplicate the side effect.
+
+The deterministic execution ID (`exec-${request.id}-${task.id}`) is useful for correlation, but a unique record ID alone is not an atomic claim, an outbox, or proof that an external adapter did not execute. The current `ExecutionRequest` contract has no idempotency key, lease owner, lease expiry, attempt identity, or fencing token. The current task status and retry counter therefore do not establish crash-safe execution ownership.
+
+### Required durable recovery contract before enabling a worker
+
+A future durable mission scheduler must implement all of the following at the storage boundary, under the authenticated tenant transaction:
+
+- **Atomic claim:** conditionally claim one eligible task only if its persisted status and dependency snapshot permit execution; persist owner, lease expiry, attempt number, and monotonically increasing fencing token in the same transaction.
+- **Fenced heartbeat and completion:** renew or finalize only when task ID, owner, attempt, and fencing token still match. An expired worker must not overwrite a newer owner's state.
+- **Transactional dispatch intent:** persist the exact execution request and an outbox/dispatch record atomically with the claim. Dispatchers may redeliver the same intent, never manufacture a new logical execution on recovery.
+- **Stable idempotency binding:** derive a non-secret idempotency key from tenant + mission + task + logical attempt + capability/action binding. Persist and validate the full binding; reject key reuse with a different payload or target.
+- **Adapter-level deduplication:** require each side-effecting adapter to honor the idempotency key at the external boundary where possible. If the downstream system cannot deduplicate or report operation status, an ambiguous post-dispatch crash must enter reconciliation/manual-review state, not automatic replay.
+- **Explicit recovery states:** distinguish never-dispatched work from dispatched-but-unconfirmed work. Reconcile execution status and evidence before retrying; preserve approval and verification gates.
+- **Bounded retry policy:** retry only classified transient failures, enforce the persisted attempt limit and backoff, and never retry terminal, cancelled, approval-blocked, or semantically unverified work automatically.
+- **Auditability:** append claim, heartbeat, dispatch, result, lease-expiry, reconciliation, retry, and terminal-transition events with exact tenant and attempt provenance.
+
+### Safe implementation status
+
+The current work does **not** add a worker, lease, outbox, or claim that crash recovery is active. Those capabilities require a transactional durable adapter and a schema with uniqueness/conditional-update constraints. The existing PostgreSQL tenant adapter is a persistence primitive, but the production provider is not composed into orchestration and the SQL schema candidate remains unapplied. The legacy orchestration path must remain explicitly non-crash-safe until the above contract is implemented and tested with concurrent workers, process restart, lease expiry, and an adapter-side-effect ambiguity harness.
+
+A separate correctness hardening in this change rejects duplicate task IDs in `retryMissionTask`, matching the existing exact-identity guard on task status transitions. This prevents retrying an arbitrary first match from an ambiguous in-memory snapshot; it does not substitute for durable concurrency control.
