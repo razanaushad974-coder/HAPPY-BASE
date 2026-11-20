@@ -147,6 +147,21 @@ export class MissionEngine {
       );
     }
 
+    // A task cannot start while its parent mission is awaiting approval,
+    // cancelled, failed, blocked, or otherwise outside an executable state.
+    // Retry explicitly restores a failed mission to READY before another run.
+    if (
+      status === "RUNNING" &&
+      target.status !== "RUNNING" &&
+      mission.status !== "READY" &&
+      mission.status !== "RUNNING" &&
+      mission.status !== "VERIFYING"
+    ) {
+      throw new Error(
+        `Mission ${mission.id} is not executable while in status ${mission.status}.`,
+      );
+    }
+
     // The transition API is also a trust boundary: callers must not be able
     // to bypass TaskGraphEngine scheduling by starting a dependent task early.
     if (status === "RUNNING" && target.status !== "RUNNING") {
