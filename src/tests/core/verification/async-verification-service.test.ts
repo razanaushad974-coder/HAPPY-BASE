@@ -9,8 +9,8 @@ async function main(): Promise<void> {
   const ownerStore = createAsyncHappyStateStore(adapter, "org-1", "workspace-1", "user-1");
   const otherStore = createAsyncHappyStateStore(adapter, "org-1", "workspace-1", "user-2");
   const evidence = new AsyncEvidenceService(ownerStore);
-  const verifier = new AsyncVerificationService(ownerStore, evidence);
-  const otherVerifier = new AsyncVerificationService(otherStore, new AsyncEvidenceService(otherStore));
+  const verifier = new AsyncVerificationService(ownerStore);
+  const otherVerifier = new AsyncVerificationService(otherStore);
 
   await ownerStore.mission().create("mission-1", {
     id: "mission-1", taskIds: ["task-1"], status: "READY",
