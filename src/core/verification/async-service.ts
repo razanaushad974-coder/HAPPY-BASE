@@ -28,35 +28,43 @@ export class AsyncVerificationService {
 
   async registerRequest(request: VerificationRequest): Promise<VerificationRequest> {
     const normalized = this.normalizeRequest(request);
-    const [missionRecord, taskRecord] = await Promise.all([
-      this.state.mission<Mission>().get(normalized.missionId),
-      this.state.task<MissionTask>().get(normalized.taskId),
-    ]);
-    if (!missionRecord || !taskRecord) {
-      throw new Error("Verification mission and task must exist in the active tenant.");
-    }
-    if (missionRecord.data.id !== normalized.missionId ||
-        taskRecord.data.id !== normalized.taskId ||
-        taskRecord.data.missionId !== normalized.missionId ||
-        !missionRecord.data.taskIds.includes(normalized.taskId)) {
-      throw new Error("Verification task does not belong to the requested mission.");
-    }
 
-    if (normalized.executionRequestId) {
-      const execution = await this.state.execution<ExecutionRequest>().get(normalized.executionRequestId);
-      if (!execution ||
-          execution.data.id !== normalized.executionRequestId ||
-          execution.data.missionId !== normalized.missionId ||
-          execution.data.taskId !== normalized.taskId) {
-        throw new Error("Verification execution request does not match the mission and task.");
+    // Keep ownership validation and request creation in one storage transaction.
+    // Otherwise a mission/task/execution could be changed or removed between
+    // the reads and the insert, leaving a verification request bound to stale
+    // or unrelated work. Production adapters must provide real transaction
+    // isolation; the in-memory adapter is only a test contract.
+    return this.state.transaction(async (transactionState) => {
+      const [missionRecord, taskRecord] = await Promise.all([
+        transactionState.mission<Mission>().get(normalized.missionId),
+        transactionState.task<MissionTask>().get(normalized.taskId),
+      ]);
+      if (!missionRecord || !taskRecord) {
+        throw new Error("Verification mission and task must exist in the active tenant.");
       }
-    }
+      if (missionRecord.data.id !== normalized.missionId ||
+          taskRecord.data.id !== normalized.taskId ||
+          taskRecord.data.missionId !== normalized.missionId ||
+          !missionRecord.data.taskIds.includes(normalized.taskId)) {
+        throw new Error("Verification task does not belong to the requested mission.");
+      }
 
-    await this.state.verificationRequest<VerificationRequest>().create(
-      normalized.id,
-      normalized,
-    );
-    return normalized;
+      if (normalized.executionRequestId) {
+        const execution = await transactionState.execution<ExecutionRequest>().get(normalized.executionRequestId);
+        if (!execution ||
+            execution.data.id !== normalized.executionRequestId ||
+            execution.data.missionId !== normalized.missionId ||
+            execution.data.taskId !== normalized.taskId) {
+          throw new Error("Verification execution request does not match the mission and task.");
+        }
+      }
+
+      await transactionState.verificationRequest<VerificationRequest>().create(
+        normalized.id,
+        normalized,
+      );
+      return normalized;
+    });
   }
 
   async verify(
