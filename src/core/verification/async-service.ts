@@ -40,7 +40,9 @@ export class AsyncVerificationService {
       if (!missionRecord || !taskRecord) {
         throw new Error("Verification mission and task must exist in the active tenant.");
       }
-      if (missionRecord.data.id !== normalized.missionId ||
+      if (missionRecord.id !== normalized.missionId ||
+          missionRecord.data.id !== normalized.missionId ||
+          taskRecord.id !== normalized.taskId ||
           taskRecord.data.id !== normalized.taskId ||
           taskRecord.data.missionId !== normalized.missionId ||
           !missionRecord.data.taskIds.includes(normalized.taskId)) {
@@ -50,6 +52,7 @@ export class AsyncVerificationService {
       if (normalized.executionRequestId) {
         const execution = await transactionState.execution<ExecutionRequest>().get(normalized.executionRequestId);
         if (!execution ||
+            execution.id !== normalized.executionRequestId ||
             execution.data.id !== normalized.executionRequestId ||
             execution.data.missionId !== normalized.missionId ||
             execution.data.taskId !== normalized.taskId) {
@@ -87,6 +90,9 @@ export class AsyncVerificationService {
         throw new Error("Verification request is not registered in the active tenant.");
       }
       const request = storedRequest.data;
+      if (storedRequest.id !== normalizedId || request.id !== normalizedId) {
+        throw new Error("Verification request storage identity does not match its registered ID.");
+      }
 
       const uniqueEvidenceIds = [...new Set(
         observedEvidenceIds
@@ -97,7 +103,7 @@ export class AsyncVerificationService {
         uniqueEvidenceIds.map((id) => transactionState.evidence<Evidence>().get(id)),
       );
       const matchedEvidence = evidenceRows.flatMap((item) =>
-        item && this.matchesRequest(item.data, request) ? [item] : [],
+        item && item.id === item.data.id && this.matchesRequest(item.data, request) ? [item] : [],
       );
       const evidenceIds = matchedEvidence.map((item) => item.id);
       const requiredCriteria = request.criteria.filter((criterion) => criterion.required);
