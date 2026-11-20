@@ -129,6 +129,9 @@ export class MissionEngine {
     tasks: MissionTask[];
   } {
     assertMissionTaskSnapshot(mission, tasks);
+    // Status transitions are a second scheduling boundary. Do not rely on
+    // callers having passed this snapshot through TaskGraphEngine first.
+    this.graphEngine.buildGraph(tasks);
     const matchingTasks = tasks.filter((task) => task.id === taskId);
     if (matchingTasks.length !== 1) {
       throw new Error(
@@ -260,6 +263,8 @@ export class MissionEngine {
     taskId: string,
   ): { mission: Mission; tasks: MissionTask[] } {
     assertMissionTaskSnapshot(mission, tasks);
+    // Retry must not revive work from a malformed dependency graph either.
+    this.graphEngine.buildGraph(tasks);
     if (mission.status !== "FAILED" && mission.status !== "BLOCKED") {
       throw new Error(
         `Mission ${mission.id} cannot retry tasks while in status ${mission.status}.`,
