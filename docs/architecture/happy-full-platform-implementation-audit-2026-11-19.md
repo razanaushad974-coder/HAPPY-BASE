@@ -295,3 +295,28 @@ A final review identified a time-of-check/time-of-use race in write authorizatio
 - Extends the disposable PostgreSQL harness to verify a create waits behind a workspace-membership revocation and is denied after the revocation commits.
 
 This serializes the tested record-write path with membership/status updates in PostgreSQL. The test uses a local auth.uid() stub and does not replace real Supabase JWT, function-owner, or hosted-project authorization testing.
+
+
+## Mission lifecycle hardening and latest CI evidence — 2026-11-20
+
+The active platform branch has advanced beyond the original audit baseline. The following source-level guards are now present:
+
+- Mission task transitions to RUNNING require the parent mission to be READY, RUNNING, or VERIFYING. Approval-pending, cancelled, failed, and blocked missions cannot be bypassed by directly changing a task snapshot.
+- Mission retries are admitted only when the parent mission is FAILED or BLOCKED. WAITING_APPROVAL, CANCELLED, COMPLETED, and READY missions cannot be revived through the task retry method.
+- Mission task snapshots must match the declared task ID set exactly: no duplicate declared IDs, no duplicate persisted task IDs, no missing tasks, and no undeclared or cross-mission task records.
+- Task starts validate that every dependency resolves exactly once in the same mission and is COMPLETED.
+- A trusted persisted approval verification path seeds the executable mission as READY while preserving the plan's WAITING_APPROVAL audit history. Caller-controlled request.approved is not treated as approval authority by orchestration.
+- TypeScript mission-status narrowing was corrected so retry status recomputation retains the complete MissionStatus union.
+
+### Verification evidence
+
+- Latest observed GitHub Actions run: CI #385, run ID 44758105350, on commit 9eaee091fa046bb8338e89439e3a200f1b131ed1 — completed SUCCESS.
+- The single CI job, "Typecheck, tests, lint, audit, build", completed SUCCESS.
+- Both observed Vercel Preview checks, happy.digi and happy-base, report SUCCESS for that commit.
+- Draft PR #9 remains open, draft, and unmerged. These checks validate the branch revision; they do not certify production readiness.
+
+### Remaining scheduler blocker
+
+These guards are domain-level state-machine checks over supplied snapshots. The active orchestration still uses the legacy synchronous JSON-file persistence path and performs task status, execution-request, adapter dispatch, result, verification, and evidence operations as separate steps. It does not yet provide an atomic durable claim, lease owner/expiry, monotonically increasing fencing token, transactional outbox, adapter-side idempotency, or safe reconciliation for an ambiguous post-dispatch crash. No worker should be enabled and no capability should be described as crash-safe until those storage and adapter contracts are implemented and tested with concurrent workers, process restart, lease expiry, and side-effect ambiguity.
+
+No database migration/write, production deployment, merge, or main-branch modification was performed.
