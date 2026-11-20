@@ -90,3 +90,8 @@ The trusted approval path preserves the execution plan's `WAITING_APPROVAL` hist
 ### Ready-task selection input validation (2026-11-20)
 
 The task graph builder validates graph structure, but the ready-task selector also accepts a `TaskGraph` object directly. A caller could therefore bypass builder validation by supplying a hand-constructed graph with duplicate task IDs, missing dependencies, cycles, cross-mission task identities, or a graph-level mission ID that does not match its task snapshot. `getReadyTasks` now revalidates task membership/dependencies/cycles and checks the graph mission ID before returning executable candidates. Regression tests cover duplicate identity, missing dependency, and graph/task mission-ID mismatch. This is a scheduling-input integrity guard only; it does not provide atomic claims, leases, or cross-worker exclusion.
+
+
+### Direct mission transition graph validation (2026-11-20)
+
+The mission status-transition and retry APIs now independently rebuild/validate the supplied task graph after checking exact mission snapshot membership. This prevents callers from bypassing graph validation by invoking `MissionEngine.updateTaskStatus` or `retryMissionTask` directly with duplicate dependencies, missing dependencies, or dependency cycles. Regression cases cover each malformed graph at the direct transition boundary. This remains in-memory validation; it does not replace atomic persistence, version checks, or durable scheduler claims.
