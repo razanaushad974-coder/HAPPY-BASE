@@ -163,6 +163,63 @@ if (readyPlan.status !== "READY") {
 
 const readySnapshot = missions.create(readyPlan);
 
+let incompleteMissionSnapshotDenied = false;
+try {
+  missionEngine.updateTaskStatus(
+    readySnapshot.mission,
+    readySnapshot.graph.tasks.slice(0, -1),
+    readySnapshot.graph.tasks[0].id,
+    "RUNNING",
+  );
+} catch {
+  incompleteMissionSnapshotDenied = true;
+}
+if (!incompleteMissionSnapshotDenied) {
+  throw new Error("MissionEngine accepted an incomplete task snapshot.");
+}
+
+let foreignTaskInMissionSnapshotDenied = false;
+try {
+  missionEngine.updateTaskStatus(
+    readySnapshot.mission,
+    [
+      ...readySnapshot.graph.tasks,
+      {
+        ...readySnapshot.graph.tasks[0],
+        id: "undeclared-extra-task",
+      },
+    ],
+    readySnapshot.graph.tasks[0].id,
+    "RUNNING",
+  );
+} catch {
+  foreignTaskInMissionSnapshotDenied = true;
+}
+if (!foreignTaskInMissionSnapshotDenied) {
+  throw new Error("MissionEngine accepted an undeclared task in the mission snapshot.");
+}
+
+let duplicateMissionTaskIdsDenied = false;
+try {
+  missionEngine.updateTaskStatus(
+    {
+      ...readySnapshot.mission,
+      taskIds: [
+        ...readySnapshot.mission.taskIds,
+        readySnapshot.mission.taskIds[0],
+      ],
+    },
+    readySnapshot.graph.tasks,
+    readySnapshot.graph.tasks[0].id,
+    "RUNNING",
+  );
+} catch {
+  duplicateMissionTaskIdsDenied = true;
+}
+if (!duplicateMissionTaskIdsDenied) {
+  throw new Error("MissionEngine accepted duplicate IDs in mission.taskIds.");
+}
+
 const readyTasks = graphEngine.getReadyTasks(
   readySnapshot.graph,
 );
