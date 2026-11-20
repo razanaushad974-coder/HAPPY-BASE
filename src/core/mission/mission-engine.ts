@@ -21,6 +21,38 @@ const ALLOWED_TASK_TRANSITIONS: Record<TaskStatus, readonly TaskStatus[]> = {
 };
 
 
+function assertMissionTaskSnapshot(
+  mission: Mission,
+  tasks: MissionTask[],
+): void {
+  const declaredIds = new Set(mission.taskIds);
+  if (declaredIds.size !== mission.taskIds.length) {
+    throw new Error(`Mission ${mission.id} contains duplicate task IDs.`);
+  }
+
+  const persistedIds = new Set<string>();
+  for (const task of tasks) {
+    if (task.missionId !== mission.id || !declaredIds.has(task.id)) {
+      throw new Error(
+        `Task snapshot contains a task outside mission ${mission.id}: ${task.id}`,
+      );
+    }
+    if (persistedIds.has(task.id)) {
+      throw new Error(`Task snapshot contains duplicate task ID: ${task.id}`);
+    }
+    persistedIds.add(task.id);
+  }
+
+  if (
+    persistedIds.size !== declaredIds.size ||
+    [...declaredIds].some((taskId) => !persistedIds.has(taskId))
+  ) {
+    throw new Error(
+      `Task snapshot is incomplete for mission ${mission.id}; every declared task must be present exactly once.`,
+    );
+  }
+}
+
 export class MissionEngine {
   private readonly graphEngine = new TaskGraphEngine();
 
@@ -95,6 +127,7 @@ export class MissionEngine {
     mission: Mission;
     tasks: MissionTask[];
   } {
+    assertMissionTaskSnapshot(mission, tasks);
     const matchingTasks = tasks.filter((task) => task.id === taskId);
     if (matchingTasks.length !== 1) {
       throw new Error(
@@ -210,6 +243,7 @@ export class MissionEngine {
     tasks: MissionTask[],
     taskId: string,
   ): { mission: Mission; tasks: MissionTask[] } {
+    assertMissionTaskSnapshot(mission, tasks);
     const matchingTasks = tasks.filter((item) => item.id === taskId);
     if (matchingTasks.length !== 1) {
       throw new Error(
