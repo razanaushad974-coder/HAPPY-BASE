@@ -375,6 +375,29 @@ if (
   throw new Error("Mission retry did not restore a consistent READY state.");
 }
 
+for (const nonRetryableMissionStatus of [
+  "WAITING_APPROVAL",
+  "CANCELLED",
+  "COMPLETED",
+  "READY",
+] as const) {
+  let retryDenied = false;
+  try {
+    missionEngine.retryMissionTask(
+      { ...failed.mission, status: nonRetryableMissionStatus },
+      failed.tasks,
+      nextReady[0].id,
+    );
+  } catch {
+    retryDenied = true;
+  }
+  if (!retryDenied) {
+    throw new Error(
+      `MissionEngine allowed retry while mission was ${nonRetryableMissionStatus}.`,
+    );
+  }
+}
+
 let ambiguousRetryIdentityDenied = false;
 try {
   missionEngine.retryMissionTask(
