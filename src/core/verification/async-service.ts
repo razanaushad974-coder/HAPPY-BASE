@@ -76,9 +76,9 @@ export class AsyncVerificationService {
     }
 
     // Read the registered request, provenance records, and append the result
-    // within one tenant transaction. A verification result must describe one
-    // consistent storage view, not a mixture of reads taken before/after a
-    // concurrent evidence or request mutation.
+    // within one tenant transaction. This guarantees atomic rollback and
+    // same-connection execution; snapshot consistency and concurrent-writer
+    // behavior remain explicit responsibilities of the concrete adapter.
     return this.state.transaction(async (transactionState) => {
       const storedRequest = await transactionState
         .verificationRequest<VerificationRequest>()
