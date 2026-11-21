@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type {
   NamedExecutorContext,
   NamedExecutorContextProvider,
@@ -198,7 +197,7 @@ export interface CreateDurableExecutionRequestCommand {
 /**
  * Creates only high-risk, founder-gated durable envelopes. The database RPC
  * derives requester/executor from auth.uid(), checks active tenant membership,
- * and binds the idempotency key to the complete immutable envelope.
+ * computes the payload digest in PostgreSQL, and binds idempotency to the full envelope.
  */
 export class SupabaseDurableExecutionRequestCreator {
   constructor(private readonly client: SupabaseExecutionRequestCreateRpcClient) {}
@@ -210,25 +209,11 @@ export class SupabaseDurableExecutionRequestCreator {
           command.requestId.length > 160 || command.taskId.length > 160 ||
           command.missionId.length > 160 || command.idempotencyKey.length > 160 ||
           !EXECUTION_CAPABILITIES.includes(command.capability) ||
-          !command.action.trim() || command.action.length > 200 ||
+          !command.action.trim() || command.action.length > 240 ||
           !isRecord(command.input) || !command.idempotencyKey.trim() ||
           parseResolvedReference(command.targetReference ?? null) === null) return null;
-      const canonicalEnvelope = canonicalJson({
-        taskId: command.taskId,
-        missionId: command.missionId,
-        organizationId: command.organizationId,
-        workspaceId: command.workspaceId,
-        capability: command.capability,
-        action: command.action,
-        input: command.input,
-        targetReference: command.targetReference ?? null,
-        risk: "HIGH",
-        requiresApproval: true,
-        requiredApprovalRole: "FOUNDER",
-        idempotencyKey: command.idempotencyKey,
-      });
-      if (canonicalEnvelope === null) return null;
-      const inputDigest = createHash("sha256").update(canonicalEnvelope, "utf8").digest("hex");
+      if (canonicalJson(command.input) === null ||
+          canonicalJson(command.targetReference ?? null) === null) return null;
       const result = await this.client.rpc("create_authenticated_execution_request", {
         p_request_id: command.requestId,
         p_task_id: command.taskId,
@@ -240,7 +225,6 @@ export class SupabaseDurableExecutionRequestCreator {
         p_input: command.input,
         p_target_reference: command.targetReference as unknown as Record<string, unknown> | null,
         p_idempotency_key: command.idempotencyKey,
-        p_input_digest: inputDigest,
       });
       if (result.error) return null;
       const rows = Array.isArray(result.data)
@@ -263,7 +247,7 @@ export class SupabaseDurableExecutionRequestCreator {
         row.required_approval_role === "FOUNDER" &&
         ["WAITING_APPROVAL", "READY", "CANCELLED"].includes(String(row.status)) &&
         row.idempotency_key === command.idempotencyKey &&
-        row.input_digest === inputDigest &&
+        typeof row.input_digest === "string" && /^[0-9a-f]{64}$/.test(row.input_digest) &&
         typeof row.requester_user_id === "string" &&
         row.requester_user_id.length > 0 &&
         row.executor_user_id === row.requester_user_id;
