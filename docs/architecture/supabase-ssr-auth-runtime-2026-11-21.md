@@ -63,3 +63,10 @@ Configure the Supabase Auth Site URL and redirect allowlist to include the exact
 - This is a server-side adapter only. No page or API route is granted tenant data access merely by supplying IDs; callers must handle `UNAUTHENTICATED` and `TENANT_ACCESS_DENIED` explicitly.
 - The private membership schema and deployed tables are still not confirmed in hosted Supabase. Therefore this helper is fail-closed and does not imply tenant persistence is live.
 - No schema, migration, database row, or production setting was changed.
+
+## Follow-up CI result — 2026-11-21
+
+- The request-scoped canonical tenant adapter and workflow path-filter changes are included in commit `fbe5a0ec85d17fcb6bbb241bc4f436313da11462`.
+- GitHub Actions run `44894035617` completed successfully. All 22 validation steps passed, including TypeScript, security contracts, PostgreSQL RLS/CAS integration, async persistence/memory/evidence/verification contracts, mission/orchestration tests, ESLint, dependency audit, and production build.
+- This is repository CI against its disposable PostgreSQL harness and test doubles. It is not a hosted Supabase deployment or live-tenant integration test.
+- The canonical membership tables referenced by the adapter are present only in a design-only SQL candidate in this repository; their presence and policies in the connected Supabase project remain unverified. Until a reviewed migration is explicitly approved and applied, the request adapter must remain unused for tenant data access.
