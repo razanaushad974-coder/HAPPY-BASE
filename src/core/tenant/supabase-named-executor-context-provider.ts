@@ -214,7 +214,6 @@ export class SupabaseDurableExecutionRequestCreator {
           !isRecord(command.input) || !command.idempotencyKey.trim() ||
           parseResolvedReference(command.targetReference ?? null) === null) return null;
       const canonicalEnvelope = canonicalJson({
-        requestId: command.requestId,
         taskId: command.taskId,
         missionId: command.missionId,
         organizationId: command.organizationId,
