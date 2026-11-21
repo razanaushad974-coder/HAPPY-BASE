@@ -102,3 +102,14 @@ The mission status-transition and retry APIs now independently rebuild/validate 
 Added `src/core/mission/recovery-assessment.ts` as a deterministic, read-only classifier for active mission tasks, scoped by mission/task identity (the current domain objects do not themselves carry tenant scope). It requires an exact mission/task snapshot and rejects execution records from another mission or task. For active RUNNING/VERIFYING tasks it distinguishes: missing execution record (reconciliation required), duplicate records (ambiguous/reconciliation required), unknown or still-running execution outcome (never blindly replay), completed execution (resume verification), approval wait, failed execution review, and blocked/not-connected review. Non-active tasks are left unchanged.
 
 Regression coverage verifies missing, in-flight, completed, duplicate, and foreign execution records. The assessment performs no writes, retries, dispatches, or state transitions. It is a safety/reconciliation primitive only: it does not prove external side effects, establish durable leases/fencing/idempotency, or make the legacy JSON orchestration crash-safe. Production use still requires a transactional scheduler, durable execution identity, adapter-side idempotency, and explicit reconciliation evidence.
+
+## Durable scheduler lease and dispatch contract (2026-11-21)
+
+The domain boundary now exposes a pure contract in `src/core/mission/durable-scheduler-contract.ts`:
+
+- A lease binds the complete organization/workspace/user scope, mission, task, owner, logical attempt, monotonically increasing fencing token, and expiry.
+- Protected mutations compare a presented lease with the latest persisted lease. Owner/lease/attempt/scope mismatch is rejected; a stale fencing token and expired lease are rejected.
+- A dispatch intent binds the same tenant, mission, task, and attempt to the execution request capability/action, with an idempotency key and canonical payload digest.
+- Regression tests cover stale fencing tokens, owner/tenant mismatch, expiry, and dispatch-binding mismatch. The test is included in `test:security`.
+
+This is a validation contract, not a scheduler implementation. The pure validator cannot close a read/write race. A production adapter must lock/CAS the current lease row, enforce fencing at the write boundary, insert the dispatch intent, and update task state in one authenticated tenant transaction. It must enforce unique `(tenant scope, idempotency key)` and immutable intent binding, then pass that key to an adapter that actually deduplicates side effects. No durable worker, automatic replay, or production persistence activation is introduced by this change.
