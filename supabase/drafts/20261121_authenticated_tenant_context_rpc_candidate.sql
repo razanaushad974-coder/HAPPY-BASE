@@ -2,6 +2,17 @@
 -- workspace, and membership tables exist and have been reviewed.
 -- Authenticated users receive RPC execution only; direct private-table access
 -- remains revoked. The caller cannot supply a user ID: auth.uid() is authority.
+--
+-- FUNCTION-OWNER DEPLOYMENT GATE:
+-- Do not leave this SECURITY DEFINER function owned by a broad service role.
+-- Before granting authenticated execution, transfer ownership to a dedicated
+-- NOLOGIN role with only USAGE on private/auth, SELECT on the four identity
+-- tables below, and EXECUTE on auth.uid(). Because those tables use RLS without
+-- client-facing membership policies, the role's RLS-bypass behavior must be
+-- deliberately constrained and reviewed. A dedicated NOLOGIN BYPASSRLS role
+-- with SELECT-only grants is one candidate; never grant it membership DML or
+-- use service_role as its owner. Verify the target Supabase project permits
+-- the role/ownership model before applying this candidate.
 
 create or replace function public.resolve_authenticated_tenant_context(
   p_organization_id uuid,
