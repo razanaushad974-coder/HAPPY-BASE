@@ -70,9 +70,10 @@ function normalizeOperation(
 }
 
 function isSafeRelativeWorkspacePath(value: string): boolean {
-  if (!value.trim() || /[\\u0000-\\u001f]/.test(value) ||
-      /^[\\/]/.test(value) || /^[A-Za-z]:/.test(value)) return false;
-  return !value.split(/[\\/]+/).includes("..");
+  if (!value.trim() || [...value].some((character) => character.charCodeAt(0) < 32)) return false;
+  const firstCharacter = value.charCodeAt(0);
+  if (firstCharacter === 47 || firstCharacter === 92 || /^[A-Za-z]:/.test(value)) return false;
+  return !value.replaceAll(String.fromCharCode(92), "/").split("/").includes("..");
 }
 
 function isWorkspaceFileOperationResult(value: unknown): value is WorkspaceFileOperationResult {
