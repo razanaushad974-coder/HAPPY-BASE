@@ -123,3 +123,14 @@ Configure the Supabase Auth Site URL and redirect allowlist to include the exact
 - Corrected the method to accept the full interface arguments (unused and explicitly underscore-prefixed) while continuing to return `false` without any table write or RPC call.
 - Fix commit: `046e8999933586d653f835d65dbcce45e5bd5ccd`.
 - The failed run stopped at TypeScript, so its security, PostgreSQL, lint, audit, and build steps were skipped. A fresh validation for the fix is required; no pass is claimed.
+
+
+### Approver-membership composition blocker found during runtime wiring review — 2026-11-21
+
+- Before composing the named-executor FILE authorizer, review traced its approver pre-check through `SupabasePersistedApproverMembershipProvider` into `SupabaseCanonicalTenantMembershipStore`.
+- That membership RPC deliberately derives the only permitted principal from `auth.uid()` and returns the current caller's membership. The authorizer, however, asks it to resolve `grant.approverUserId`, which is a distinct user from the named executor. On the executor's request-scoped JWT, the RPC correctly returns no row for that other user; therefore the current Supabase provider cannot pass the approver pre-check in a real request.
+- Existing unit tests use a mock membership store that can return another user's membership and therefore do not reproduce this JWT-bound behavior.
+- The authenticated grant-lookup SQL candidate currently returns the persisted approver ID but does not itself verify the approver's current active organization/workspace membership or role. The atomic consume SQL candidate does revalidate the approver membership and role under locks, but the TypeScript authorizer performs its pre-check before calling consume.
+- **Do not wire the current authorizer composition as-is.** The safe next change is a narrowly scoped executor-JWT RPC bound to the exact approved grant (for example, by grant ID plus exact tenant/request binding) that derives the approver from the persisted grant, validates the current approver organization/workspace memberships and required role, and returns only the minimum role evidence needed by the authorizer. Alternatively, move the full approver authorization check into the lookup RPC and simplify the application pre-check so it cannot perform an incompatible cross-user membership lookup.
+- Add a regression test using an auth.uid()-bound RPC fake that refuses to return a different user's membership, plus disposable PostgreSQL assertions for active approver, revoked approver, role downgrade, wrong grant/executor, and no direct membership-table access.
+- This is a code-review finding, not a production incident. No runtime wiring, hosted schema change, migration, or live database operation was performed. Latest repository CI on `c1971e911e6e8e0eac6fefdc78b21b48f708efc6` passed; the finding remains open and must be resolved before declaring named-executor FILE grants connected.
