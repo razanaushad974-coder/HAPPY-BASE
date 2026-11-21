@@ -10,6 +10,10 @@ async function main(): Promise<void> {
     request_id: "req-1", task_id: "task-1", mission_id: "mission-1",
     requester_user_id: "requester-1", executor_user_id: "executor-1",
     organization_id: "org-1", workspace_id: "workspace-1",
+    capability: "FILE", action: "READ", input: { path: "README.md" },
+    target_reference: null, requires_approval: false, risk: "LOW",
+    approval_status: "NOT_REQUIRED", status: "READY",
+    input_digest: "a".repeat(64), created_at: "2026-11-21T12:00:00.000Z",
   };
   const calls: Array<{ name: string; args: { p_request_id: string } }> = [];
   const client: SupabaseExecutionRequestRpcClient = {
@@ -22,6 +26,13 @@ async function main(): Promise<void> {
   const record = await store.getByRequestId("req-1");
   if (!record || record.requesterUserId !== "requester-1" ||
       record.executorUserId !== "executor-1" ||
+      record.executionRequest.capability !== "FILE" ||
+      record.executionRequest.action !== "READ" ||
+      (record.executionRequest.input as { path?: string }).path !== "README.md" ||
+      record.executionRequest.requiresApproval !== false ||
+      record.approvalStatus !== "NOT_REQUIRED" ||
+      record.status !== "READY" ||
+      record.inputDigest !== "a".repeat(64) ||
       calls.length !== 1 ||
       calls[0].name !== "resolve_authenticated_execution_request" ||
       calls[0].args.p_request_id !== "req-1") {
