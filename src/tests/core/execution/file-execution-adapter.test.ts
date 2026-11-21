@@ -14,6 +14,7 @@ import {
 
 import {
   WorkspaceCodeExecutor,
+  type WorkspaceFileExecutor,
 } from "../../../core/execution/workspace-code-executor";
 
 function assert(
@@ -34,6 +35,48 @@ async function main(): Promise<void> {
   try {
     const executor =
       new WorkspaceCodeExecutor(root);
+
+    const remoteExecutor: WorkspaceFileExecutor = {
+      async executeOperation(operation) {
+        return {
+          action: operation.action,
+          status: "COMPLETED",
+          path: operation.path,
+          content: "remote-worker-content",
+          changedFiles: [],
+          errors: [],
+        };
+      },
+    };
+    const remoteAdapter = new FileExecutionAdapter(remoteExecutor, {
+      async authorize(_request, operation) {
+        return operation.action === "READ" && operation.path === "remote/README.md";
+      },
+    });
+    const remoteResult = await remoteAdapter.execute({
+      id: "file-remote-worker-test",
+      taskId: "task-remote",
+      missionId: "mission-remote",
+      capability: "FILE",
+      action: "READ",
+      input: { operation: "READ", path: "remote/README.md" },
+      targetReference: {
+        token: "remote-file",
+        entityType: "FILE",
+        entityId: "remote-file-1",
+        confidence: "HIGH",
+        source: "ACTIVE_CONTEXT",
+      },
+      requiresApproval: false,
+      approved: false,
+      risk: "LOW",
+      createdAt: new Date().toISOString(),
+    });
+    assert(
+      remoteResult.status === "COMPLETED" &&
+        (remoteResult.output as { content?: string }).content === "remote-worker-content",
+      "FILE adapter must await and consume a trusted remote workspace executor result.",
+    );
 
     const adapter =
       new FileExecutionAdapter(executor);
