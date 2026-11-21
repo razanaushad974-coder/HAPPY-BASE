@@ -20,6 +20,7 @@ LANGUAGE sql STABLE
 AS $$ SELECT nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
 DROP FUNCTION IF EXISTS public.consume_file_mutation_approval_grant(uuid,uuid,uuid,text,text,text,text,text,text,text,text);
 DROP FUNCTION IF EXISTS public.resolve_authenticated_file_mutation_approval_grant(uuid,uuid,text,text,text,uuid,text,text,text,text,text);
+DROP FUNCTION IF EXISTS public.resolve_authenticated_file_mutation_approver_membership(uuid,uuid,uuid);
 SQL
 
 psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f supabase/drafts/20261119_file_mutation_atomic_consume_candidate.sql
@@ -82,6 +83,19 @@ lookup_grant() {
       );
     COMMIT;" | grep -E '^[0-9]+:' | tail -n 1
 }
+
+lookup_approver() {
+  local grant="$1" user="$2"
+  psql "$DATABASE_URL" -XqAt -F ':' -v ON_ERROR_STOP=1 -c "
+    BEGIN;
+    SET LOCAL ROLE authenticated;
+    SET LOCAL request.jwt.claim.sub = '$user';
+    SELECT approver_user_id::text || ':' || organization_role || ':' || workspace_role
+      FROM public.resolve_authenticated_file_mutation_approver_membership(
+        '$grant','$ORG','$WS'
+      );
+    COMMIT;" | grep -E '^[0-9a-f-]+:' | tail -n 1
+}
 invoke_grant() {
   local grant="$1" request="$2" user="$3" digest="${4:-$DIGEST}" application_name="${5:-happy-file-grant-consumer}"
   PGAPPNAME="$application_name" psql "$DATABASE_URL" -XqAt -v ON_ERROR_STOP=1 -c "
@@ -136,6 +150,12 @@ expect_result() {
 seed_grant '10000000-0000-0000-0000-000000000001' 'valid-1'
 actual="$(lookup_grant 'valid-1' "$EXECUTOR")"
 expect_result '1:10000000-0000-0000-0000-000000000001' "$actual" 'executor-bound exact grant lookup'
+actual="$(lookup_approver '10000000-0000-0000-0000-000000000001' "$EXECUTOR")"
+expect_result "$APPROVER:ADMIN:MEMBER" "$actual" 'executor-bound persisted approver membership lookup'
+actual="$(lookup_approver '10000000-0000-0000-0000-000000000001' "$APPROVER")"
+expect_result '' "$actual" 'approver cannot self-assert as executor'
+actual="$(lookup_approver '10000000-0000-0000-0000-000000000001' "$REQUESTER")"
+expect_result '' "$actual" 'requester cannot inspect approver membership'
 actual="$(lookup_grant 'valid-1' "$APPROVER")"
 expect_result '0:' "$actual" 'grant lookup by non-executor'
 actual="$(lookup_grant 'valid-1' "$EXECUTOR" 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')"
@@ -178,6 +198,14 @@ expect_result f "$actual" 'changed digest'
 seed_grant '10000000-0000-0000-0000-000000000004' 'expired-1' 'ACTIVE' 'ADMIN' 'ACTIVE' '-1 second'
 actual="$(invoke_grant '10000000-0000-0000-0000-000000000004' 'expired-1' "$EXECUTOR")"
 expect_result f "$actual" 'expired grant'
+
+seed_grant '10000000-0000-0000-0000-000000000020' 'approver-revoked-lookup-1' 'REVOKED'
+actual="$(lookup_approver '10000000-0000-0000-0000-000000000020' "$EXECUTOR")"
+expect_result '' "$actual" 'revoked approver hidden from executor-JWT lookup'
+
+seed_grant '10000000-0000-0000-0000-000000000021' 'approver-role-downgrade-lookup-1' 'ACTIVE' 'MEMBER'
+actual="$(lookup_approver '10000000-0000-0000-0000-000000000021' "$EXECUTOR")"
+expect_result '' "$actual" 'approver role downgrade hidden from executor-JWT lookup'
 
 seed_grant '10000000-0000-0000-0000-000000000005' 'revoked-approver-1' 'REVOKED'
 actual="$(invoke_grant '10000000-0000-0000-0000-000000000005' 'revoked-approver-1' "$EXECUTOR")"
@@ -363,4 +391,4 @@ expect_result f "$actual" 'request cancellation commits before consume'
 audit_count="$(psql "$DATABASE_URL" -XqAt -c "SELECT count(*) FROM private.file_mutation_approval_events WHERE grant_id='10000000-0000-0000-0000-000000000019';")"
 expect_result 0 "$audit_count" 'no audit after cancellation-first race'
 
-echo "PASS: migration-candidate RPC; JWT-derived executor; distinct principals; exact binding; expiry/replay; live approver/executor membership and role checks; one audit; concurrent single winner; revoke-vs-consume serialization; organization suspension and request cancellation races; anon invocation denial."
+echo "PASS: migration-candidate RPC; JWT-derived executor; grant-bound approver membership lookup; distinct principals; exact binding; expiry/replay; live approver/executor membership and role checks; one audit; concurrent single winner; revoke-vs-consume serialization; organization suspension and request cancellation races; anon invocation denial."
