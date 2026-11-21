@@ -15,8 +15,9 @@ alter table private.execution_requests
   add column if not exists input_digest text,
   add column if not exists idempotency_key text,
   add column if not exists created_at timestamptz not null default clock_timestamp(),
-  add column if not exists approved_at timestamptz,
-  add column if not exists approved_by uuid references auth.users(id) on delete restrict;
+  add column if not exists decided_at timestamptz,
+  add column if not exists decided_by uuid references auth.users(id) on delete restrict,
+  add column if not exists decision_reason text;
 
 alter table private.execution_requests drop constraint if exists execution_requests_status_check;
 alter table private.execution_requests add constraint execution_requests_status_check
@@ -59,10 +60,12 @@ begin
   end if;
   if old.approval_status is distinct from new.approval_status then
     if old.approval_status <> 'PENDING' or new.approval_status not in ('APPROVED','REJECTED')
-       or new.approved_at is null or new.approved_by is null then
+       or new.decided_at is null or new.decided_by is null
+       or new.decision_reason is null or length(btrim(new.decision_reason)) = 0 then
       raise exception 'Invalid execution approval transition';
     end if;
-  elsif row(new.approved_at,new.approved_by) is distinct from row(old.approved_at,old.approved_by) then
+  elsif row(new.decided_at,new.decided_by,new.decision_reason)
+        is distinct from row(old.decided_at,old.decided_by,old.decision_reason) then
     raise exception 'Execution approval evidence is immutable';
   end if;
   if old.status = new.status then return new; end if;
@@ -205,6 +208,135 @@ grant execute on function public.create_authenticated_execution_request(text,tex
 revoke all on function public.resolve_authenticated_execution_request(text) from public,anon,service_role;
 grant execute on function public.resolve_authenticated_execution_request(text) to authenticated;
 
--- Before route activation: add separately authorized approval decision,
--- READY->RUNNING atomic claim/fencing, durable outcome/evidence, and recovery
--- reconciliation. This draft does not create those capabilities.
+-- Authenticated founder decision. The database derives the approver from
+-- auth.uid(), locks the exact tenant/request/membership rows, forbids self
+-- approval, and atomically changes approval + request state.
+create or replace function public.decide_authenticated_execution_request(
+  p_request_id text,
+  p_decision text,
+  p_reason text
+)
+returns boolean
+language plpgsql security definer set search_path = pg_catalog
+as $decision$
+declare
+  v_approver uuid := auth.uid();
+  v_request private.execution_requests%rowtype;
+  v_org private.organizations%rowtype;
+  v_workspace private.workspaces%rowtype;
+  v_member private.organization_memberships%rowtype;
+  v_requester_org_role text;
+  v_approver_org_role text;
+  v_requester_org_active boolean := false;
+  v_approver_org_active boolean := false;
+  v_requester_workspace_active boolean := false;
+  v_approver_workspace_active boolean := false;
+begin
+  if v_approver is null or p_request_id is null or length(btrim(p_request_id)) = 0
+     or p_decision not in ('APPROVED','REJECTED')
+     or p_reason is null or length(btrim(p_reason)) = 0 or length(p_reason) > 1000 then
+    return false;
+  end if;
+
+  select o.* into v_org
+    from private.organizations o
+    join private.execution_requests r on r.organization_id = o.organization_id
+   where r.request_id = p_request_id
+   for update of o;
+  if not found or v_org.status <> 'ACTIVE' then return false; end if;
+
+  select w.* into v_workspace
+    from private.workspaces w
+    join private.execution_requests r
+      on r.organization_id = w.organization_id and r.workspace_id = w.workspace_id
+   where r.request_id = p_request_id
+   for update of w;
+  if not found or v_workspace.status <> 'ACTIVE' then return false; end if;
+
+  select r.* into v_request
+    from private.execution_requests r
+   where r.request_id = p_request_id
+   for update;
+  if not found or v_request.status <> 'WAITING_APPROVAL'
+     or v_request.approval_status <> 'PENDING'
+     or v_request.required_approval_role <> 'FOUNDER'
+     or v_request.requires_approval is distinct from true
+     or v_request.requester_user_id = v_approver then
+    return false;
+  end if;
+
+  for v_member in
+    select om.* from private.organization_memberships om
+     where om.organization_id = v_request.organization_id
+       and om.user_id in (v_request.requester_user_id, v_approver)
+     order by om.user_id
+     for update
+  loop
+    if v_member.user_id = v_request.requester_user_id then
+      v_requester_org_active := v_member.status = 'ACTIVE';
+      v_requester_org_role := v_member.role;
+    elsif v_member.user_id = v_approver then
+      v_approver_org_active := v_member.status = 'ACTIVE';
+      v_approver_org_role := v_member.role;
+    end if;
+  end loop;
+
+  if not v_requester_org_active or not v_approver_org_active
+     or v_approver_org_role <> 'FOUNDER' then
+    return false;
+  end if;
+
+  for v_member in
+    select wm.* from private.workspace_memberships wm
+     where wm.organization_id = v_request.organization_id
+       and wm.workspace_id = v_request.workspace_id
+       and wm.user_id in (v_request.requester_user_id, v_approver)
+     order by wm.user_id
+     for update
+  loop
+    if v_member.user_id = v_request.requester_user_id then
+      v_requester_workspace_active := v_member.status = 'ACTIVE';
+    elsif v_member.user_id = v_approver then
+      v_approver_workspace_active := v_member.status = 'ACTIVE';
+    end if;
+  end loop;
+
+  if not v_requester_workspace_active or not v_approver_workspace_active then
+    return false;
+  end if;
+
+  update private.execution_requests
+     set approval_status = p_decision,
+         decided_at = clock_timestamp(),
+         decided_by = v_approver,
+         decision_reason = btrim(p_reason),
+         status = case when p_decision = 'APPROVED' then 'READY' else 'CANCELLED' end
+   where request_id = p_request_id
+     and approval_status = 'PENDING'
+     and status = 'WAITING_APPROVAL';
+  return found;
+end;
+$decision$;
+
+do $role$
+begin
+  create role happy_execution_request_decision_rpc_owner nologin bypassrls;
+exception when duplicate_object then null;
+end
+$role$;
+grant usage on schema private,auth to happy_execution_request_decision_rpc_owner;
+grant select,update on private.execution_requests to happy_execution_request_decision_rpc_owner;
+grant select,update on private.organizations,private.workspaces,
+  private.organization_memberships,private.workspace_memberships
+  to happy_execution_request_decision_rpc_owner;
+grant execute on function auth.uid() to happy_execution_request_decision_rpc_owner;
+alter function public.decide_authenticated_execution_request(text,text,text)
+  owner to happy_execution_request_decision_rpc_owner;
+revoke all on function public.decide_authenticated_execution_request(text,text,text)
+  from public,anon,service_role;
+grant execute on function public.decide_authenticated_execution_request(text,text,text)
+  to authenticated;
+
+-- Remaining blockers before route dispatch: implement READY->RUNNING atomic
+-- claim/fencing, durable outcome/evidence, and crash/recovery reconciliation.
+-- This draft does not create those capabilities.
