@@ -1,5 +1,5 @@
 import type { ExecutionRequest } from "../../../core/execution/types";
-import { assertCurrentMissionTaskLease, assertExecutionDispatchBinding, MissionLeaseContractError, type MissionTaskLease } from "../../../core/mission/durable-scheduler-contract";
+import { assertCurrentMissionTaskLease, assertExecutionDispatchBinding, createExecutionIdempotencyKey, createExecutionPayloadDigest, MissionLeaseContractError, type MissionTaskLease } from "../../../core/mission/durable-scheduler-contract";
 
 const lease: MissionTaskLease = {
   id: "lease-1",
@@ -29,8 +29,8 @@ const request: ExecutionRequest = {
   createdAt: "2026-11-21T11:59:00.000Z",
 };
 const intent = {
-  id: "outbox-1", idempotencyKey: "happy:org-1:mission-1:task-1:attempt-2:api-post",
-  payloadDigest: "sha256:canonical-payload-digest", scope: lease.scope,
+  id: "outbox-1", idempotencyKey: createExecutionIdempotencyKey(lease, request),
+  executionRequestId: request.id, payloadDigest: createExecutionPayloadDigest(request), scope: lease.scope,
   missionId: lease.missionId, taskId: lease.taskId, attempt: lease.attempt,
   capability: request.capability, action: request.action, createdAt: "2026-11-21T12:00:00.000Z",
 };
@@ -38,5 +38,11 @@ assertExecutionDispatchBinding(intent, lease, request);
 expectCode(() => assertExecutionDispatchBinding({ ...intent, attempt: 1 }, lease, request), "DISPATCH_BINDING_MISMATCH");
 expectCode(() => assertExecutionDispatchBinding({ ...intent, scope: { ...intent.scope, userId: "other-user" } }, lease, request), "DISPATCH_BINDING_MISMATCH");
 expectCode(() => assertExecutionDispatchBinding({ ...intent, action: "DELETE" }, lease, request), "DISPATCH_BINDING_MISMATCH");
+expectCode(() => assertExecutionDispatchBinding({ ...intent, executionRequestId: "other-request" }, lease, request), "DISPATCH_BINDING_MISMATCH");
+expectCode(() => assertExecutionDispatchBinding({ ...intent, idempotencyKey: "reused-key" }, lease, request), "DISPATCH_BINDING_MISMATCH");
+expectCode(() => assertExecutionDispatchBinding({ ...intent, payloadDigest: "sha256:" + "0".repeat(64) }, lease, request), "DISPATCH_BINDING_MISMATCH");
+expectCode(() => assertExecutionDispatchBinding({ ...intent, payloadDigest: "not-a-digest" }, lease, request), "INVALID_DISPATCH_INTENT");
+const reorderedRequest = { ...request, input: { resource: "example" } };
+if (createExecutionPayloadDigest(reorderedRequest) !== createExecutionPayloadDigest(request)) throw new Error("Canonical payload digest changed with equivalent object ordering.");
 
 console.log("Durable scheduler lease/dispatch contract tests: PASS");
