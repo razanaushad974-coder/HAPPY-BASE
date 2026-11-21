@@ -28,9 +28,9 @@ export interface WorkspaceMembershipRecord {
 }
 
 /**
- * Implementations must query the authoritative membership tables using the
- * verified user ID and exact requested scope. Do not implement with JWT
- * user_metadata, request-body role arrays, or client-provided membership.
+ * Implementations must resolve the exact scope against authoritative membership
+ * records and bind the result to the verified user. Database RPCs should derive
+ * the principal from auth.uid(); never pass a caller-selected user ID as authority.
  */
 export interface CanonicalTenantMembershipPair {
   organization: OrganizationMembershipRecord;
