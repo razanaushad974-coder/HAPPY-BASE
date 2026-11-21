@@ -42,7 +42,8 @@ expectCode(() => assertExecutionDispatchBinding({ ...intent, executionRequestId:
 expectCode(() => assertExecutionDispatchBinding({ ...intent, idempotencyKey: "reused-key" }, lease, request), "DISPATCH_BINDING_MISMATCH");
 expectCode(() => assertExecutionDispatchBinding({ ...intent, payloadDigest: "sha256:" + "0".repeat(64) }, lease, request), "DISPATCH_BINDING_MISMATCH");
 expectCode(() => assertExecutionDispatchBinding({ ...intent, payloadDigest: "not-a-digest" }, lease, request), "INVALID_DISPATCH_INTENT");
-const reorderedRequest = { ...request, input: { resource: "example" } };
-if (createExecutionPayloadDigest(reorderedRequest) !== createExecutionPayloadDigest(request)) throw new Error("Canonical payload digest changed with equivalent object ordering.");
+const orderedRequest = { ...request, input: { a: 2, z: 1 } };
+const reorderedRequest = { ...request, input: Object.fromEntries(Object.entries({ z: 1, a: 2 }).reverse()) };
+if (createExecutionPayloadDigest(reorderedRequest) !== createExecutionPayloadDigest(orderedRequest)) throw new Error("Canonical payload digest changed with equivalent object ordering.");
 
 console.log("Durable scheduler lease/dispatch contract tests: PASS");
