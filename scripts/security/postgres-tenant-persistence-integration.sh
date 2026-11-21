@@ -127,6 +127,53 @@ SQL
 "${psql_base[@]}" -f "$SCHEDULER_SCHEMA_FILE"
 "${psql_base[@]}" -f "$TENANT_CONTEXT_RPC_FILE"
 
+# Exercise the SECURITY DEFINER RPC under a deliberately narrow, non-login
+# function owner instead of silently relying on the migration/superuser owner.
+# BYPASSRLS is constrained by SELECT-only grants on the four identity tables.
+"${psql_base[@]}" <<'SQL'
+do $owner_role$
+begin
+  create role happy_tenant_context_owner nologin bypassrls;
+exception when duplicate_object then null;
+end
+$owner_role$;
+grant usage on schema private, auth to happy_tenant_context_owner;
+grant select on private.organizations, private.workspaces,
+  private.organization_memberships, private.workspace_memberships
+  to happy_tenant_context_owner;
+grant execute on function auth.uid() to happy_tenant_context_owner;
+alter function public.resolve_authenticated_tenant_context(uuid,uuid)
+  owner to happy_tenant_context_owner;
+do $owner_privileges$
+begin
+  if not has_table_privilege('happy_tenant_context_owner',
+      'private.organizations', 'SELECT')
+     or not has_table_privilege('happy_tenant_context_owner',
+      'private.workspaces', 'SELECT')
+     or not has_table_privilege('happy_tenant_context_owner',
+      'private.organization_memberships', 'SELECT')
+     or not has_table_privilege('happy_tenant_context_owner',
+      'private.workspace_memberships', 'SELECT') then
+    raise exception 'tenant context function owner is missing required narrow SELECT grants';
+  end if;
+  if has_table_privilege('happy_tenant_context_owner',
+      'private.organization_memberships', 'INSERT,UPDATE,DELETE')
+     or has_table_privilege('happy_tenant_context_owner',
+      'private.workspace_memberships', 'INSERT,UPDATE,DELETE') then
+    raise exception 'tenant context function owner unexpectedly has membership write privileges';
+  end if;
+  if not has_function_privilege('authenticated',
+      'public.resolve_authenticated_tenant_context(uuid,uuid)', 'EXECUTE')
+     or has_function_privilege('anon',
+      'public.resolve_authenticated_tenant_context(uuid,uuid)', 'EXECUTE')
+     or has_function_privilege('service_role',
+      'public.resolve_authenticated_tenant_context(uuid,uuid)', 'EXECUTE') then
+    raise exception 'tenant context RPC execution grants are not least-privilege';
+  end if;
+end
+$owner_privileges$;
+SQL
+
 # Real PostgreSQL 17 roles/RLS/functions; auth.uid() is stubbed from a local
 # claim setting. This is not Supabase JWT signature or hosted-project testing.
 "${psql_base[@]}" <<'SQL'
