@@ -40,6 +40,7 @@ export interface DurableExecutionRequestRecord {
   approvalStatus: DurableExecutionApprovalStatus;
   requiredApprovalRole: "FOUNDER" | "ADMIN";
   inputDigest: string;
+  envelopeDigest: string;
 }
 
 export interface DurableExecutionRequestStore {
@@ -128,11 +129,12 @@ export class SupabaseDurableExecutionRequestStore implements DurableExecutionReq
       const requiredApprovalRole = requiredString(row, "required_approval_role");
       const status = requiredString(row, "status");
       const inputDigest = requiredString(row, "input_digest");
+      const envelopeDigest = requiredString(row, "envelope_digest");
       const createdAt = requiredString(row, "created_at");
       const targetReference = parseResolvedReference(row.target_reference);
       if (!request || !task || !mission || !requester || !executor ||
           !organization || !workspace || !capability || !action || !risk ||
-          !approvalStatus || !requiredApprovalRole || !status || !inputDigest || !createdAt ||
+          !approvalStatus || !requiredApprovalRole || !status || !inputDigest || !envelopeDigest || !createdAt ||
           !EXECUTION_CAPABILITIES.includes(capability as ExecutionCapability) ||
           !EXECUTION_RISKS.includes(risk as ExecutionRisk) ||
           !APPROVAL_STATUSES.includes(approvalStatus as DurableExecutionApprovalStatus) ||
@@ -146,6 +148,7 @@ export class SupabaseDurableExecutionRequestStore implements DurableExecutionReq
           (approvalStatus === "APPROVED" && !["READY", "RUNNING", "COMPLETED", "FAILED", "BLOCKED", "NOT_YET_CONNECTED"].includes(status)) ||
           (approvalStatus === "REJECTED" && status !== "CANCELLED") ||
           !/^[0-9a-f]{64}$/.test(inputDigest) ||
+          !/^[0-9a-f]{64}$/.test(envelopeDigest) ||
           typeof row.requires_approval !== "boolean" ||
           !isRecord(row.input) || targetReference === null) return null;
 
@@ -174,6 +177,7 @@ export class SupabaseDurableExecutionRequestStore implements DurableExecutionReq
         approvalStatus: approvalStatus as DurableExecutionApprovalStatus,
         requiredApprovalRole: requiredApprovalRole as "FOUNDER" | "ADMIN",
         inputDigest,
+        envelopeDigest,
       };
     } catch {
       return null;
@@ -247,6 +251,7 @@ export class SupabaseDurableExecutionRequestCreator {
         row.required_approval_role === "FOUNDER" &&
         ["WAITING_APPROVAL", "READY", "CANCELLED"].includes(String(row.status)) &&
         typeof row.input_digest === "string" && /^[0-9a-f]{64}$/.test(row.input_digest) &&
+        typeof row.envelope_digest === "string" && /^[0-9a-f]{64}$/.test(row.envelope_digest) &&
         typeof row.requester_user_id === "string" &&
         row.requester_user_id.length > 0 &&
         row.executor_user_id === row.requester_user_id;
