@@ -94,7 +94,7 @@ lookup_approver() {
       FROM public.resolve_authenticated_file_mutation_approver_membership(
         '$grant','$ORG','$WS'
       );
-    COMMIT;" | grep -E '^[0-9a-f-]+:' | tail -n 1
+    COMMIT;" | grep -E '^[0-9a-f-]+:' | tail -n 1 || true
 }
 invoke_grant() {
   local grant="$1" request="$2" user="$3" digest="${4:-$DIGEST}" application_name="${5:-happy-file-grant-consumer}"
