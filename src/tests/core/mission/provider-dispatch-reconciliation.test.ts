@@ -70,6 +70,35 @@ async function main(): Promise<void> {
   });
   assert(persistenceFailure.status === "EVIDENCE_PERSISTENCE_FAILED", "failed evidence append must not report reconciliation recorded");
 
+
+  let malformedLookups = 0;
+  const malformed = await reconcileProviderDispatch(target, {
+    ...succeeded,
+    async lookupByIdempotencyKey() {
+      malformedLookups++;
+      return { status: "SUCCEEDED", providerRequestId: 17, result: null } as unknown as Awaited<ReturnType<ProviderStatusReader["lookupByIdempotencyKey"]>>;
+    },
+  }, store);
+  assert(malformed.status === "RECONCILIATION_REQUIRED" && malformedLookups === 1, "malformed provider identity must not be accepted");
+
+  let invalidTimestampLookups = 0;
+  const invalidTimestamp = await reconcileProviderDispatch(target, {
+    ...succeeded,
+    async lookupByIdempotencyKey() {
+      invalidTimestampLookups++;
+      return { status: "NOT_FOUND" };
+    },
+  }, store, "not-a-timestamp");
+  assert(invalidTimestamp.status === "RECONCILIATION_REQUIRED" && invalidTimestampLookups === 0, "invalid evidence timestamp must be rejected before provider lookup");
+
+  const unknownStatus = await reconcileProviderDispatch(target, {
+    ...succeeded,
+    async lookupByIdempotencyKey() {
+      return { status: "MAGIC_SUCCESS" } as unknown as Awaited<ReturnType<ProviderStatusReader["lookupByIdempotencyKey"]>>;
+    },
+  }, store);
+  assert(unknownStatus.status === "RECONCILIATION_REQUIRED", "unrecognized provider status must not be persisted as success");
+
   console.log("Provider dispatch reconciliation contract tests: PASS");
 }
 void main();
