@@ -198,31 +198,22 @@ begin
     raise exception 'INVALID_EXECUTION_REQUEST';
   end if;
 
-  -- Canonical lock order: organization -> workspace -> organization membership
-  -- -> workspace membership. Revocation/suspension cannot race request creation.
-  perform 1 from private.organizations o
-   where o.organization_id = p_organization_id and o.status = 'ACTIVE'
-   for share;
-  if not found then raise exception 'TENANT_ACCESS_DENIED'; end if;
-
-  perform 1 from private.workspaces w
-   where w.organization_id = p_organization_id
-     and w.workspace_id = p_workspace_id and w.status = 'ACTIVE'
-   for share;
-  if not found then raise exception 'TENANT_ACCESS_DENIED'; end if;
-
-  perform 1 from private.organization_memberships om
-   where om.organization_id = p_organization_id
-     and om.user_id = v_uid and om.status = 'ACTIVE'
-   for share;
-  if not found then raise exception 'TENANT_ACCESS_DENIED'; end if;
-
-  perform 1 from private.workspace_memberships wm
-   where wm.organization_id = p_organization_id
-     and wm.workspace_id = p_workspace_id
-     and wm.user_id = v_uid and wm.status = 'ACTIVE'
-   for share;
-  if not found then raise exception 'TENANT_ACCESS_DENIED'; end if;
+  -- Creation persists inert, pending intent only. Check active canonical scope
+  -- here; the approval RPC re-locks and revalidates both memberships before
+  -- any request can become READY.
+  if not exists (
+    select 1
+      from private.organizations o
+      join private.workspaces w
+        on w.organization_id=o.organization_id and w.workspace_id=p_workspace_id
+      join private.organization_memberships om
+        on om.organization_id=o.organization_id and om.user_id=v_uid
+      join private.workspace_memberships wm
+        on wm.organization_id=o.organization_id and wm.workspace_id=w.workspace_id
+       and wm.user_id=v_uid
+     where o.organization_id=p_organization_id and o.status='ACTIVE'
+       and w.status='ACTIVE' and om.status='ACTIVE' and wm.status='ACTIVE'
+  ) then raise exception 'TENANT_ACCESS_DENIED'; end if;
 
   v_digest := encode(extensions.digest(convert_to(p_input::text,'UTF8'),'sha256'),'hex');
 
