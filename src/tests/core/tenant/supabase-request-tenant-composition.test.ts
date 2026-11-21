@@ -9,7 +9,6 @@ function assert(condition: boolean, message: string): asserts condition {
 
 async function main(): Promise<void> {
   const rpcCalls: Array<{ functionName: string; args: Record<string, unknown> }> = [];
-  let membershipStatus = "ACTIVE";
   const client: RequestScopedSupabaseClient = {
     auth: {
       async getUser() {
@@ -53,26 +52,14 @@ async function main(): Promise<void> {
   assert(rpcCalls[0].args.p_workspace_id === "workspace-1", "RPC was not bound to the exact selected workspace.");
   assert(!("user_id" in rpcCalls[0].args), "Caller-controlled user ID must never be sent to the membership RPC.");
 
-  membershipStatus = "REVOKED";
   const revokedClient: RequestScopedSupabaseClient = {
     ...client,
-    async rpc(functionName, args) {
-      return {
-        data: [{
-          user_id: "verified-user-1",
-          organization_id: "org-1",
-          workspace_id: "workspace-1",
-          organization_role: "FOUNDER",
-          workspace_role: "OWNER",
-        }],
-        error: null,
-      };
-    },
+    async rpc() { return { data: [], error: null }; },
   };
   const revoked = await resolveSupabaseRequestTenantContext({
     async createForCurrentRequest() { return revokedClient; },
   }, { organizationId: "org-1", workspaceId: "workspace-1" });
-  assert(revoked.status === "AUTHENTICATED", "The RPC must return no row, rather than a client-supplied membership status, for revoked membership.");
+  assert(revoked.status === "TENANT_ACCESS_DENIED", "No RPC membership row for a revoked member must deny access.");
 
   const mismatchedPrincipal: RequestScopedSupabaseClient = {
     ...client,
