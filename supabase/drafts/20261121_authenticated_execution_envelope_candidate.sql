@@ -11,6 +11,7 @@ alter table private.execution_requests
   add column if not exists requires_approval boolean,
   add column if not exists risk text,
   add column if not exists approval_status text,
+  add column if not exists required_approval_role text,
   add column if not exists input_digest text,
   add column if not exists idempotency_key text,
   add column if not exists created_at timestamptz not null default clock_timestamp(),
@@ -23,7 +24,7 @@ alter table private.execution_requests add constraint execution_requests_status_
 
 alter table private.execution_requests add constraint execution_requests_envelope_check
   check (
-    (capability is null and action is null and input is null and requires_approval is null and risk is null and approval_status is null and input_digest is null and idempotency_key is null)
+    (capability is null and action is null and input is null and requires_approval is null and risk is null and approval_status is null and required_approval_role is null and input_digest is null and idempotency_key is null)
     or
     (capability is not null and capability in ('CODE','FILE','API','BROWSER','SHELL','DATABASE','AI','DEPLOYMENT','PUBLISH','AUTOMATION')
      and action is not null and length(btrim(action)) > 0
@@ -32,6 +33,7 @@ alter table private.execution_requests add constraint execution_requests_envelop
      and requires_approval is not null
      and risk is not null and risk in ('LOW','MEDIUM','HIGH','CRITICAL')
      and approval_status is not null and approval_status in ('NOT_REQUIRED','PENDING','APPROVED','REJECTED')
+     and required_approval_role = 'FOUNDER'
      and input_digest is not null and input_digest ~ '^[0-9a-f]{64}$'
      and idempotency_key is not null and length(btrim(idempotency_key)) > 0)
   );
@@ -46,12 +48,12 @@ as $guard$
 begin
   if row(new.request_id,new.task_id,new.mission_id,new.requester_user_id,new.executor_user_id,
          new.organization_id,new.workspace_id,new.capability,new.action,new.input,
-         new.target_reference,new.requires_approval,new.risk,new.input_digest,
+         new.target_reference,new.requires_approval,new.risk,new.required_approval_role,new.input_digest,
          new.idempotency_key,new.created_at)
      is distinct from
      row(old.request_id,old.task_id,old.mission_id,old.requester_user_id,old.executor_user_id,
          old.organization_id,old.workspace_id,old.capability,old.action,old.input,
-         old.target_reference,old.requires_approval,old.risk,old.input_digest,
+         old.target_reference,old.requires_approval,old.risk,old.required_approval_role,old.input_digest,
          old.idempotency_key,old.created_at) then
     raise exception 'Execution request envelope is immutable';
   end if;
@@ -83,14 +85,14 @@ create or replace function public.create_authenticated_execution_request(
   p_request_id text, p_task_id text, p_mission_id text,
   p_organization_id uuid, p_workspace_id uuid,
   p_capability text, p_action text, p_input jsonb, p_target_reference jsonb,
-  p_requires_approval boolean, p_risk text, p_idempotency_key text
+  p_idempotency_key text
 )
 returns table (
   request_id text, task_id text, mission_id text,
   requester_user_id uuid, executor_user_id uuid,
   organization_id uuid, workspace_id uuid,
   capability text, action text, input jsonb, target_reference jsonb,
-  requires_approval boolean, risk text, approval_status text,
+  requires_approval boolean, risk text, approval_status text, required_approval_role text,
   status text, input_digest text, created_at timestamptz
 )
 language plpgsql security definer set search_path = pg_catalog
@@ -108,7 +110,6 @@ begin
      or p_action is null or length(btrim(p_action)) = 0
      or p_input is null or jsonb_typeof(p_input) <> 'object'
      or (p_target_reference is not null and jsonb_typeof(p_target_reference) <> 'object')
-     or p_requires_approval is null or p_risk not in ('LOW','MEDIUM','HIGH','CRITICAL')
      or p_idempotency_key is null or length(btrim(p_idempotency_key)) = 0
      or length(p_request_id) > 160 or length(p_task_id) > 160
      or length(p_mission_id) > 160 or length(p_action) > 240
@@ -129,13 +130,11 @@ begin
   insert into private.execution_requests(
     request_id,task_id,mission_id,requester_user_id,executor_user_id,
     organization_id,workspace_id,status,capability,action,input,target_reference,
-    requires_approval,risk,approval_status,input_digest,idempotency_key
+    requires_approval,risk,approval_status,required_approval_role,input_digest,idempotency_key
   ) values (
     p_request_id,p_task_id,p_mission_id,v_uid,v_uid,p_organization_id,p_workspace_id,
-    case when p_requires_approval then 'WAITING_APPROVAL' else 'READY' end,
-    p_capability,p_action,p_input,p_target_reference,p_requires_approval,p_risk,
-    case when p_requires_approval then 'PENDING' else 'NOT_REQUIRED' end,
-    v_digest,p_idempotency_key
+    'WAITING_APPROVAL', p_capability,p_action,p_input,p_target_reference,true,'HIGH',
+    'PENDING','FOUNDER',v_digest,p_idempotency_key
   )
   on conflict (requester_user_id,organization_id,workspace_id,idempotency_key)
     where idempotency_key is not null do nothing;
@@ -149,14 +148,15 @@ begin
      or v_existing.mission_id <> p_mission_id or v_existing.capability <> p_capability
      or v_existing.action <> p_action or v_existing.input <> p_input
      or v_existing.target_reference is distinct from p_target_reference
-     or v_existing.requires_approval <> p_requires_approval or v_existing.risk <> p_risk
+     or v_existing.requires_approval is distinct from true or v_existing.risk <> 'HIGH'
+     or v_existing.approval_status <> 'PENDING' or v_existing.required_approval_role <> 'FOUNDER'
      or v_existing.input_digest <> v_digest then
     raise exception 'IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_EXECUTION';
   end if;
 
   return query select r.request_id,r.task_id,r.mission_id,r.requester_user_id,r.executor_user_id,
     r.organization_id,r.workspace_id,r.capability,r.action,r.input,r.target_reference,
-    r.requires_approval,r.risk,r.approval_status,r.status,r.input_digest,r.created_at
+    r.requires_approval,r.risk,r.approval_status,r.required_approval_role,r.status,r.input_digest,r.created_at
     from private.execution_requests r where r.request_id=v_existing.request_id;
 end;
 $function$;
@@ -168,14 +168,14 @@ returns table (
   requester_user_id uuid, executor_user_id uuid,
   organization_id uuid, workspace_id uuid,
   capability text, action text, input jsonb, target_reference jsonb,
-  requires_approval boolean, risk text, approval_status text,
+  requires_approval boolean, risk text, approval_status text, required_approval_role text,
   status text, input_digest text, created_at timestamptz
 )
 language sql security definer set search_path = pg_catalog
 as $function$
   select r.request_id,r.task_id,r.mission_id,r.requester_user_id,r.executor_user_id,
     r.organization_id,r.workspace_id,r.capability,r.action,r.input,r.target_reference,
-    r.requires_approval,r.risk,r.approval_status,r.status,r.input_digest,r.created_at
+    r.requires_approval,r.risk,r.approval_status,r.required_approval_role,r.status,r.input_digest,r.created_at
   from private.execution_requests r
   where p_request_id is not null and length(btrim(p_request_id)) > 0
     and r.request_id=p_request_id and r.executor_user_id=auth.uid()
@@ -195,13 +195,13 @@ grant select on private.organization_memberships,private.workspace_memberships t
 grant execute on function auth.uid() to happy_execution_request_create_rpc_owner;
 grant execute on function extensions.digest(bytea,text) to happy_execution_request_create_rpc_owner;
 
-alter function public.create_authenticated_execution_request(text,text,text,uuid,uuid,text,text,jsonb,jsonb,boolean,text,text)
+alter function public.create_authenticated_execution_request(text,text,text,uuid,uuid,text,text,jsonb,jsonb,text)
   owner to happy_execution_request_create_rpc_owner;
 alter function public.resolve_authenticated_execution_request(text)
   owner to happy_execution_request_create_rpc_owner;
 
-revoke all on function public.create_authenticated_execution_request(text,text,text,uuid,uuid,text,text,jsonb,jsonb,boolean,text,text) from public,anon,service_role;
-grant execute on function public.create_authenticated_execution_request(text,text,text,uuid,uuid,text,text,jsonb,jsonb,boolean,text,text) to authenticated;
+revoke all on function public.create_authenticated_execution_request(text,text,text,uuid,uuid,text,text,jsonb,jsonb,text) from public,anon,service_role;
+grant execute on function public.create_authenticated_execution_request(text,text,text,uuid,uuid,text,text,jsonb,jsonb,text) to authenticated;
 revoke all on function public.resolve_authenticated_execution_request(text) from public,anon,service_role;
 grant execute on function public.resolve_authenticated_execution_request(text) to authenticated;
 
