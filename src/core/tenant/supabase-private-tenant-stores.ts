@@ -107,6 +107,17 @@ export interface SupabaseExecutionRequestCreateRpcClient {
   ): Promise<DatabaseResult>;
 }
 
+export interface SupabaseExecutionRequestDecisionRpcClient {
+  rpc(
+    functionName: "decide_authenticated_execution_request",
+    args: {
+      p_request_id: string;
+      p_decision: "APPROVED" | "REJECTED";
+      p_reason: string;
+    },
+  ): Promise<DatabaseResult>;
+}
+
 export class SupabaseCanonicalTenantMembershipStore
 implements CanonicalTenantMembershipStore {
   constructor(private readonly client: SupabaseTenantContextRpcClient) {}
