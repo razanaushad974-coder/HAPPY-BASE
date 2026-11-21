@@ -178,6 +178,7 @@ begin
      or p_task_id is null or length(btrim(p_task_id)) = 0
      or p_mission_id is null or length(btrim(p_mission_id)) = 0
      or p_organization_id is null or p_workspace_id is null
+     or p_capability is null
      or p_capability not in ('CODE','FILE','API','BROWSER','SHELL','DATABASE','AI','DEPLOYMENT','PUBLISH','AUTOMATION')
      or p_action is null or length(btrim(p_action)) = 0
      or p_input is null or jsonb_typeof(p_input) <> 'object'
@@ -197,13 +198,31 @@ begin
     raise exception 'INVALID_EXECUTION_REQUEST';
   end if;
 
-  if not exists (
-    select 1 from private.organization_memberships om
-    join private.workspace_memberships wm
-      on wm.organization_id = om.organization_id and wm.user_id = om.user_id
-    where om.user_id = v_uid and om.organization_id = p_organization_id
-      and om.status = 'ACTIVE' and wm.workspace_id = p_workspace_id and wm.status = 'ACTIVE'
-  ) then raise exception 'TENANT_ACCESS_DENIED'; end if;
+  -- Canonical lock order: organization -> workspace -> organization membership
+  -- -> workspace membership. Revocation/suspension cannot race request creation.
+  perform 1 from private.organizations o
+   where o.organization_id = p_organization_id and o.status = 'ACTIVE'
+   for share;
+  if not found then raise exception 'TENANT_ACCESS_DENIED'; end if;
+
+  perform 1 from private.workspaces w
+   where w.organization_id = p_organization_id
+     and w.workspace_id = p_workspace_id and w.status = 'ACTIVE'
+   for share;
+  if not found then raise exception 'TENANT_ACCESS_DENIED'; end if;
+
+  perform 1 from private.organization_memberships om
+   where om.organization_id = p_organization_id
+     and om.user_id = v_uid and om.status = 'ACTIVE'
+   for share;
+  if not found then raise exception 'TENANT_ACCESS_DENIED'; end if;
+
+  perform 1 from private.workspace_memberships wm
+   where wm.organization_id = p_organization_id
+     and wm.workspace_id = p_workspace_id
+     and wm.user_id = v_uid and wm.status = 'ACTIVE'
+   for share;
+  if not found then raise exception 'TENANT_ACCESS_DENIED'; end if;
 
   v_digest := encode(extensions.digest(convert_to(p_input::text,'UTF8'),'sha256'),'hex');
 
@@ -269,7 +288,9 @@ end
 $role$;
 grant usage on schema private,auth,extensions to happy_execution_request_create_rpc_owner;
 grant select,insert on private.execution_requests to happy_execution_request_create_rpc_owner;
-grant select on private.organization_memberships,private.workspace_memberships to happy_execution_request_create_rpc_owner;
+grant select on private.organizations,private.workspaces,
+  private.organization_memberships,private.workspace_memberships
+  to happy_execution_request_create_rpc_owner;
 grant execute on function auth.uid() to happy_execution_request_create_rpc_owner;
 grant execute on function extensions.digest(bytea,text) to happy_execution_request_create_rpc_owner;
 
