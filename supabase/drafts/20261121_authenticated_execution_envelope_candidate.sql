@@ -279,14 +279,18 @@ begin
     'approvalStatus','PENDING','requiredApprovalRole','FOUNDER',
     'idempotencyKey',p_idempotency_key
   )::text,'UTF8'),'sha256'),'hex');
-  if v_existing.executor_user_id <> v_uid or v_existing.task_id <> p_task_id
-     or v_existing.mission_id <> p_mission_id or v_existing.capability <> p_capability
-     or v_existing.action <> p_action or v_existing.input <> p_input
+  if v_existing.executor_user_id is distinct from v_uid
+     or v_existing.task_id is distinct from p_task_id
+     or v_existing.mission_id is distinct from p_mission_id
+     or v_existing.capability is distinct from p_capability
+     or v_existing.action is distinct from p_action
+     or v_existing.input is distinct from p_input
      or v_existing.target_reference is distinct from p_target_reference
-     or v_existing.requires_approval is distinct from true or v_existing.risk <> 'HIGH'
-     or v_existing.required_approval_role <> 'FOUNDER'
-     or v_existing.input_digest <> v_digest
-     or v_existing.envelope_digest <> v_envelope_digest then
+     or v_existing.requires_approval is distinct from true
+     or v_existing.risk is distinct from 'HIGH'
+     or v_existing.required_approval_role is distinct from 'FOUNDER'
+     or v_existing.input_digest is distinct from v_digest
+     or v_existing.envelope_digest is distinct from v_envelope_digest then
     raise exception 'IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_EXECUTION';
   end if;
 
