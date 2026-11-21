@@ -43,6 +43,14 @@ async function main(): Promise<void> {
         requestId, taskId: "task-1", missionId: "mission-1",
         requesterUserId: "requester-1", executorUserId: "executor-1",
         organizationId: "org-1", workspaceId: "workspace-1",
+        executionRequest: {
+          id: requestId, taskId: "task-1", missionId: "mission-1",
+          capability: "FILE", action: "MODIFY", input: {},
+          requiresApproval: true, approved: false, risk: "HIGH",
+          createdAt: "2026-11-19T00:00:00.000Z",
+        },
+        status: "WAITING_APPROVAL", approvalStatus: "PENDING",
+        requiredApprovalRole: "FOUNDER", inputDigest: "a".repeat(64),
       } : null;
     },
   };
@@ -62,6 +70,11 @@ async function main(): Promise<void> {
           request_id: "request-1", task_id: "task-1", mission_id: "mission-1",
           requester_user_id: "requester-1", executor_user_id: "executor-1",
           organization_id: "org-1", workspace_id: "workspace-1",
+          capability: "FILE", action: "MODIFY", input: {},
+          target_reference: null, requires_approval: true, risk: "HIGH",
+          approval_status: "PENDING", required_approval_role: "FOUNDER",
+          status: "WAITING_APPROVAL", input_digest: "a".repeat(64),
+          created_at: "2026-11-19T00:00:00.000Z",
         }],
       };
     },
