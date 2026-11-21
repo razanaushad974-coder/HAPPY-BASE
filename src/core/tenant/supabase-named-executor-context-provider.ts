@@ -117,6 +117,12 @@ export class SupabaseDurableExecutionRequestStore implements DurableExecutionReq
           !APPROVAL_STATUSES.includes(approvalStatus as DurableExecutionApprovalStatus) ||
           !["FOUNDER", "ADMIN"].includes(requiredApprovalRole) ||
           !EXECUTION_STATUSES.includes(status as ExecutionStatus) ||
+          row.requires_approval !== true ||
+          risk !== "HIGH" ||
+          requiredApprovalRole !== "FOUNDER" ||
+          (approvalStatus === "PENDING" && status !== "WAITING_APPROVAL") ||
+          (approvalStatus === "APPROVED" && !["READY", "RUNNING", "COMPLETED", "FAILED", "BLOCKED", "NOT_YET_CONNECTED"].includes(status)) ||
+          (approvalStatus === "REJECTED" && status !== "CANCELLED") ||
           !/^[0-9a-f]{64}$/.test(inputDigest) ||
           typeof row.requires_approval !== "boolean" ||
           !isRecord(row.input) || targetReference === null) return null;
