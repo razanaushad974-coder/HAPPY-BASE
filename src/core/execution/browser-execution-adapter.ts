@@ -321,7 +321,7 @@ export class BrowserExecutionAdapter
       await page.route("**/*", async (route) => {
         const destination = validateUrl(
           route.request().url(),
-          input.allowedHosts,
+          [...this.allowedHosts],
         );
 
         if (!destination.ok) {
