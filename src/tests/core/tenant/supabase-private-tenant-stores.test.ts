@@ -145,6 +145,87 @@ async function main(): Promise<void> {
   assert(await failedMemberships.getTenantMembershipPair("executor-1", "org-1", "workspace-1") === null,
     "Membership RPC error did not fail closed.");
 
+  const { SupabaseTransactionalNamedExecutorGrantStore } = await import("../../../core/tenant/supabase-private-tenant-stores");
+  const consumeCalls: Array<{ functionName: string; args: Record<string, unknown> }> = [];
+  let lookupCalls = 0;
+  const transactional = new SupabaseTransactionalNamedExecutorGrantStore(
+    {
+      async getApprovedGrant() {
+        lookupCalls += 1;
+        return null;
+      },
+    },
+    {
+      async rpc(functionName, args) {
+        consumeCalls.push({ functionName, args });
+        return { data: true, error: null };
+      },
+    },
+  );
+  assert(await transactional.getApprovedGrant(
+    { organizationId: "org-1", workspaceId: "workspace-1" },
+    binding,
+  ) === null && lookupCalls === 1, "Transactional store must delegate grant discovery to its dedicated lookup store.");
+  assert(await transactional.consumeApprovedGrant(
+    { organizationId: "org-1", workspaceId: "workspace-1" },
+    "grant-1",
+    binding,
+    "2026-11-19T12:00:02.000Z",
+  ), "A successful auth.uid()-bound consume RPC must return true.");
+  const consumeCall = consumeCalls[0];
+  assert(consumeCall?.functionName === "consume_file_mutation_approval_grant",
+    "Transactional store called an unexpected consume RPC.");
+  assert(consumeCall.args.p_grant_id === "grant-1" &&
+    consumeCall.args.p_organization_id === "org-1" &&
+    consumeCall.args.p_workspace_id === "workspace-1" &&
+    consumeCall.args.p_request_id === "request-1" &&
+    consumeCall.args.p_task_id === "task-1" &&
+    consumeCall.args.p_mission_id === "mission-1" &&
+    consumeCall.args.p_target_entity_id === "file-1" &&
+    consumeCall.args.p_operation === "MODIFY" &&
+    consumeCall.args.p_source_path === "docs/plan.md" &&
+    consumeCall.args.p_destination_path === null &&
+    consumeCall.args.p_input_digest === "a".repeat(64),
+    "Consume RPC did not receive the complete immutable grant binding.");
+  assert(!("p_executor_user_id" in consumeCall.args) &&
+    !("p_requester_user_id" in consumeCall.args) &&
+    !("p_approver_user_id" in consumeCall.args) &&
+    !("p_consumed_at" in consumeCall.args),
+    "Caller-supplied principals or timestamps must not be sent to the auth.uid()-bound consume RPC.");
+
+  const deniedStore = new SupabaseTransactionalNamedExecutorGrantStore(
+    { async getApprovedGrant() { return null; } },
+    { async rpc() { return { data: false, error: null }; } },
+  );
+  assert(!(await deniedStore.consumeApprovedGrant(
+    { organizationId: "org-1", workspaceId: "workspace-1" },
+    "grant-1",
+    binding,
+    "2026-11-19T12:00:03.000Z",
+  )), "A false RPC result must deny grant consumption.");
+
+  const errorStore = new SupabaseTransactionalNamedExecutorGrantStore(
+    { async getApprovedGrant() { return null; } },
+    { async rpc() { return { data: true, error: { message: "permission denied" } }; } },
+  );
+  assert(!(await errorStore.consumeApprovedGrant(
+    { organizationId: "org-1", workspaceId: "workspace-1" },
+    "grant-1",
+    binding,
+    "2026-11-19T12:00:04.000Z",
+  )), "RPC errors must fail closed.");
+
+  const throwingStore = new SupabaseTransactionalNamedExecutorGrantStore(
+    { async getApprovedGrant() { return null; } },
+    { async rpc() { throw new Error("network unavailable"); } },
+  );
+  assert(!(await throwingStore.consumeApprovedGrant(
+    { organizationId: "org-1", workspaceId: "workspace-1" },
+    "grant-1",
+    binding,
+    "2026-11-19T12:00:05.000Z",
+  )), "Thrown RPC failures must fail closed.");
+
   console.log("Supabase private tenant/grant adapter contract: PASS");
 }
 
