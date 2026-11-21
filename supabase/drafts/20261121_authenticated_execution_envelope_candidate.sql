@@ -34,7 +34,7 @@ alter table private.execution_requests add constraint execution_requests_envelop
      and requires_approval is not null
      and risk is not null and risk in ('LOW','MEDIUM','HIGH','CRITICAL')
      and approval_status is not null and approval_status in ('NOT_REQUIRED','PENDING','APPROVED','REJECTED')
-     and required_approval_role = 'FOUNDER'
+     and required_approval_role is not null and required_approval_role = 'FOUNDER'
      and input_digest is not null and input_digest ~ '^[0-9a-f]{64}$'
      and idempotency_key is not null and length(btrim(idempotency_key)) > 0)
   );
@@ -82,6 +82,37 @@ drop trigger if exists execution_request_guard_update on private.execution_reque
 create trigger execution_request_guard_update before update on private.execution_requests
 for each row execute function private.guard_execution_request_update();
 
+-- Even privileged service_role inserts cannot mint pre-approved executable
+-- envelopes. Legacy rows without an envelope remain non-executable.
+create or replace function private.guard_execution_request_insert()
+returns trigger language plpgsql set search_path = pg_catalog
+as $insert_guard$
+begin
+  if new.capability is not null and (
+    new.requester_user_id is distinct from new.executor_user_id
+    or new.status <> 'WAITING_APPROVAL'
+    or new.requires_approval is distinct from true
+    or new.risk <> 'HIGH'
+    or new.approval_status <> 'PENDING'
+    or new.required_approval_role <> 'FOUNDER'
+    or new.decided_at is not null
+    or new.decided_by is not null
+    or new.decision_reason is not null
+  ) then
+    raise exception 'Execution requests must start pending founder approval';
+  end if;
+  return new;
+end;
+$insert_guard$;
+
+drop trigger if exists execution_request_guard_insert on private.execution_requests;
+create trigger execution_request_guard_insert before insert on private.execution_requests
+for each row execute function private.guard_execution_request_insert();
+
+-- The user-JWT creation/decision RPCs are the only write paths for enveloped
+-- requests. service_role cannot mutate or delete an existing request directly.
+revoke update,delete on private.execution_requests from service_role;
+
 -- First API version permits self-execution only. auth.uid() supplies both
 -- requester and executor; delegation needs a separately reviewed policy.
 create or replace function public.create_authenticated_execution_request(
@@ -117,9 +148,9 @@ begin
        or not (p_target_reference ?& array['token','entityType','entityId','confidence','source'])
        or coalesce(p_target_reference->>'token','') = ''
        or coalesce(p_target_reference->>'entityId','') = ''
-       or p_target_reference->>'entityType' not in ('PROJECT','MISSION','TASK','FILE','DATABASE')
-       or p_target_reference->>'confidence' not in ('HIGH','MEDIUM','LOW','UNKNOWN')
-       or p_target_reference->>'source' not in ('ACTIVE_CONTEXT','PERSISTED_MEMORY')
+       or coalesce(p_target_reference->>'entityType','') not in ('PROJECT','MISSION','TASK','FILE','DATABASE')
+       or coalesce(p_target_reference->>'confidence','') not in ('HIGH','MEDIUM','LOW','UNKNOWN')
+       or coalesce(p_target_reference->>'source','') not in ('ACTIVE_CONTEXT','PERSISTED_MEMORY')
      ))
      or p_idempotency_key is null or length(btrim(p_idempotency_key)) = 0
      or length(p_request_id) > 160 or length(p_task_id) > 160
@@ -241,7 +272,7 @@ declare
   v_approver_workspace_active boolean := false;
 begin
   if v_approver is null or p_request_id is null or length(btrim(p_request_id)) = 0
-     or p_decision not in ('APPROVED','REJECTED')
+     or p_decision is null or p_decision not in ('APPROVED','REJECTED')
      or p_reason is null or length(btrim(p_reason)) = 0 or length(p_reason) > 1000 then
     return false;
   end if;
