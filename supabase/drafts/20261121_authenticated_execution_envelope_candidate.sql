@@ -215,6 +215,27 @@ begin
        and w.status='ACTIVE' and om.status='ACTIVE' and wm.status='ACTIVE'
   ) then raise exception 'TENANT_ACCESS_DENIED'; end if;
 
+  -- Bind caller selectors to canonical, same-principal persisted records.
+  -- Mission must contain the task ID; task must point back to that mission.
+  -- Only executable mission/task states may create an execution request.
+  if not exists (
+    select 1 from public.happy_tenant_records m
+     where m.organization_id=p_organization_id and m.workspace_id=p_workspace_id
+       and m.user_id=v_uid and m.entity_type='MISSION' and m.record_id=p_mission_id
+       and m.data->>'id'=p_mission_id
+       and m.data->>'status' in ('READY','RUNNING','VERIFYING')
+       and jsonb_typeof(m.data->'taskIds')='array'
+       and (m.data->'taskIds') ? p_task_id
+  ) then raise exception 'MISSION_NOT_FOUND_OR_TASK_NOT_BOUND'; end if;
+
+  if not exists (
+    select 1 from public.happy_tenant_records t
+     where t.organization_id=p_organization_id and t.workspace_id=p_workspace_id
+       and t.user_id=v_uid and t.entity_type='TASK' and t.record_id=p_task_id
+       and t.data->>'id'=p_task_id and t.data->>'missionId'=p_mission_id
+       and t.data->>'status' in ('PENDING','READY','RUNNING')
+  ) then raise exception 'TASK_NOT_FOUND_OR_MISSION_MISMATCH'; end if;
+
   v_digest := encode(extensions.digest(convert_to(p_input::text,'UTF8'),'sha256'),'hex');
 
   insert into private.execution_requests(
@@ -280,7 +301,8 @@ $role$;
 grant usage on schema private,auth,extensions to happy_execution_request_create_rpc_owner;
 grant select,insert on private.execution_requests to happy_execution_request_create_rpc_owner;
 grant select on private.organizations,private.workspaces,
-  private.organization_memberships,private.workspace_memberships
+  private.organization_memberships,private.workspace_memberships,
+  public.happy_tenant_records
   to happy_execution_request_create_rpc_owner;
 grant execute on function auth.uid() to happy_execution_request_create_rpc_owner;
 grant execute on function extensions.digest(bytea,text) to happy_execution_request_create_rpc_owner;
