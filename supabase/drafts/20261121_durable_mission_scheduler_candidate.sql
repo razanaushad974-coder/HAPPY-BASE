@@ -429,13 +429,14 @@ begin
     raise exception 'TENANT_SCOPE_DENIED' using errcode = '42501';
   end if;
 
+  -- Read the immutable task binding first without a row lock, then lock in
+  -- the shared lease -> outbox order used by enqueue to avoid lock inversion.
   select * into v_outbox
     from public.happy_execution_dispatch_outbox o
    where o.organization_id = p_organization_id
      and o.workspace_id = p_workspace_id
      and o.user_id = v_actor
-     and o.outbox_id = p_outbox_id
-   for update;
+     and o.outbox_id = p_outbox_id;
   if not found then raise exception 'OUTBOX_NOT_FOUND' using errcode = 'P0002'; end if;
 
   select * into v_lease
@@ -454,6 +455,21 @@ begin
      or v_lease.fencing_token <> p_fencing_token
      or v_lease.fencing_token <> v_outbox.fencing_token
      or v_lease.expires_at <= clock_timestamp() then
+    raise exception 'STALE_OR_EXPIRED_LEASE' using errcode = '55000';
+  end if;
+
+  -- Re-read and lock the outbox only after the lease lock. The row may
+  -- have changed since the initial non-locking lookup.
+  select * into v_outbox
+    from public.happy_execution_dispatch_outbox o
+   where o.organization_id = p_organization_id
+     and o.workspace_id = p_workspace_id
+     and o.user_id = v_actor
+     and o.outbox_id = p_outbox_id
+   for update;
+  if not found
+     or v_outbox.lease_id <> v_lease.lease_id
+     or v_outbox.fencing_token <> v_lease.fencing_token then
     raise exception 'STALE_OR_EXPIRED_LEASE' using errcode = '55000';
   end if;
 
