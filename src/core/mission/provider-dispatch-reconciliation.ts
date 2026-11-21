@@ -85,19 +85,27 @@ export async function reconcileProviderDispatch(
   let decision: ProviderReconciliationDecision;
   switch (observation.status) {
     case "SUCCEEDED":
-      decision = typeof observation.providerRequestId === "string" && observation.providerRequestId.trim()
-        ? { status: "VERIFICATION_REQUIRED", providerRequestId: observation.providerRequestId, result: observation.result }
-        : { status: "RECONCILIATION_REQUIRED", reason: "PROVIDER_SUCCESS_MISSING_REQUEST_ID" };
+      if (typeof observation.providerRequestId !== "string" || !observation.providerRequestId.trim()) {
+        return { status: "RECONCILIATION_REQUIRED", reason: "PROVIDER_SUCCESS_MISSING_REQUEST_ID" };
+      }
+      decision = { status: "VERIFICATION_REQUIRED", providerRequestId: observation.providerRequestId, result: observation.result };
       break;
     case "FAILED":
-      decision = typeof observation.providerRequestId === "string" && observation.providerRequestId.trim()
-        ? { status: "FAILED_EXECUTION_REVIEW_REQUIRED", providerRequestId: observation.providerRequestId, code: typeof observation.code === "string" ? observation.code : "PROVIDER_FAILED", message: typeof observation.message === "string" ? observation.message : "Provider reported failure." }
-        : { status: "RECONCILIATION_REQUIRED", reason: "PROVIDER_FAILURE_MISSING_REQUEST_ID" };
+      if (typeof observation.providerRequestId !== "string" || !observation.providerRequestId.trim()) {
+        return { status: "RECONCILIATION_REQUIRED", reason: "PROVIDER_FAILURE_MISSING_REQUEST_ID" };
+      }
+      decision = {
+        status: "FAILED_EXECUTION_REVIEW_REQUIRED",
+        providerRequestId: observation.providerRequestId,
+        code: typeof observation.code === "string" ? observation.code : "PROVIDER_FAILED",
+        message: typeof observation.message === "string" ? observation.message : "Provider reported failure.",
+      };
       break;
     case "PROCESSING":
-      decision = typeof observation.providerRequestId === "string" && observation.providerRequestId.trim()
-        ? { status: "PROVIDER_STILL_PROCESSING", providerRequestId: observation.providerRequestId }
-        : { status: "RECONCILIATION_REQUIRED", reason: "PROVIDER_PROCESSING_MISSING_REQUEST_ID" };
+      if (typeof observation.providerRequestId !== "string" || !observation.providerRequestId.trim()) {
+        return { status: "RECONCILIATION_REQUIRED", reason: "PROVIDER_PROCESSING_MISSING_REQUEST_ID" };
+      }
+      decision = { status: "PROVIDER_STILL_PROCESSING", providerRequestId: observation.providerRequestId };
       break;
     case "NOT_FOUND":
       decision = { status: "NO_PROVIDER_RECORD_REVIEW_REQUIRED" };
