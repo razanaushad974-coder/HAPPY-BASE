@@ -10,7 +10,7 @@ import {
 } from "./supabase-verified-server-identity-provider";
 import {
   SupabaseCanonicalTenantMembershipStore,
-  type SupabasePrivateSchemaClient,
+  type SupabaseTenantContextRpcClient,
 } from "./supabase-private-tenant-stores";
 
 /**
@@ -21,7 +21,7 @@ import {
  * browser singleton, or client cached across requests.
  */
 export type RequestScopedSupabaseClient =
-  SupabaseServerAuthClient & SupabasePrivateSchemaClient;
+  SupabaseServerAuthClient & SupabaseTenantContextRpcClient;
 
 export interface RequestScopedSupabaseClientFactory {
   createForCurrentRequest(): Promise<RequestScopedSupabaseClient>;
@@ -49,7 +49,7 @@ export async function resolveSupabaseRequestTenantContext(
   }
 
   if (!client || !client.auth || typeof client.auth.getUser !== "function" ||
-      typeof client.schema !== "function") {
+      typeof client.rpc !== "function") {
     return { status: "UNAUTHENTICATED" };
   }
 
