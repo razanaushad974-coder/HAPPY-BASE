@@ -1,7 +1,11 @@
 -- DESIGN-ONLY candidate. Do NOT apply to hosted/shared Supabase.
--- Depends on 20261119_file_mutation_atomic_consume_candidate.sql and
--- 20261121_authenticated_execution_request_rpc_candidate.sql.
--- This persists immutable intent only. It does not approve or dispatch work.
+-- Depends on:
+--   20261119_file_mutation_atomic_consume_candidate.sql
+--   20261119_async_tenant_persistence_schema_candidate.sql
+--   20261121_authenticated_execution_request_rpc_candidate.sql
+-- Task/mission selectors must resolve to exact same-user, same-tenant
+-- happy_tenant_records rows, with task.missionId and mission.taskIds agreeing.
+-- This persists immutable intent and founder decisions only; it does not dispatch.
 
 alter table private.execution_requests
   add column if not exists capability text,
