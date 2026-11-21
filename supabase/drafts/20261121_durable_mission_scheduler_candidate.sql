@@ -59,6 +59,8 @@ create table public.happy_execution_dispatch_outbox (
     unique (organization_id, workspace_id, user_id, idempotency_key),
   constraint happy_execution_dispatch_outbox_request_unique
     unique (organization_id, workspace_id, user_id, execution_request_id),
+  constraint happy_execution_dispatch_outbox_scoped_id_unique
+    unique (organization_id, workspace_id, user_id, outbox_id),
   constraint happy_execution_dispatch_outbox_workspace_fk
     foreign key (organization_id, workspace_id)
     references private.workspaces(organization_id, workspace_id)
