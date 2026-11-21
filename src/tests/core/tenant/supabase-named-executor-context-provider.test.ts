@@ -2,6 +2,7 @@ import {
   SupabaseNamedExecutorContextProvider,
   SupabasePersistedApproverMembershipProvider,
   SupabaseMembershipApprovalRoleAuthorizer,
+  SupabaseDurableExecutionRequestStore,
   type DurableExecutionRequestStore,
   type VerifiedServerIdentityProvider,
 } from "../../../core/tenant/supabase-named-executor-context-provider";
@@ -50,6 +51,40 @@ async function main(): Promise<void> {
     capability: "FILE", action: "MODIFY", input: {}, requiresApproval: true,
     approved: false, risk: "HIGH", createdAt: "2026-11-19T00:00:00.000Z",
   } as ExecutionRequest;
+
+  const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const rpcStore = new SupabaseDurableExecutionRequestStore({
+    async rpc(name, args) {
+      rpcCalls.push({ name, args });
+      return {
+        error: null,
+        data: [{
+          request_id: "request-1", task_id: "task-1", mission_id: "mission-1",
+          requester_user_id: "requester-1", executor_user_id: "executor-1",
+          organization_id: "org-1", workspace_id: "workspace-1",
+        }],
+      };
+    },
+  });
+  const loadedRequest = await rpcStore.getByRequestId("request-1");
+  assert(loadedRequest?.requesterUserId === "requester-1",
+    "Durable request principals must be loaded from the executor-bound RPC.");
+  assert(rpcCalls.length === 1 &&
+    rpcCalls[0].name === "resolve_authenticated_execution_request" &&
+    rpcCalls[0].args.p_request_id === "request-1" &&
+    Object.keys(rpcCalls[0].args).length === 1,
+    "Request lookup must send only the opaque request ID; auth.uid() supplies executor identity.");
+
+  const deniedRequestStore = new SupabaseDurableExecutionRequestStore({
+    async rpc() { return { error: null, data: [] }; },
+  });
+  assert(await deniedRequestStore.getByRequestId("request-1") === null,
+    "A request not assigned to auth.uid() must be unavailable.");
+  const erroredRequestStore = new SupabaseDurableExecutionRequestStore({
+    async rpc() { return { error: { message: "denied" }, data: null }; },
+  });
+  assert(await erroredRequestStore.getByRequestId("request-1") === null,
+    "RPC errors must fail closed.");
 
   const contexts = new SupabaseNamedExecutorContextProvider(identity, durable, memberships);
   const context = await contexts.getContext(request);
