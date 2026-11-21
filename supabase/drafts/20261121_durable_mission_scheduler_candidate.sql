@@ -655,7 +655,6 @@ comment on table public.happy_dispatch_reconciliation_evidence is
 create or replace function public.happy_reject_reconciliation_evidence_mutation()
 returns trigger
 language plpgsql
-security definer
 set search_path = pg_catalog
 as $immutable$
 begin
