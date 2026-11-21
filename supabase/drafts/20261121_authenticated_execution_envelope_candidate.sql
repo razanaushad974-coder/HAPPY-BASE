@@ -225,7 +225,7 @@ declare
   v_org private.organizations%rowtype;
   v_workspace private.workspaces%rowtype;
   v_member private.organization_memberships%rowtype;
-  v_requester_org_role text;
+  v_workspace_member private.workspace_memberships%rowtype;
   v_approver_org_role text;
   v_requester_org_active boolean := false;
   v_approver_org_active boolean := false;
@@ -274,7 +274,6 @@ begin
   loop
     if v_member.user_id = v_request.requester_user_id then
       v_requester_org_active := v_member.status = 'ACTIVE';
-      v_requester_org_role := v_member.role;
     elsif v_member.user_id = v_approver then
       v_approver_org_active := v_member.status = 'ACTIVE';
       v_approver_org_role := v_member.role;
@@ -286,7 +285,7 @@ begin
     return false;
   end if;
 
-  for v_member in
+  for v_workspace_member in
     select wm.* from private.workspace_memberships wm
      where wm.organization_id = v_request.organization_id
        and wm.workspace_id = v_request.workspace_id
@@ -294,10 +293,10 @@ begin
      order by wm.user_id
      for update
   loop
-    if v_member.user_id = v_request.requester_user_id then
-      v_requester_workspace_active := v_member.status = 'ACTIVE';
-    elsif v_member.user_id = v_approver then
-      v_approver_workspace_active := v_member.status = 'ACTIVE';
+    if v_workspace_member.user_id = v_request.requester_user_id then
+      v_requester_workspace_active := v_workspace_member.status = 'ACTIVE';
+    elsif v_workspace_member.user_id = v_approver then
+      v_approver_workspace_active := v_workspace_member.status = 'ACTIVE';
     end if;
   end loop;
 
