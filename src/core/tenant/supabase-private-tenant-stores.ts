@@ -44,12 +44,6 @@ function stringField(row: Record<string, unknown>, key: string): string | null {
   return typeof value === "string" && value.trim() ? value : null;
 }
 
-function membershipStatus(value: unknown): "ACTIVE" | "SUSPENDED" | "REVOKED" | null {
-  return value === "ACTIVE" || value === "SUSPENDED" || value === "REVOKED"
-    ? value
-    : null;
-}
-
 const PRIVATE = "private";
 const GRANT_COLUMNS = [
   "grant_id", "request_id", "task_id", "mission_id",
