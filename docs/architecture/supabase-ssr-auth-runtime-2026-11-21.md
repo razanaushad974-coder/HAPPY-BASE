@@ -12,7 +12,7 @@ This change adds a request-scoped Supabase SSR authentication boundary to the ex
 - `src/lib/supabase/proxy.ts` refreshes the session and writes updated cookies/required cache headers. Missing environment configuration is treated as an unconfigured preview and passes through; invalid configuration fails rather than silently falling back.
 - `src/proxy.ts` wires the helper into the Next.js 16 Proxy entry point.
 - `src/lib/supabase/auth.ts` derives the actor only from Supabase-verified JWT claims via `auth.getClaims()`. User-editable metadata is not an authorization source.
-- `src/lib/supabase/tenant.ts` bridges the request-scoped SSR client into the canonical tenant resolver. Organization/workspace IDs remain selectors; the resolver must confirm both active memberships against the private schema before access. Missing schema, denied queries, or inactive membership fail closed.
+- `src/lib/supabase/tenant.ts` bridges the request-scoped SSR client into the canonical tenant resolver. Organization/workspace IDs remain selectors; the resolver confirms both active memberships through `public.resolve_authenticated_tenant_context`, which derives the principal from `auth.uid()`. Authenticated clients receive RPC execution only; direct `private` schema/table access remains revoked.
 - `GET /api/auth/session` exposes only a coarse authentication state and is explicitly non-cacheable.
 - `GET /auth/callback` exchanges the PKCE code and restricts the post-login path to same-origin relative paths.
 - `POST /auth/signout` checks the request Origin and signs out only the current local session.
@@ -70,3 +70,15 @@ Configure the Supabase Auth Site URL and redirect allowlist to include the exact
 - GitHub Actions run `44894035617` completed successfully. All 22 validation steps passed, including TypeScript, security contracts, PostgreSQL RLS/CAS integration, async persistence/memory/evidence/verification contracts, mission/orchestration tests, ESLint, dependency audit, and production build.
 - This is repository CI against its disposable PostgreSQL harness and test doubles. It is not a hosted Supabase deployment or live-tenant integration test.
 - The canonical membership tables referenced by the adapter are present only in a design-only SQL candidate in this repository; their presence and policies in the connected Supabase project remain unverified. Until a reviewed migration is explicitly approved and applied, the request adapter must remain unused for tenant data access.
+
+
+## Tenant membership RPC security correction — 2026-11-21
+
+- A code/SQL contract review found that the first tenant adapter attempted direct reads from `private.organization_memberships` and `private.workspace_memberships`, while the design SQL explicitly revoked `private` schema/table access from `authenticated`. That adapter would have failed closed and could not resolve real memberships.
+- Replaced the two direct membership reads with one `public.resolve_authenticated_tenant_context(uuid,uuid)` RPC. It derives the principal from `auth.uid()`, checks active organization, workspace, and both membership records, and returns only the caller's exact membership roles.
+- The RPC is executable by `authenticated` only; execution is revoked from `public`, `anon`, and `service_role`. It does not grant direct `private` schema or table access.
+- Added standalone design-only SQL candidate `supabase/drafts/20261121_authenticated_tenant_context_rpc_candidate.sql`.
+- Changed the core membership store to resolve the exact organization/workspace pair in one RPC, reducing split-read inconsistency. The adapter cross-checks the returned user ID against the separately verified `auth.getUser()` identity and checks exact scope values.
+- Extended request-composition and store contract tests for one-call behavior, no caller-supplied user ID, revoked/missing memberships, mismatched principal, and RPC errors.
+- Extended the disposable PostgreSQL harness to check active-member resolution, revoked-member denial, and privilege boundaries. This harness uses a local `auth.uid()` claim stub; it is not hosted Supabase JWT/RLS verification.
+- The SQL remains a draft candidate and has not been applied to any Supabase project. The Next.js tenant helper remains unwired to tenant-data routes pending migration approval and hosted integration verification.
