@@ -748,5 +748,5 @@ $scheduler_privileges$;
 select 'PostgreSQL durable mission lease/outbox integration: PASS' as result;
 SQL
 
-bash "$RACE_SCRIPT"
 bash "$RECONCILIATION_RACE_SCRIPT"
+bash "$RACE_SCRIPT"
