@@ -137,6 +137,113 @@ implements CanonicalTenantMembershipStore {
 }
 
 /**
+ * Authenticated, executor-bound RPC for looking up one exact approved FILE grant.
+ * The database derives the executor from auth.uid(); the client supplies only
+ * immutable request/operation binding fields.
+ */
+export interface SupabaseNamedExecutorGrantLookupRpcClient {
+  rpc(
+    functionName: "resolve_authenticated_file_mutation_approval_grant",
+    args: {
+      p_organization_id: string;
+      p_workspace_id: string;
+      p_request_id: string;
+      p_task_id: string;
+      p_mission_id: string;
+      p_requester_user_id: string;
+      p_target_entity_id: string;
+      p_operation: NamedExecutorGrantLookup["operation"];
+      p_source_path: string;
+      p_destination_path: string | null;
+      p_input_digest: string;
+    },
+  ): Promise<DatabaseResult>;
+}
+
+/** No private-schema or service-role table reader is needed for grant discovery. */
+export class SupabaseAuthenticatedNamedExecutorGrantLookupStore implements NamedExecutorGrantStore {
+  constructor(private readonly client: SupabaseNamedExecutorGrantLookupRpcClient) {}
+
+  async getApprovedGrant(
+    scope: { organizationId: string; workspaceId: string },
+    binding: NamedExecutorGrantLookup,
+  ): Promise<NamedExecutorGrant | null> {
+    try {
+      if (
+        !scope.organizationId.trim() || !scope.workspaceId.trim() ||
+        binding.organizationId !== scope.organizationId ||
+        binding.workspaceId !== scope.workspaceId ||
+        !binding.requestId.trim() || !binding.taskId.trim() ||
+        !binding.missionId.trim() || !binding.requesterUserId.trim() ||
+        !binding.targetEntityId.trim() || !binding.sourcePath.trim() ||
+        !/^[0-9a-f]{64}$/.test(binding.inputDigest)
+      ) return null;
+      const result = await this.client.rpc(
+        "resolve_authenticated_file_mutation_approval_grant",
+        {
+          p_organization_id: scope.organizationId,
+          p_workspace_id: scope.workspaceId,
+          p_request_id: binding.requestId,
+          p_task_id: binding.taskId,
+          p_mission_id: binding.missionId,
+          p_requester_user_id: binding.requesterUserId,
+          p_target_entity_id: binding.targetEntityId,
+          p_operation: binding.operation,
+          p_source_path: binding.sourcePath,
+          p_destination_path: binding.destinationPath,
+          p_input_digest: binding.inputDigest,
+        },
+      );
+      if (result.error) return null;
+      const rows = Array.isArray(result.data)
+        ? result.data
+        : result.data === null || result.data === undefined ? [] : [result.data];
+      if (rows.length !== 1 || !isRecord(rows[0])) return null;
+      const row = rows[0];
+      const grantId = stringField(row, "grant_id");
+      const approverUserId = stringField(row, "approver_user_id");
+      const executorUserId = stringField(row, "executor_user_id");
+      const expiresAt = stringField(row, "expires_at");
+      if (
+        !grantId || !approverUserId || !executorUserId || !expiresAt ||
+        row.request_id !== binding.requestId ||
+        row.task_id !== binding.taskId ||
+        row.mission_id !== binding.missionId ||
+        row.requester_user_id !== binding.requesterUserId ||
+        row.organization_id !== scope.organizationId ||
+        row.workspace_id !== scope.workspaceId ||
+        row.target_entity_type !== "FILE" ||
+        row.target_entity_id !== binding.targetEntityId ||
+        row.operation !== binding.operation ||
+        row.source_path !== binding.sourcePath ||
+        row.destination_path !== binding.destinationPath ||
+        row.input_digest !== binding.inputDigest ||
+        row.status !== "APPROVED" ||
+        row.consumed_at !== null ||
+        (row.required_role !== "FOUNDER" && row.required_role !== "ADMIN")
+      ) return null;
+      return {
+        ...binding,
+        grantId,
+        executorUserId,
+        approverUserId,
+        requiredRole: row.required_role,
+        status: "APPROVED",
+        expiresAt,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  async consumeApprovedGrant(): Promise<boolean> {
+    // Lookup is deliberately read-only. Consumption belongs to the separate
+    // executor-JWT transactional RPC adapter.
+    return false;
+  }
+}
+
+/**
  * Supabase implementation of the named-executor grant contract.
  * The consume operation is exactly one conditional UPDATE followed by
  * RETURNING; there is no read-then-write authorization window.
