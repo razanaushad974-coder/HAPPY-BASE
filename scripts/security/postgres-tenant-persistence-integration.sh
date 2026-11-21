@@ -347,6 +347,8 @@ declare
   v_claim record;
   v_outbox public.happy_execution_dispatch_outbox%rowtype;
   v_duplicate public.happy_execution_dispatch_outbox%rowtype;
+  v_dispatched public.happy_execution_dispatch_outbox%rowtype;
+  v_heartbeat timestamptz;
   v_payload jsonb;
 begin
   begin
@@ -381,6 +383,29 @@ begin
   if v_duplicate.outbox_id <> v_outbox.outbox_id then
     raise exception 'identical idempotent dispatch did not return original outbox row';
   end if;
+  v_heartbeat := public.happy_heartbeat_mission_task_lease(
+    '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
+    'mission-scheduler','task-scheduler-root',v_claim.lease_id,'worker-a',v_claim.fencing_token,30000
+  );
+  if v_heartbeat <= clock_timestamp() then
+    raise exception 'valid lease heartbeat did not extend expiry';
+  end if;
+  v_dispatched := public.happy_claim_dispatch_outbox(
+    '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
+    v_outbox.outbox_id,v_claim.lease_id,'worker-a',v_claim.fencing_token
+  );
+  if v_dispatched.status <> 'DISPATCHED' then
+    raise exception 'outbox claim did not transition PENDING to DISPATCHED';
+  end if;
+  begin
+    perform public.happy_claim_dispatch_outbox(
+      '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
+      v_outbox.outbox_id,v_claim.lease_id,'worker-a',v_claim.fencing_token
+    );
+    raise exception 'already claimed outbox was returned twice';
+  exception when sqlstate '55000' then
+    if sqlerrm <> 'OUTBOX_ALREADY_CLAIMED_OR_REQUIRES_RECONCILIATION' then raise; end if;
+  end;
   begin
     perform public.happy_enqueue_mission_dispatch(
       '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
@@ -455,6 +480,15 @@ begin
     raise exception 'reclaimed lease did not advance attempt and fencing token';
   end if;
   begin
+    perform public.happy_heartbeat_mission_task_lease(
+      '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
+      'mission-scheduler','task-scheduler-reclaim',v_reclaimed.lease_id,'worker-a',1,30000
+    );
+    raise exception 'stale worker heartbeat unexpectedly succeeded';
+  exception when sqlstate '55000' then
+    if sqlerrm <> 'STALE_OR_EXPIRED_LEASE' then raise; end if;
+  end;
+  begin
     perform public.happy_enqueue_mission_dispatch(
       '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
       'mission-scheduler','task-scheduler-reclaim',v_reclaimed.lease_id,'worker-a',1,
@@ -485,7 +519,9 @@ begin
     raise exception 'authenticated can access scheduler internals directly';
   end if;
   if has_function_privilege('service_role','public.happy_claim_mission_task(uuid,uuid,text,text,text,integer)','EXECUTE')
-     or has_function_privilege('service_role','public.happy_enqueue_mission_dispatch(uuid,uuid,text,text,uuid,text,bigint,text,text,text,text,text,jsonb)','EXECUTE') then
+     or has_function_privilege('service_role','public.happy_enqueue_mission_dispatch(uuid,uuid,text,text,uuid,text,bigint,text,text,text,text,text,jsonb)','EXECUTE')
+     or has_function_privilege('service_role','public.happy_heartbeat_mission_task_lease(uuid,uuid,text,text,uuid,text,bigint,integer)','EXECUTE')
+     or has_function_privilege('service_role','public.happy_claim_dispatch_outbox(uuid,uuid,uuid,uuid,text,bigint)','EXECUTE') then
     raise exception 'service_role can invoke authenticated scheduler RPCs';
   end if;
 end
