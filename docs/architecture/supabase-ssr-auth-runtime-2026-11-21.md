@@ -82,3 +82,10 @@ Configure the Supabase Auth Site URL and redirect allowlist to include the exact
 - Extended request-composition and store contract tests for one-call behavior, no caller-supplied user ID, revoked/missing memberships, mismatched principal, and RPC errors.
 - Extended the disposable PostgreSQL harness to check active-member resolution, revoked-member denial, and privilege boundaries. This harness uses a local `auth.uid()` claim stub; it is not hosted Supabase JWT/RLS verification.
 - The SQL remains a draft candidate and has not been applied to any Supabase project. The Next.js tenant helper remains unwired to tenant-data routes pending migration approval and hosted integration verification.
+
+### RPC implementation verification — 2026-11-21
+- The first direct-table membership adapter was removed because the private-schema SQL design explicitly revokes direct schema/table access from `authenticated`.
+- The canonical resolver now calls one RPC for the exact organization/workspace pair. The SQL candidate derives the principal from `auth.uid()`; no user ID is accepted as an RPC argument. The application verifies that the returned user ID matches the separately verified `auth.getUser()` principal.
+- The RPC checks active organization, active workspace, active organization membership, active workspace membership, and nonblank roles. It returns no row for missing/revoked/inactive membership.
+- Added PostgreSQL harness assertions for successful active membership, revoked-member denial, authenticated-only RPC execution, and continued denial of direct private-schema/table access.
+- This RPC is still a design-only candidate. The harness uses a local claim stub, and the SQL must be reviewed and explicitly approved before any hosted Supabase migration.
