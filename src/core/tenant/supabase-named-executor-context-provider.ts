@@ -238,7 +238,7 @@ export class SupabaseDurableExecutionRequestCreator {
         p_capability: command.capability,
         p_action: command.action,
         p_input: command.input,
-        p_target_reference: command.targetReference ?? null,
+        p_target_reference: command.targetReference as unknown as Record<string, unknown> | null,
         p_idempotency_key: command.idempotencyKey,
         p_input_digest: inputDigest,
       });
