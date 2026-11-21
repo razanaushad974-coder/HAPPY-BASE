@@ -59,7 +59,9 @@ export async function reconcileProviderDispatch(
     !target.outboxId.trim() ||
     !target.idempotencyKey.trim() ||
     !target.providerId.trim() ||
+    !provider.providerId?.trim() ||
     target.providerId !== provider.providerId ||
+    !Number.isFinite(Date.parse(observedAt)) ||
     (target.originalOutcome !== "AMBIGUOUS" &&
       target.originalOutcome !== "RECONCILIATION_REQUIRED")
   ) {
@@ -76,16 +78,20 @@ export async function reconcileProviderDispatch(
     return { status: "RECONCILIATION_REQUIRED", reason: "PROVIDER_STATUS_LOOKUP_FAILED" };
   }
 
+  if (!observation || typeof observation !== "object" || typeof observation.status !== "string") {
+    return { status: "RECONCILIATION_REQUIRED", reason: "PROVIDER_STATUS_RESPONSE_INVALID" };
+  }
+
   let decision: ProviderReconciliationDecision;
   switch (observation.status) {
     case "SUCCEEDED":
-      decision = observation.providerRequestId.trim()
+      decision = typeof observation.providerRequestId === "string" && observation.providerRequestId.trim()
         ? { status: "VERIFICATION_REQUIRED", providerRequestId: observation.providerRequestId, result: observation.result }
         : { status: "RECONCILIATION_REQUIRED", reason: "PROVIDER_SUCCESS_MISSING_REQUEST_ID" };
       break;
     case "FAILED":
       decision = observation.providerRequestId.trim()
-        ? { status: "FAILED_EXECUTION_REVIEW_REQUIRED", providerRequestId: observation.providerRequestId, code: observation.code, message: observation.message }
+        ? { status: "FAILED_EXECUTION_REVIEW_REQUIRED", providerRequestId: observation.providerRequestId, code: code: typeof observation.code === "string" ? observation.code : "PROVIDER_FAILED", message: typeof observation.message === "string" ? observation.message : "Provider reported failure." }
         : { status: "RECONCILIATION_REQUIRED", reason: "PROVIDER_FAILURE_MISSING_REQUEST_ID" };
       break;
     case "PROCESSING":
@@ -97,8 +103,10 @@ export async function reconcileProviderDispatch(
       decision = { status: "NO_PROVIDER_RECORD_REVIEW_REQUIRED" };
       break;
     case "UNKNOWN":
-      decision = { status: "RECONCILIATION_REQUIRED", reason: observation.reason };
+      decision = { status: "RECONCILIATION_REQUIRED", reason: typeof observation.reason === "string" && observation.reason.trim() ? observation.reason : "PROVIDER_STATUS_UNKNOWN" };
       break;
+    default:
+      return { status: "RECONCILIATION_REQUIRED", reason: "PROVIDER_STATUS_RESPONSE_UNRECOGNIZED" };
   }
 
   try {
