@@ -13,6 +13,7 @@ import {
   type CanonicalTenantMembershipStore,
 } from "./canonical-tenant-context";
 import type {
+  SupabaseApproverMembershipRpcClient,
   SupabaseExecutionRequestRpcClient,
 } from "./supabase-private-tenant-stores";
 
