@@ -112,7 +112,8 @@ $role$;
 
 grant usage on schema private, auth to happy_file_grant_lookup_rpc_owner;
 grant select on private.file_mutation_approval_grants,
-  private.execution_requests, private.organizations, private.workspaces
+  private.execution_requests, private.organizations, private.workspaces,
+  private.organization_memberships, private.workspace_memberships
   to happy_file_grant_lookup_rpc_owner;
 grant execute on function auth.uid() to happy_file_grant_lookup_rpc_owner;
 
@@ -167,3 +168,108 @@ begin
   end if;
 end
 $privileges$;
+
+
+-- Resolve the persisted approver's current membership while still executing
+-- under the named executor's JWT. The caller cannot nominate another user.
+create or replace function public.resolve_authenticated_file_mutation_approver_membership(
+  p_grant_id uuid,
+  p_organization_id uuid,
+  p_workspace_id uuid
+)
+returns table (
+  approver_user_id uuid,
+  organization_id uuid,
+  workspace_id uuid,
+  organization_role text,
+  workspace_role text
+)
+language sql
+security definer
+set search_path = pg_catalog
+as $function$
+  select
+    g.approver_user_id,
+    g.organization_id,
+    g.workspace_id,
+    om.role,
+    wm.role
+  from private.file_mutation_approval_grants g
+  join private.execution_requests r
+    on r.request_id = g.request_id
+   and r.task_id = g.task_id
+   and r.mission_id = g.mission_id
+   and r.requester_user_id = g.requester_user_id
+   and r.executor_user_id = g.executor_user_id
+   and r.organization_id = g.organization_id
+   and r.workspace_id = g.workspace_id
+  join private.organizations o
+    on o.organization_id = g.organization_id
+   and o.status = 'ACTIVE'
+  join private.workspaces w
+    on w.organization_id = g.organization_id
+   and w.workspace_id = g.workspace_id
+   and w.status = 'ACTIVE'
+  join private.organization_memberships om
+    on om.organization_id = g.organization_id
+   and om.user_id = g.approver_user_id
+   and om.status = 'ACTIVE'
+  join private.workspace_memberships wm
+    on wm.organization_id = g.organization_id
+   and wm.workspace_id = g.workspace_id
+   and wm.user_id = g.approver_user_id
+   and wm.status = 'ACTIVE'
+  where auth.uid() is not null
+    and g.executor_user_id = auth.uid()
+    and r.executor_user_id = auth.uid()
+    and r.status = 'READY'
+    and g.grant_id = p_grant_id
+    and g.organization_id = p_organization_id
+    and g.workspace_id = p_workspace_id
+    and g.approver_user_id <> g.requester_user_id
+    and g.approver_user_id <> g.executor_user_id
+    and g.target_entity_type = 'FILE'
+    and g.status = 'APPROVED'
+    and g.decided_at is not null
+    and g.consumed_at is null
+    and g.expires_at > clock_timestamp()
+    and g.required_role in ('FOUNDER','ADMIN')
+    and length(btrim(om.role)) > 0
+    and length(btrim(wm.role)) > 0;
+$function$;
+
+alter function public.resolve_authenticated_file_mutation_approver_membership(
+  uuid,uuid,uuid
+) owner to happy_file_grant_lookup_rpc_owner;
+
+revoke all on function public.resolve_authenticated_file_mutation_approver_membership(
+  uuid,uuid,uuid
+) from public, anon, service_role;
+grant execute on function public.resolve_authenticated_file_mutation_approver_membership(
+  uuid,uuid,uuid
+) to authenticated;
+
+do $approver_privileges$
+begin
+  if not has_table_privilege('happy_file_grant_lookup_rpc_owner',
+      'private.organization_memberships', 'SELECT')
+     or not has_table_privilege('happy_file_grant_lookup_rpc_owner',
+      'private.workspace_memberships', 'SELECT') then
+    raise exception 'approver lookup RPC owner lacks membership SELECT privileges';
+  end if;
+  if has_table_privilege('happy_file_grant_lookup_rpc_owner',
+      'private.organization_memberships', 'INSERT,UPDATE,DELETE')
+     or has_table_privilege('happy_file_grant_lookup_rpc_owner',
+      'private.workspace_memberships', 'INSERT,UPDATE,DELETE') then
+    raise exception 'approver lookup RPC owner unexpectedly has membership write privileges';
+  end if;
+  if not has_function_privilege('authenticated',
+      'public.resolve_authenticated_file_mutation_approver_membership(uuid,uuid,uuid)', 'EXECUTE')
+     or has_function_privilege('anon',
+      'public.resolve_authenticated_file_mutation_approver_membership(uuid,uuid,uuid)', 'EXECUTE')
+     or has_function_privilege('service_role',
+      'public.resolve_authenticated_file_mutation_approver_membership(uuid,uuid,uuid)', 'EXECUTE') then
+    raise exception 'approver lookup RPC grants are not least-privilege';
+  end if;
+end
+$approver_privileges$;
