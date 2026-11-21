@@ -111,9 +111,19 @@ export class WorkspaceCodeExecutor {
     for (const segment of relativeCandidate.split(sep).filter(Boolean)) {
       current = resolve(current, segment);
       try {
-        if (lstatSync(current).isSymbolicLink()) {
+        const entry = lstatSync(current);
+        if (entry.isSymbolicLink()) {
           throw new Error(
             `Workspace symlinks are not allowed: ${relativePath}`,
+          );
+        }
+        // A regular file with multiple hard links can alias an inode outside
+        // this workspace even though its pathname contains no symlink.
+        // Reject it before READ or mutation so tenant paths cannot be used
+        // to access or overwrite an externally linked inode.
+        if (entry.isFile() && entry.nlink > 1) {
+          throw new Error(
+            `Workspace hard links are not allowed: ${relativePath}`,
           );
         }
       } catch (error) {
