@@ -36,6 +36,7 @@ export interface DurableExecutionRequestRecord {
   executionRequest: ExecutionRequest;
   status: ExecutionStatus;
   approvalStatus: DurableExecutionApprovalStatus;
+  requiredApprovalRole: "FOUNDER" | "ADMIN";
   inputDigest: string;
 }
 
@@ -103,16 +104,18 @@ export class SupabaseDurableExecutionRequestStore implements DurableExecutionReq
       const action = requiredString(row, "action");
       const risk = requiredString(row, "risk");
       const approvalStatus = requiredString(row, "approval_status");
+      const requiredApprovalRole = requiredString(row, "required_approval_role");
       const status = requiredString(row, "status");
       const inputDigest = requiredString(row, "input_digest");
       const createdAt = requiredString(row, "created_at");
       const targetReference = parseResolvedReference(row.target_reference);
       if (!request || !task || !mission || !requester || !executor ||
           !organization || !workspace || !capability || !action || !risk ||
-          !approvalStatus || !status || !inputDigest || !createdAt ||
+          !approvalStatus || !requiredApprovalRole || !status || !inputDigest || !createdAt ||
           !EXECUTION_CAPABILITIES.includes(capability as ExecutionCapability) ||
           !EXECUTION_RISKS.includes(risk as ExecutionRisk) ||
           !APPROVAL_STATUSES.includes(approvalStatus as DurableExecutionApprovalStatus) ||
+          !["FOUNDER", "ADMIN"].includes(requiredApprovalRole) ||
           !EXECUTION_STATUSES.includes(status as ExecutionStatus) ||
           !/^[0-9a-f]{64}$/.test(inputDigest) ||
           typeof row.requires_approval !== "boolean" ||
@@ -141,6 +144,7 @@ export class SupabaseDurableExecutionRequestStore implements DurableExecutionReq
         },
         status: status as ExecutionStatus,
         approvalStatus: approvalStatus as DurableExecutionApprovalStatus,
+        requiredApprovalRole: requiredApprovalRole as "FOUNDER" | "ADMIN",
         inputDigest,
       };
     } catch {
