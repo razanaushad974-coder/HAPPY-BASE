@@ -58,7 +58,7 @@ expect() {
 }
 
 create_request() {
-  local user="$1" request="$2" idem="$3" action="${4:-READ}" input="${5:-{\"path\":\"README.md\"}}"
+  local user="$1" request="$2" idem="$3" action="${4:-READ}" input="${5:-{\"path\":\"README.md\"}}" task="${6:-task-$request}" mission="${7:-mission-$request}"
   psql "$DATABASE_URL" -XqAt -v ON_ERROR_STOP=1 -c "
     BEGIN;
     SET LOCAL ROLE authenticated;
@@ -66,10 +66,10 @@ create_request() {
     SELECT status || ':' || risk || ':' || approval_status || ':' ||
            required_approval_role || ':' || requires_approval::text
       FROM public.create_authenticated_execution_request(
-        '$request','task-$request','mission-$request','$ORG','$WS',
+        '$request','$task','$mission','$ORG','$WS',
         'FILE','$action','$input'::jsonb,NULL,'$idem'
       );
-    COMMIT;" | grep -E '^(WAITING_APPROVAL|READY):' | tail -n 1
+    COMMIT;" | grep -E '^(WAITING_APPROVAL|READY|CANCELLED):' | tail -n 1
 }
 
 resolve_request() {
@@ -120,6 +120,8 @@ actual="$(decide_request "$FOUNDER" 'req-approve-1' 'APPROVED')"
 expect t "$actual" 'active founder approves exact request'
 actual="$(resolve_request "$REQUESTER" 'req-approve-1')"
 expect 'READY:FILE:READ:HIGH:APPROVED:FOUNDER' "$actual" 'approved request moves to READY'
+actual="$(create_request "$REQUESTER" 'new-generated-id-1' 'idem-approve-1' 'READ' '{"path":"README.md"}' 'task-req-approve-1' 'mission-req-approve-1')"
+expect 'READY:HIGH:APPROVED:FOUNDER:true' "$actual" 'idempotent retry after approval returns existing READY state'
 actual="$(decide_request "$FOUNDER" 'req-approve-1' 'APPROVED')"
 expect f "$actual" 'approval decision cannot be replayed'
 
@@ -129,6 +131,8 @@ actual="$(decide_request "$FOUNDER" 'req-reject-1' 'REJECTED')"
 expect t "$actual" 'founder rejects request'
 actual="$(resolve_request "$REQUESTER" 'req-reject-1')"
 expect 'CANCELLED:FILE:READ:HIGH:REJECTED:FOUNDER' "$actual" 'rejected request is cancelled'
+actual="$(create_request "$REQUESTER" 'new-generated-id-2' 'idem-reject-1' 'READ' '{"path":"README.md"}' 'task-req-reject-1' 'mission-req-reject-1')"
+expect 'CANCELLED:HIGH:REJECTED:FOUNDER:true' "$actual" 'idempotent retry after rejection returns existing cancelled state'
 
 # A founder-created request cannot be approved by that same founder.
 actual="$(create_request "$FOUNDER" 'req-self-1' 'idem-self-1')"
