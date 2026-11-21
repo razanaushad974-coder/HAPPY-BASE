@@ -51,6 +51,7 @@ async function main(): Promise<void> {
         },
         status: "READY", approvalStatus: "APPROVED",
         requiredApprovalRole: "FOUNDER", inputDigest: "a".repeat(64),
+        envelopeDigest: "b".repeat(64),
       } : null;
     },
   };
