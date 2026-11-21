@@ -355,11 +355,136 @@ begin
 end;
 $enqueue$;
 
+
+create or replace function public.happy_heartbeat_mission_task_lease(
+  p_organization_id uuid,
+  p_workspace_id uuid,
+  p_mission_id text,
+  p_task_id text,
+  p_lease_id uuid,
+  p_owner_id text,
+  p_fencing_token bigint,
+  p_lease_milliseconds integer
+)
+returns timestamptz
+language plpgsql
+security definer
+set search_path = pg_catalog
+as $heartbeat$
+declare
+  v_actor uuid;
+  v_expires_at timestamptz;
+begin
+  v_actor := auth.uid();
+  if v_actor is null or p_lease_milliseconds is null
+     or p_lease_milliseconds < 5000 or p_lease_milliseconds > 300000 then
+    raise exception 'INVALID_HEARTBEAT_INPUT' using errcode = '22023';
+  end if;
+  if not public.happy_lock_active_tenant_scope(p_organization_id, p_workspace_id) then
+    raise exception 'TENANT_SCOPE_DENIED' using errcode = '42501';
+  end if;
+
+  update public.happy_mission_task_leases l
+     set expires_at = clock_timestamp() + make_interval(secs => p_lease_milliseconds::double precision / 1000),
+         updated_at = clock_timestamp()
+   where l.organization_id = p_organization_id
+     and l.workspace_id = p_workspace_id
+     and l.user_id = v_actor
+     and l.mission_id = p_mission_id
+     and l.task_id = p_task_id
+     and l.lease_id = p_lease_id
+     and l.owner_id = p_owner_id
+     and l.fencing_token = p_fencing_token
+     and l.expires_at > clock_timestamp()
+  returning l.expires_at into v_expires_at;
+
+  if not found then raise exception 'STALE_OR_EXPIRED_LEASE' using errcode = '55000'; end if;
+  return v_expires_at;
+end;
+$heartbeat$;
+
+create or replace function public.happy_claim_dispatch_outbox(
+  p_organization_id uuid,
+  p_workspace_id uuid,
+  p_outbox_id uuid,
+  p_lease_id uuid,
+  p_owner_id text,
+  p_fencing_token bigint
+)
+returns public.happy_execution_dispatch_outbox
+language plpgsql
+security definer
+set search_path = pg_catalog
+as $dispatch$
+declare
+  v_actor uuid;
+  v_lease public.happy_mission_task_leases%rowtype;
+  v_outbox public.happy_execution_dispatch_outbox%rowtype;
+begin
+  v_actor := auth.uid();
+  if v_actor is null or p_outbox_id is null then
+    raise exception 'INVALID_OUTBOX_CLAIM_INPUT' using errcode = '22023';
+  end if;
+  if not public.happy_lock_active_tenant_scope(p_organization_id, p_workspace_id) then
+    raise exception 'TENANT_SCOPE_DENIED' using errcode = '42501';
+  end if;
+
+  select * into v_outbox
+    from public.happy_execution_dispatch_outbox o
+   where o.organization_id = p_organization_id
+     and o.workspace_id = p_workspace_id
+     and o.user_id = v_actor
+     and o.outbox_id = p_outbox_id
+   for update;
+  if not found then raise exception 'OUTBOX_NOT_FOUND' using errcode = 'P0002'; end if;
+
+  select * into v_lease
+    from public.happy_mission_task_leases l
+   where l.organization_id = p_organization_id
+     and l.workspace_id = p_workspace_id
+     and l.user_id = v_actor
+     and l.mission_id = v_outbox.mission_id
+     and l.task_id = v_outbox.task_id
+   for update;
+
+  if not found
+     or v_lease.lease_id <> p_lease_id
+     or v_lease.lease_id <> v_outbox.lease_id
+     or v_lease.owner_id <> p_owner_id
+     or v_lease.fencing_token <> p_fencing_token
+     or v_lease.fencing_token <> v_outbox.fencing_token
+     or v_lease.expires_at <= clock_timestamp() then
+    raise exception 'STALE_OR_EXPIRED_LEASE' using errcode = '55000';
+  end if;
+
+  if v_outbox.status <> 'PENDING' then
+    raise exception 'OUTBOX_ALREADY_CLAIMED_OR_REQUIRES_RECONCILIATION' using errcode = '55000';
+  end if;
+
+  update public.happy_execution_dispatch_outbox
+     set status = 'DISPATCHED', updated_at = clock_timestamp()
+   where outbox_id = v_outbox.outbox_id
+     and status = 'PENDING'
+  returning * into v_outbox;
+
+  if not found then raise exception 'OUTBOX_ALREADY_CLAIMED_OR_REQUIRES_RECONCILIATION' using errcode = '55000'; end if;
+  return v_outbox;
+end;
+$dispatch$;
+
 revoke all on function public.happy_claim_mission_task(uuid,uuid,text,text,text,integer)
+  from public, anon, service_role;
+revoke all on function public.happy_heartbeat_mission_task_lease(uuid,uuid,text,text,uuid,text,bigint,integer)
+  from public, anon, service_role;
+revoke all on function public.happy_claim_dispatch_outbox(uuid,uuid,uuid,uuid,text,bigint)
   from public, anon, service_role;
 revoke all on function public.happy_enqueue_mission_dispatch(uuid,uuid,text,text,uuid,text,bigint,text,text,text,text,text,jsonb)
   from public, anon, service_role;
 grant execute on function public.happy_claim_mission_task(uuid,uuid,text,text,text,integer)
+  to authenticated;
+grant execute on function public.happy_heartbeat_mission_task_lease(uuid,uuid,text,text,uuid,text,bigint,integer)
+  to authenticated;
+grant execute on function public.happy_claim_dispatch_outbox(uuid,uuid,uuid,uuid,text,bigint)
   to authenticated;
 grant execute on function public.happy_enqueue_mission_dispatch(uuid,uuid,text,text,uuid,text,bigint,text,text,text,text,text,jsonb)
   to authenticated;
