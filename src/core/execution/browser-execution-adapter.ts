@@ -124,7 +124,7 @@ function parseInput(
 
 function validateUrl(
   url: string | undefined,
-  allowedHosts: string[],
+  allowedHosts: readonly string[],
 ): {
   ok: boolean;
   parsed?: URL;
