@@ -58,7 +58,7 @@ expect() {
 }
 
 create_request() {
-  local user="$1" request="$2" idem="$3" action="${4:-READ}" input="${5:-{""path"":""README.md""}}"
+  local user="$1" request="$2" idem="$3" action="${4:-READ}" input="${5:-{\"path\":\"README.md\"}}"
   psql "$DATABASE_URL" -XqAt -v ON_ERROR_STOP=1 -c "
     BEGIN;
     SET LOCAL ROLE authenticated;
