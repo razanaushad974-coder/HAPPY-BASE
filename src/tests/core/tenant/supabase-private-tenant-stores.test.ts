@@ -303,6 +303,23 @@ async function main(): Promise<void> {
     "2026-11-19T12:00:06.000Z",
   )), "Read-only lookup adapter must not consume grants.");
 
+  const mismatchedExecutorLookupStore = new SupabaseAuthenticatedNamedExecutorGrantLookupStore({
+    async rpc() {
+      return { data: [{ ...approvedGrantRow, executor_user_id: "different-executor" }], error: null };
+    },
+  });
+  assert(await mismatchedExecutorLookupStore.getApprovedGrant(
+    { organizationId: "org-1", workspaceId: "workspace-1" },
+    {
+      requestId: "request-1", taskId: "task-1", missionId: "mission-1",
+      requesterUserId: "requester-1", executorUserId: "executor-1",
+      organizationId: "org-1", workspaceId: "workspace-1",
+      targetEntityType: "FILE", targetEntityId: "file-1",
+      operation: "MODIFY", sourcePath: "docs/plan.md",
+      destinationPath: null, inputDigest: "a".repeat(64),
+    },
+  ) === null, "Grant lookup must reject a row bound to a different executor.");
+
   const ambiguousLookupStore = new SupabaseAuthenticatedNamedExecutorGrantLookupStore({
     async rpc() { return { data: [approvedGrantRow, approvedGrantRow], error: null }; },
   });
