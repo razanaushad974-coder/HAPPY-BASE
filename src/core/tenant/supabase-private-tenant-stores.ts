@@ -103,7 +103,6 @@ export interface SupabaseExecutionRequestCreateRpcClient {
       p_input: Record<string, unknown>;
       p_target_reference: Record<string, unknown> | null;
       p_idempotency_key: string;
-      p_input_digest: string;
     },
   ): Promise<DatabaseResult>;
 }
