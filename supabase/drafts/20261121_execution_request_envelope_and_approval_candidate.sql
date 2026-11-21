@@ -81,10 +81,11 @@ alter table private.execution_requests
       and decision_reason is null and status='WAITING_APPROVAL')
     or
     (approval_status='APPROVED' and approver_user_id is not null and decided_at is not null
-      and length(btrim(decision_reason))>0 and status in ('READY','RUNNING','COMPLETED','FAILED','BLOCKED'))
+      and decision_reason is not null and length(btrim(decision_reason))>0
+      and status in ('READY','RUNNING','COMPLETED','FAILED','BLOCKED'))
     or
     (approval_status='REJECTED' and approver_user_id is not null and decided_at is not null
-      and length(btrim(decision_reason))>0 and status='CANCELLED')
+      and decision_reason is not null and length(btrim(decision_reason))>0 and status='CANCELLED')
   ),
   add constraint execution_requests_lease_consistency_check check(
     (status='RUNNING' and lease_token is not null and lease_expires_at is not null and started_at is not null)
@@ -131,11 +132,26 @@ begin
     and not(old.approval_status='PENDING' and new.approval_status in ('APPROVED','REJECTED')) then
     raise exception 'INVALID_EXECUTION_APPROVAL_TRANSITION';
   end if;
+  if old.approval_status <> 'PENDING'
+    and row(new.approver_user_id,new.decided_at,new.decision_reason)
+      is distinct from row(old.approver_user_id,old.decided_at,old.decision_reason) then
+    raise exception 'EXECUTION_APPROVAL_DECISION_IMMUTABLE';
+  end if;
+  if old.status in ('COMPLETED','FAILED','BLOCKED','CANCELLED')
+    and row(new.result,new.completed_at,new.status)
+      is distinct from row(old.result,old.completed_at,old.status) then
+    raise exception 'EXECUTION_TERMINAL_RESULT_IMMUTABLE';
+  end if;
   if old.status is distinct from new.status and not(
     (old.status='WAITING_APPROVAL' and new.status in ('READY','CANCELLED'))
     or(old.status='READY' and new.status='RUNNING')
     or(old.status='RUNNING' and new.status in ('COMPLETED','FAILED','BLOCKED'))
   ) then raise exception 'INVALID_EXECUTION_REQUEST_TRANSITION'; end if;
+  if old.status='READY' and new.status='RUNNING'
+    and (new.attempt_count <> old.attempt_count + 1 or new.attempt_count <> 1
+      or new.lease_token is null or new.lease_expires_at is null or new.started_at is null) then
+    raise exception 'INVALID_EXECUTION_CLAIM';
+  end if;
   return new;
 end;
 $guard$;
@@ -348,6 +364,14 @@ grant insert on private.execution_request_decision_events to happy_execution_req
 grant select on private.organizations,private.workspaces,private.organization_memberships,
  private.workspace_memberships to happy_execution_request_write_rpc_owner;
 grant execute on function auth.uid() to happy_execution_request_read_rpc_owner,happy_execution_request_write_rpc_owner;
+do $role_check$
+begin
+ if not exists(select 1 from pg_roles where rolname='happy_execution_request_read_rpc_owner' and rolcanlogin=false and rolbypassrls=true)
+   or not exists(select 1 from pg_roles where rolname='happy_execution_request_write_rpc_owner' and rolcanlogin=false and rolbypassrls=true) then
+  raise exception 'execution request RPC owners must be NOLOGIN BYPASSRLS';
+ end if;
+end
+$role_check$;
 
 alter function public.resolve_authenticated_execution_request(text) owner to happy_execution_request_read_rpc_owner;
 alter function public.create_authenticated_execution_request(text,text,text,uuid,uuid,text,text,jsonb,jsonb,text,text) owner to happy_execution_request_write_rpc_owner;
