@@ -88,7 +88,7 @@ async function main(): Promise<void> {
 
   try {
     const adapter =
-      new ApiExecutionAdapter();
+      new ApiExecutionAdapter(["127.0.0.1"]);
 
     assert(
       adapter.status() ===
