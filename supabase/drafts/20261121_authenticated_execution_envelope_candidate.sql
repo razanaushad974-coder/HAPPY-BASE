@@ -267,6 +267,17 @@ begin
    where r.requester_user_id=v_uid and r.organization_id=p_organization_id
      and r.workspace_id=p_workspace_id and r.idempotency_key=p_idempotency_key;
   if not found then raise exception 'EXECUTION_REQUEST_PERSISTENCE_FAILED'; end if;
+  -- Recompute against the persisted request ID so a retry with a fresh
+  -- proposed ID resolves to the original immutable envelope.
+  v_envelope_digest := encode(extensions.digest(convert_to(jsonb_build_object(
+    'requestId',v_existing.request_id,'taskId',p_task_id,'missionId',p_mission_id,
+    'requesterUserId',v_uid,'executorUserId',v_uid,
+    'organizationId',p_organization_id,'workspaceId',p_workspace_id,
+    'capability',p_capability,'action',p_action,'input',p_input,
+    'targetReference',p_target_reference,'requiresApproval',true,'risk','HIGH',
+    'approvalStatus','PENDING','requiredApprovalRole','FOUNDER',
+    'idempotencyKey',p_idempotency_key
+  )::text,'UTF8'),'sha256'),'hex');
   if v_existing.executor_user_id <> v_uid or v_existing.task_id <> p_task_id
      or v_existing.mission_id <> p_mission_id or v_existing.capability <> p_capability
      or v_existing.action <> p_action or v_existing.input <> p_input
