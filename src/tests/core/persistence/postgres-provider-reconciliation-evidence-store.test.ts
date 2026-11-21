@@ -5,6 +5,10 @@ import type {
   PostgresTenantSessionProvider,
   PgQueryable,
 } from "../../../core/persistence/adapters/postgres-tenant-adapter";
+import type { TenantScope } from "../../../core/state/types";
+
+type CompleteScope = TenantScope & { userId: string };
+type SessionOperation<T> = (client: PgQueryable) => Promise<T>;
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -20,7 +24,7 @@ const evidenceId = "50000000-0000-4000-8000-000000000005";
 async function main(): Promise<void> {
   const calls: Array<{ scope: unknown; sql: string; values: readonly unknown[] }> = [];
   const sessions: PostgresTenantSessionProvider = {
-    async withSession<T>(boundScope, operation) {
+    async withSession<T>(boundScope: CompleteScope, operation: SessionOperation<T>) {
       const client: PgQueryable = {
         async query<Row>(sql: string, values: readonly unknown[] = []) {
           calls.push({ scope: boundScope, sql, values });
@@ -29,7 +33,7 @@ async function main(): Promise<void> {
       };
       return operation(client);
     },
-    async withTransaction<T>(boundScope, operation) {
+    async withTransaction<T>(boundScope: CompleteScope, operation: SessionOperation<T>) {
       return this.withSession(boundScope, operation);
     },
   };
@@ -57,7 +61,7 @@ async function main(): Promise<void> {
   let invalidScopeCalls = 0;
   const invalidScopeStore = new PostgresProviderReconciliationEvidenceStore({
     ...sessions,
-    async withSession() { invalidScopeCalls++; throw new Error("must not reach database"); },
+    async withSession<T>(_boundScope: CompleteScope, _operation: SessionOperation<T>): Promise<T> { invalidScopeCalls++; throw new Error("must not reach database"); },
   }, { ...scope, userId: "not-a-uuid" }, () => evidenceId);
   let invalidScopeRejected = false;
   try {
@@ -84,7 +88,7 @@ async function main(): Promise<void> {
   let mismatchRejected = false;
   const mismatchStore = new PostgresProviderReconciliationEvidenceStore({
     ...sessions,
-    async withSession<T>(boundScope, operation) {
+    async withSession<T>(boundScope: CompleteScope, operation: SessionOperation<T>) {
       const client: PgQueryable = {
         async query<Row>() {
           return { rows: [{ evidence_id: "60000000-0000-4000-8000-000000000006" }] as Row[], rowCount: 1 };
