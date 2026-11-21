@@ -314,7 +314,7 @@ SQL
 
 # Durable scheduler SQL candidate: claim eligibility, dependency gating,
 # lease fencing/reclaim, transactional outbox, and idempotent intent insertion.
-"\${psql_base[@]}" <<'SQL'
+"${psql_base[@]}" <<'SQL'
 set role authenticated;
 select set_config('request.jwt.claim.sub',
   '30000000-0000-4000-8000-000000000003', false);
@@ -322,7 +322,7 @@ select * from public.happy_create_tenant_record(
   '10000000-0000-4000-8000-000000000001',
   '20000000-0000-4000-8000-000000000002',
   'MISSION', 'mission-scheduler',
-  '{"status":"READY","taskIds":["task-scheduler-root","task-scheduler-child"]}'
+  '{"status":"READY","taskIds":["task-scheduler-root","task-scheduler-child","task-scheduler-reclaim"]}'
 );
 select * from public.happy_create_tenant_record(
   '10000000-0000-4000-8000-000000000001',
@@ -335,6 +335,12 @@ select * from public.happy_create_tenant_record(
   '20000000-0000-4000-8000-000000000002',
   'TASK', 'task-scheduler-child',
   '{"missionId":"mission-scheduler","status":"READY","dependencyIds":["task-scheduler-root"]}'
+);
+select * from public.happy_create_tenant_record(
+  '10000000-0000-4000-8000-000000000001',
+  '20000000-0000-4000-8000-000000000002',
+  'TASK', 'task-scheduler-reclaim',
+  '{"missionId":"mission-scheduler","status":"READY","dependencyIds":[]}'
 );
 do $scheduler$
 declare
@@ -408,11 +414,42 @@ set role authenticated;
 select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000003',false);
 do $fencing$
 declare
+  v_first record;
+begin
+  begin
+    perform * from public.happy_claim_mission_task(
+      '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
+      'mission-scheduler','task-scheduler-root','worker-b',30000
+    );
+    raise exception 'expired lease with an existing outbox was replayed';
+  exception when sqlstate '55000' then
+    if sqlerrm <> 'RUNNING_TASK_REQUIRES_RECONCILIATION' then raise; end if;
+  end;
+  select * into v_first from public.happy_claim_mission_task(
+    '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
+    'mission-scheduler','task-scheduler-reclaim','worker-a',30000
+  );
+  if v_first.attempt <> 1 or v_first.fencing_token <> 1 then
+    raise exception 'fresh reclaim-test lease must start at 1';
+  end if;
+end
+$fencing$;
+reset role;
+update public.happy_mission_task_leases
+   set expires_at = clock_timestamp() - interval '1 second'
+ where organization_id = '10000000-0000-4000-8000-000000000001'
+   and workspace_id = '20000000-0000-4000-8000-000000000002'
+   and user_id = '30000000-0000-4000-8000-000000000003'
+   and mission_id = 'mission-scheduler' and task_id = 'task-scheduler-reclaim';
+set role authenticated;
+select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000003',false);
+do $fencing_reclaim$
+declare
   v_reclaimed record;
 begin
   select * into v_reclaimed from public.happy_claim_mission_task(
     '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
-    'mission-scheduler','task-scheduler-root','worker-b',30000
+    'mission-scheduler','task-scheduler-reclaim','worker-b',30000
   );
   if v_reclaimed.attempt <> 2 or v_reclaimed.fencing_token <> 2 then
     raise exception 'reclaimed lease did not advance attempt and fencing token';
@@ -420,10 +457,10 @@ begin
   begin
     perform public.happy_enqueue_mission_dispatch(
       '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
-      'mission-scheduler','task-scheduler-root',v_reclaimed.lease_id,'worker-a',1,
+      'mission-scheduler','task-scheduler-reclaim',v_reclaimed.lease_id,'worker-a',1,
       'request-old-worker','old-key','API','POST',
       'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
-      '{"id":"request-old-worker","missionId":"mission-scheduler","taskId":"task-scheduler-root","capability":"API","action":"POST"}'
+      '{"id":"request-old-worker","missionId":"mission-scheduler","taskId":"task-scheduler-reclaim","capability":"API","action":"POST"}'
     );
     raise exception 'stale worker dispatch unexpectedly succeeded';
   exception when sqlstate '55000' then
@@ -431,13 +468,13 @@ begin
   end;
   perform public.happy_enqueue_mission_dispatch(
     '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
-    'mission-scheduler','task-scheduler-root',v_reclaimed.lease_id,'worker-b',v_reclaimed.fencing_token,
+    'mission-scheduler','task-scheduler-reclaim',v_reclaimed.lease_id,'worker-b',v_reclaimed.fencing_token,
     'request-scheduler-2','tenant-attempt-key-2','API','POST',
     'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
-    '{"id":"request-scheduler-2","missionId":"mission-scheduler","taskId":"task-scheduler-root","capability":"API","action":"POST"}'
+    '{"id":"request-scheduler-2","missionId":"mission-scheduler","taskId":"task-scheduler-reclaim","capability":"API","action":"POST"}'
   );
 end
-$fencing$;
+$fencing_reclaim$;
 reset role;
 do $scheduler_privileges$
 begin
