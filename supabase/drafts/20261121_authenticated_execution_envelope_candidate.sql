@@ -157,7 +157,8 @@ revoke update,delete on private.execution_requests from service_role;
 
 -- First API version permits self-execution only. auth.uid() supplies both
 -- requester and executor; delegation needs a separately reviewed policy.
-create or replace function public.create_authenticated_execution_request(
+drop function if exists public.create_authenticated_execution_request(text,text,text,uuid,uuid,text,text,jsonb,jsonb,text);
+create function public.create_authenticated_execution_request(
   p_request_id text, p_task_id text, p_mission_id text,
   p_organization_id uuid, p_workspace_id uuid,
   p_capability text, p_action text, p_input jsonb, p_target_reference jsonb,
@@ -304,13 +305,13 @@ returns table (
   organization_id uuid, workspace_id uuid,
   capability text, action text, input jsonb, target_reference jsonb,
   requires_approval boolean, risk text, approval_status text, required_approval_role text,
-  status text, input_digest text, created_at timestamptz
+  status text, input_digest text, envelope_digest text, created_at timestamptz
 )
 language sql security definer set search_path = pg_catalog
 as $function$
   select r.request_id,r.task_id,r.mission_id,r.requester_user_id,r.executor_user_id,
     r.organization_id,r.workspace_id,r.capability,r.action,r.input,r.target_reference,
-    r.requires_approval,r.risk,r.approval_status,r.required_approval_role,r.status,r.input_digest,r.created_at
+    r.requires_approval,r.risk,r.approval_status,r.required_approval_role,r.status,r.input_digest,r.envelope_digest,r.created_at
   from private.execution_requests r
   where p_request_id is not null and length(btrim(p_request_id)) > 0
     and r.request_id=p_request_id and r.executor_user_id=auth.uid()
