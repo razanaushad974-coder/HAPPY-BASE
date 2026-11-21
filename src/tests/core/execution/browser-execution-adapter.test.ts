@@ -128,6 +128,12 @@ async function main(): Promise<void> {
     `http://127.0.0.1:${port}/`;
 
   try {
+    const disconnectedAdapter = new BrowserExecutionAdapter();
+    assert(
+      disconnectedAdapter.status() === "NOT_YET_CONNECTED",
+      "Browser adapter without server-owned network policy must remain disconnected.",
+    );
+
     const adapter =
       new BrowserExecutionAdapter(["127.0.0.1"]);
 
