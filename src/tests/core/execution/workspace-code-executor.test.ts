@@ -23,6 +23,17 @@ function assert(
 }
 
 function main(): void {
+  let missingRootRejected = false;
+  try {
+    new WorkspaceCodeExecutor(undefined as unknown as string);
+  } catch {
+    missingRootRejected = true;
+  }
+  assert(
+    missingRootRejected,
+    "WorkspaceCodeExecutor accepted a missing workspace root.",
+  );
+
   const root =
     mkdtempSync(
       join(tmpdir(), "happy-workspace-"),
