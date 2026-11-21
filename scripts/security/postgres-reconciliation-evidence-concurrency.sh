@@ -17,6 +17,15 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Resolve the internal outbox ID as the database owner before switching the
+# concurrent RPC sessions to authenticated (which intentionally has no
+# direct SELECT privilege on scheduler internals).
+outbox_id="$(${psql_base[@]}" -Atqc "select outbox_id from public.happy_execution_dispatch_outbox where execution_request_id='request-scheduler-2'")"
+if [[ -z "$outbox_id" ]]; then
+  echo "Expected scheduler outbox row was not found for reconciliation concurrency tests." >&2
+  exit 1
+fi
+
 # A test-only BEFORE INSERT delay makes both transactions reach the unique
 # evidence identity concurrently. The production SQL candidate is untouched.
 "${psql_base[@]}" <<'SQL'
@@ -41,26 +50,26 @@ SQL
 
 # Concurrent identical retries: both callers must succeed, but only one row
 # may exist for the event identity.
-PGAPPNAME=happy-reconcile-identical-a "${psql_base[@]}" >"$holder_log" 2>&1 <<'SQL' &
+PGAPPNAME=happy-reconcile-identical-a "${psql_base[@]}" -v outbox_id="$outbox_id" >"$holder_log" 2>&1 <<'SQL' &
 set role authenticated;
 select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000003',false);
 select public.happy_append_dispatch_reconciliation_evidence(
   '10000000-0000-4000-8000-000000000001',
   '20000000-0000-4000-8000-000000000002',
-  (select outbox_id from public.happy_execution_dispatch_outbox where execution_request_id='request-scheduler-2'),
+  :'outbox_id'::uuid,
   '90000000-0000-4000-8000-000000000011',
   'tenant-attempt-key-2','test-provider','PROCESSING',
   '2026-11-21T12:00:00Z','{"status":"PROCESSING","providerRequestId":"concurrent-identical"}'::jsonb
 );
 SQL
 pid_a=$!
-PGAPPNAME=happy-reconcile-identical-b "${psql_base[@]}" >"$contender_log" 2>&1 <<'SQL' &
+PGAPPNAME=happy-reconcile-identical-b "${psql_base[@]}" -v outbox_id="$outbox_id" >"$contender_log" 2>&1 <<'SQL' &
 set role authenticated;
 select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000003',false);
 select public.happy_append_dispatch_reconciliation_evidence(
   '10000000-0000-4000-8000-000000000001',
   '20000000-0000-4000-8000-000000000002',
-  (select outbox_id from public.happy_execution_dispatch_outbox where execution_request_id='request-scheduler-2'),
+  :'outbox_id'::uuid,
   '90000000-0000-4000-8000-000000000011',
   'tenant-attempt-key-2','test-provider','PROCESSING',
   '2026-11-21T12:00:00Z','{"status":"PROCESSING","providerRequestId":"concurrent-identical"}'::jsonb
@@ -99,26 +108,26 @@ fi
 : >"$contender_log"
 # Concurrent conflicting payloads reuse one event UUID. Exactly one insert
 # wins; the other must receive the RPC's 23505 identity-reuse rejection.
-PGAPPNAME=happy-reconcile-conflict-a "${psql_base[@]}" -v VERBOSITY=verbose >"$holder_log" 2>&1 <<'SQL' &
+PGAPPNAME=happy-reconcile-conflict-a "${psql_base[@]}" -v outbox_id="$outbox_id" -v VERBOSITY=verbose >"$holder_log" 2>&1 <<'SQL' &
 set role authenticated;
 select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000003',false);
 select public.happy_append_dispatch_reconciliation_evidence(
   '10000000-0000-4000-8000-000000000001',
   '20000000-0000-4000-8000-000000000002',
-  (select outbox_id from public.happy_execution_dispatch_outbox where execution_request_id='request-scheduler-2'),
+  :'outbox_id'::uuid,
   '90000000-0000-4000-8000-000000000012',
   'tenant-attempt-key-2','test-provider','PROCESSING',
   '2026-11-21T12:01:00Z','{"status":"PROCESSING","providerRequestId":"conflict-a"}'::jsonb
 );
 SQL
 pid_a=$!
-PGAPPNAME=happy-reconcile-conflict-b "${psql_base[@]}" -v VERBOSITY=verbose >"$contender_log" 2>&1 <<'SQL' &
+PGAPPNAME=happy-reconcile-conflict-b "${psql_base[@]}" -v outbox_id="$outbox_id" -v VERBOSITY=verbose >"$contender_log" 2>&1 <<'SQL' &
 set role authenticated;
 select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000003',false);
 select public.happy_append_dispatch_reconciliation_evidence(
   '10000000-0000-4000-8000-000000000001',
   '20000000-0000-4000-8000-000000000002',
-  (select outbox_id from public.happy_execution_dispatch_outbox where execution_request_id='request-scheduler-2'),
+  :'outbox_id'::uuid,
   '90000000-0000-4000-8000-000000000012',
   'tenant-attempt-key-2','test-provider','SUCCEEDED',
   '2026-11-21T12:01:00Z','{"status":"SUCCEEDED","providerRequestId":"conflict-b"}'::jsonb
