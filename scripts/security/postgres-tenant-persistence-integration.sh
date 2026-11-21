@@ -11,9 +11,10 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCHEMA_FILE="$ROOT_DIR/supabase/drafts/20261119_async_tenant_persistence_schema_candidate.sql"
 SCHEDULER_SCHEMA_FILE="$ROOT_DIR/supabase/drafts/20261121_durable_mission_scheduler_candidate.sql"
 TENANT_CONTEXT_RPC_FILE="$ROOT_DIR/supabase/drafts/20261121_authenticated_tenant_context_rpc_candidate.sql"
+EXECUTION_REQUEST_RPC_FILE="$ROOT_DIR/supabase/drafts/20261121_authenticated_execution_request_rpc_candidate.sql"
 RACE_SCRIPT="$ROOT_DIR/scripts/security/postgres-tenant-cas-concurrency.sh"
 RECONCILIATION_RACE_SCRIPT="$ROOT_DIR/scripts/security/postgres-reconciliation-evidence-concurrency.sh"
-for required_file in "$SCHEMA_FILE" "$SCHEDULER_SCHEMA_FILE" "$TENANT_CONTEXT_RPC_FILE" "$RACE_SCRIPT" "$RECONCILIATION_RACE_SCRIPT"; do
+for required_file in "$SCHEMA_FILE" "$SCHEDULER_SCHEMA_FILE" "$TENANT_CONTEXT_RPC_FILE" "$EXECUTION_REQUEST_RPC_FILE" "$RACE_SCRIPT" "$RECONCILIATION_RACE_SCRIPT"; do
   if [[ ! -f "$required_file" ]]; then
     echo "Required tenant persistence test file not found: $required_file" >&2
     exit 1
@@ -84,6 +85,18 @@ create table private.workspace_memberships (
   foreign key (organization_id, workspace_id)
     references private.workspaces(organization_id, workspace_id)
 );
+create table private.execution_requests (
+  request_id text primary key,
+  task_id text not null,
+  mission_id text not null,
+  requester_user_id uuid not null references auth.users(id),
+  executor_user_id uuid not null references auth.users(id),
+  organization_id uuid not null references private.organizations(organization_id),
+  workspace_id uuid not null,
+  status text not null check (status in ('READY','CANCELLED','COMPLETED')),
+  foreign key (organization_id, workspace_id)
+    references private.workspaces(organization_id, workspace_id)
+);
 
 insert into auth.users(id) values
   ('30000000-0000-4000-8000-000000000003'),
@@ -120,12 +133,30 @@ revoke all on schema private from public, anon, authenticated;
 revoke all on all tables in schema private from public, anon, authenticated;
 grant usage on schema private to service_role;
 grant select, insert, update on private.organizations, private.workspaces,
-  private.organization_memberships, private.workspace_memberships to service_role;
+  private.organization_memberships, private.workspace_memberships,
+  private.execution_requests to service_role;
+insert into private.execution_requests values
+  ('request-for-executor','task-1','mission-1',
+   '40000000-0000-4000-8000-000000000004',
+   '30000000-0000-4000-8000-000000000003',
+   '10000000-0000-4000-8000-000000000001',
+   '20000000-0000-4000-8000-000000000002','READY'),
+  ('request-for-other-executor','task-2','mission-2',
+   '40000000-0000-4000-8000-000000000004',
+   '40000000-0000-4000-8000-000000000004',
+   '10000000-0000-4000-8000-000000000001',
+   '20000000-0000-4000-8000-000000000002','READY'),
+  ('request-not-ready','task-3','mission-3',
+   '40000000-0000-4000-8000-000000000004',
+   '30000000-0000-4000-8000-000000000003',
+   '10000000-0000-4000-8000-000000000001',
+   '20000000-0000-4000-8000-000000000002','CANCELLED');
 SQL
 
 "${psql_base[@]}" -f "$SCHEMA_FILE"
 "${psql_base[@]}" -f "$SCHEDULER_SCHEMA_FILE"
 "${psql_base[@]}" -f "$TENANT_CONTEXT_RPC_FILE"
+"${psql_base[@]}" -f "$EXECUTION_REQUEST_RPC_FILE"
 
 # Exercise the SECURITY DEFINER RPC under a deliberately narrow, non-login
 # function owner instead of silently relying on the migration/superuser owner.
@@ -144,6 +175,25 @@ grant select on private.organizations, private.workspaces,
 grant execute on function auth.uid() to happy_tenant_context_owner;
 alter function public.resolve_authenticated_tenant_context(uuid,uuid)
   owner to happy_tenant_context_owner;
+do $execution_owner_privileges$
+begin
+  if not has_table_privilege('happy_execution_request_rpc_owner',
+      'private.execution_requests', 'SELECT')
+     or has_table_privilege('happy_execution_request_rpc_owner',
+      'private.execution_requests', 'INSERT,UPDATE,DELETE') then
+    raise exception 'execution request RPC owner privileges are not SELECT-only';
+  end if;
+  if not has_function_privilege('authenticated',
+      'public.resolve_authenticated_execution_request(text)', 'EXECUTE')
+     or has_function_privilege('anon',
+      'public.resolve_authenticated_execution_request(text)', 'EXECUTE')
+     or has_function_privilege('service_role',
+      'public.resolve_authenticated_execution_request(text)', 'EXECUTE') then
+    raise exception 'execution request RPC grants are not least-privilege';
+  end if;
+end
+$execution_owner_privileges$;
+
 do $owner_privileges$
 begin
   if not has_table_privilege('happy_tenant_context_owner',
@@ -198,6 +248,30 @@ begin
      or v_context.organization_role <> 'MEMBER'
      or v_context.workspace_role <> 'MEMBER' then
     raise exception 'authenticated tenant context RPC did not return the exact active scope';
+  end if;
+
+  select count(*) into v_count
+    from public.resolve_authenticated_execution_request('request-for-executor');
+  if v_count <> 1 then
+    raise exception 'named executor could not resolve its durable execution request';
+  end if;
+  select count(*) into v_count
+    from public.resolve_authenticated_execution_request('request-for-other-executor');
+  if v_count <> 0 then
+    raise exception 'caller resolved another executor request by guessing request ID';
+  end if;
+  select count(*) into v_count
+    from public.resolve_authenticated_execution_request('request-not-ready');
+  if v_count <> 0 then
+    raise exception 'non-ready execution request was exposed to executor';
+  end if;
+
+  perform set_config('request.jwt.claim.sub',
+    '40000000-0000-4000-8000-000000000004', false);
+  select count(*) into v_count
+    from public.resolve_authenticated_execution_request('request-for-executor');
+  if v_count <> 0 then
+    raise exception 'different authenticated user resolved executor request';
   end if;
 
   perform set_config('request.jwt.claim.sub',
