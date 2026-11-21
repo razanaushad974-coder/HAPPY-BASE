@@ -14,7 +14,7 @@ export interface ProvisionedTenantWorkspace {
    * The provider must construct this executor over a durable, tenant-isolated
    * persistent volume. A process-local or deployment-root path is not valid.
    */
-  executor: WorkspaceCodeExecutor;
+  executor: WorkspaceFileExecutor;
   storage: "ISOLATED_PERSISTENT_VOLUME";
 }
 
