@@ -150,3 +150,12 @@ The scheduler SQL candidate now also includes:
 - Lock ordering is explicitly lease → outbox for enqueue and outbox claim (the claim first performs a non-locking lookup to discover the task binding), avoiding lease/outbox lock inversion.
 
 The disposable PostgreSQL integration harness covers heartbeat extension, stale heartbeat rejection, one-time outbox claim, duplicate claim rejection, and the no-replay rule after a dispatch intent exists. A crash after PENDING → DISPATCHED is intentionally treated as ambiguous; a future worker must reconcile the external provider outcome and use provider-side idempotency. There is no automatic retry or worker loop.
+
+
+### Provider outcome persistence boundary
+
+The scheduler candidate now stores a JSON object outcome on each outbox row and exposes `happy_record_dispatch_outcome`. The authenticated RPC derives the actor from `auth.uid()`, checks active tenant scope, locks the current lease before the outbox, and requires exact lease ID, owner, fencing token, mission/task binding, and a current DISPATCHED status. It permits one terminal provider observation: ACKNOWLEDGED, AMBIGUOUS, FAILED, or RECONCILIATION_REQUIRED. A second result cannot overwrite the first.
+
+An ACKNOWLEDGED provider response is deliberately not a task completion. The task remains RUNNING pending the separate semantic verification/evidence lifecycle. AMBIGUOUS is persisted as an explicit no-blind-retry state. The disposable PostgreSQL integration harness tests acknowledged outcome persistence, duplicate outcome rejection, and ambiguous outcome retention.
+
+This still does not implement a real provider worker, authenticated provider credential boundary, provider-side idempotency, payload/result redaction or encryption, outcome schema validation per capability, or automatic reconciliation. The outcome JSON is currently an opaque object and must be normalized/validated by a trusted provider adapter before production use.
