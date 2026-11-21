@@ -77,6 +77,25 @@ function parseResolvedReference(value: unknown): ResolvedReference | undefined |
   return value as unknown as ResolvedReference;
 }
 
+function canonicalJson(value: unknown): string | null {
+  try {
+    const normalize = (item: unknown): unknown => {
+      if (item === null || typeof item === "string" || typeof item === "boolean") return item;
+      if (typeof item === "number" && Number.isFinite(item)) return item;
+      if (Array.isArray(item)) return item.map(normalize);
+      if (isRecord(item)) {
+        return Object.fromEntries(
+          Object.keys(item).sort().map((key) => [key, normalize(item[key])]),
+        );
+      }
+      throw new Error("Execution envelope contains a non-JSON value.");
+    };
+    return JSON.stringify(normalize(value));
+  } catch {
+    return null;
+  }
+}
+
 /** Reads immutable request principals only through the executor-bound auth.uid() RPC. */
 export class SupabaseDurableExecutionRequestStore implements DurableExecutionRequestStore {
   constructor(private readonly client: SupabaseExecutionRequestRpcClient) {}
@@ -183,6 +202,26 @@ export class SupabaseNamedExecutorContextProvider implements NamedExecutorContex
           durable.taskId !== request.taskId ||
           durable.missionId !== request.missionId ||
           durable.executorUserId !== identity.userId) return null;
+
+      const persisted = durable.executionRequest;
+      if (persisted.id !== request.id ||
+          persisted.taskId !== request.taskId ||
+          persisted.missionId !== request.missionId ||
+          persisted.capability !== request.capability ||
+          persisted.action !== request.action ||
+          persisted.risk !== request.risk ||
+          persisted.requiresApproval !== request.requiresApproval ||
+          persisted.approved !== request.approved ||
+          persisted.createdAt !== request.createdAt ||
+          canonicalJson(persisted.input) === null ||
+          canonicalJson(persisted.input) !== canonicalJson(request.input) ||
+          canonicalJson(persisted.targetReference ?? null) !== canonicalJson(request.targetReference ?? null) ||
+          (durable.approvalStatus === "PENDING" && durable.status !== "WAITING_APPROVAL") ||
+          (durable.approvalStatus === "APPROVED" && !["READY", "RUNNING"].includes(durable.status)) ||
+          (durable.approvalStatus === "REJECTED" || durable.status === "CANCELLED") ||
+          (request.requiresApproval && durable.approvalStatus !== "APPROVED") ||
+          (!request.requiresApproval && durable.approvalStatus !== "NOT_REQUIRED") ||
+          (durable.status !== "READY" && durable.status !== "RUNNING")) return null;
 
       const tenant = await resolveCanonicalTenantContext(
         identity,
