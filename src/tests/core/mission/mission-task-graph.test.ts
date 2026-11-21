@@ -679,8 +679,41 @@ const duplicateExecutionAssessment = assessMissionRecovery(
     { id: "recovery-execution-b", missionId: recoveryMission.id, taskId: recoveryTask.id, status: "RUNNING" },
   ],
 );
+
 if (duplicateExecutionAssessment[0]?.reason !== "MULTIPLE_EXECUTION_RECORDS") {
   throw new Error("Recovery assessment did not quarantine ambiguous execution records.");
+}
+
+const recoveryStatusCases = [
+  { status: "WAITING_APPROVAL" as const, expected: "APPROVAL_REVIEW_REQUIRED" as const },
+  { status: "FAILED" as const, expected: "FAILED_EXECUTION_REVIEW_REQUIRED" as const },
+  { status: "BLOCKED" as const, expected: "BLOCKED_REVIEW_REQUIRED" as const },
+  { status: "NOT_YET_CONNECTED" as const, expected: "BLOCKED_REVIEW_REQUIRED" as const },
+  { status: "READY" as const, expected: "RECONCILIATION_REQUIRED" as const },
+];
+for (const testCase of recoveryStatusCases) {
+  const assessment = assessMissionRecovery(
+    recoveryMission,
+    activeRecoveryTasks,
+    [{
+      id: `recovery-execution-${testCase.status.toLowerCase()}`,
+      missionId: recoveryMission.id,
+      taskId: recoveryTask.id,
+      status: testCase.status,
+    }],
+  );
+  if (assessment[0]?.disposition !== testCase.expected) {
+    throw new Error(`Recovery assessment mapped ${testCase.status} to an unsafe disposition.`);
+  }
+}
+
+const inactiveRecoveryAssessment = assessMissionRecovery(
+  recoveryMission,
+  readySnapshot.graph.tasks,
+  [],
+);
+if (inactiveRecoveryAssessment.some((item) => item.disposition !== "NO_RECOVERY_REQUIRED")) {
+  throw new Error("Recovery assessment flagged inactive tasks for recovery.");
 }
 
 let foreignRecoveryExecutionDenied = false;
