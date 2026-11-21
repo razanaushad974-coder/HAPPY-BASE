@@ -70,9 +70,18 @@ function simpleHash(value: string): string {
 }
 
 export class WorkspaceCodeExecutor {
+  /**
+   * The caller must supply an explicitly provisioned workspace root.
+   * Never fall back to process.cwd(), which is the application/repository
+   * directory rather than a tenant-owned workspace.
+   */
   constructor(
-    private readonly workspaceRoot: string = process.cwd(),
-  ) {}
+    private readonly workspaceRoot: string,
+  ) {
+    if (typeof workspaceRoot !== "string" || !workspaceRoot.trim()) {
+      throw new Error("An explicit tenant workspace root is required.");
+    }
+  }
 
   private resolveSafePath(relativePath: string): string {
     if (!relativePath || isAbsolute(relativePath)) {
