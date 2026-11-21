@@ -20,7 +20,7 @@ trap cleanup EXIT
 # Resolve the internal outbox ID as the database owner before switching the
 # concurrent RPC sessions to authenticated (which intentionally has no
 # direct SELECT privilege on scheduler internals).
-outbox_id="$(${psql_base[@]}" -Atqc "select outbox_id from public.happy_execution_dispatch_outbox where execution_request_id='request-scheduler-2'")"
+outbox_id="$("${psql_base[@]}" -Atqc "select outbox_id from public.happy_execution_dispatch_outbox where execution_request_id='request-scheduler-2'")"
 if [[ -z "$outbox_id" ]]; then
   echo "Expected scheduler outbox row was not found for reconciliation concurrency tests." >&2
   exit 1
