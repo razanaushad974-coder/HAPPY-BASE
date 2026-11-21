@@ -8,6 +8,8 @@ import {
 import { PersistentMemoryService } from "../memory/persistent-service";
 import { ReasoningOrchestrator } from "../reasoning/orchestrator";
 import { MissionOrchestrator } from "../mission/orchestrator";
+import { MissionEngine } from "../mission/mission-engine";
+import { TaskGraphEngine } from "../mission/task-graph";
 
 import {
     ExecutionAdapterRegistry,
@@ -563,8 +565,15 @@ contextSummary:
         // MISSION
         // ==================================================
 
+        // The plan retains WAITING_APPROVAL as its audit history, but a
+        // persisted approval has already been verified above. Seed the
+        // executable mission as READY only on that trusted verification path.
         const missionSnapshot =
-            this.mission.create(plan);
+            this.mission.create(
+                verifiedApproval
+                    ? { ...plan, status: "READY" }
+                    : plan,
+            );
 
         await state.mission().create(
             missionSnapshot.mission.id,
@@ -585,14 +594,6 @@ contextSummary:
         // TASK GRAPH
         // ==================================================
 
-        const firstTask =
-            missionSnapshot.graph.tasks.find(
-                (task) =>
-                    task.targetReference !==
-                    undefined,
-            ) ??
-            missionSnapshot.graph.tasks[0];
-
         for (
             const task of
             missionSnapshot.graph.tasks
@@ -604,7 +605,7 @@ contextSummary:
             );
         }
 
-        if (!firstTask) {
+        if (missionSnapshot.graph.tasks.length === 0) {
             addStage({
                 stage: "TASK_GRAPH",
                 status: "BLOCKED",
@@ -667,327 +668,404 @@ contextSummary:
         });
 
         // ==================================================
-        // EXECUTION
+        // EXECUTION + PER-TASK VERIFICATION
         // ==================================================
 
-        const executionRequest = {
-            id:
-                `exec-${request.id}`,
-            taskId:
-                firstTask.id,
-            missionId:
-                missionSnapshot.mission.id,
-            capability:
-                resolveExecutionCapability(
-                    firstTask.action,
-                    firstTask.targetReference,
-                ),
-            action:
-                firstTask.action,
-            input: {
-                command:
-                    request.command,
-            },
-            targetReference:
-                firstTask.targetReference,
-            requiresApproval:
-                approvalRequired,
-            approved:
-                !approvalRequired || verifiedApproval,
-            risk:
-                approvalRequired
-                    ? "HIGH" as const
-                    : "LOW" as const,
-            createdAt:
-                new Date().toISOString(),
-        };
-
-        await state.execution().create(
-            executionRequest.id,
-            executionRequest,
-            request.userId,
-        );
-
-        const executionResult =
-            await this.execution.execute(
-                executionRequest,
-            );
-
-        await state.execution().update(
-            executionRequest.id,
-            {
-                ...executionRequest,
-                ...executionResult,
-                targetReference:
-                    executionRequest.targetReference,
-            },
-        );
-
-        let executionStageStatus:
-            HappyPipelineStageResult["status"];
-
-        if (
-            executionResult.status ===
-            "NOT_YET_CONNECTED"
-        ) {
-            executionStageStatus =
-                "NOT_YET_CONNECTED";
-        } else if (
-            executionResult.status ===
-            "WAITING_APPROVAL"
-        ) {
-            executionStageStatus =
-                "WAITING_APPROVAL";
-        } else if (
-            executionResult.status ===
-            "COMPLETED"
-        ) {
-            executionStageStatus =
-                "COMPLETED";
-        } else {
-            executionStageStatus =
-                "FAILED";
-        }
-
-        addStage({
-            stage: "EXECUTION",
-            status:
-                executionStageStatus,
-            summary:
-                executionResult.status ===
-                "NOT_YET_CONNECTED"
-                    ? "Execution adapter is not connected."
-                    : "Execution boundary evaluated.",
-            referenceId:
-                executionResult.id,
-        });
-
-        // ==================================================
-        // VERIFICATION + EVIDENCE
-        // ==================================================
-
+        const graphEngine = new TaskGraphEngine();
+        const missionEngine = new MissionEngine();
         const evidenceRepository =
             new InMemoryEvidenceRepository();
-
         const evidenceService =
-            new EvidenceService(
-                evidenceRepository,
-            );
-
+            new EvidenceService(evidenceRepository);
         const verificationEngine =
-            new VerificationEngine(
-                evidenceService,
-            );
+            new VerificationEngine(evidenceService);
 
-        const verificationRequest = {
-            id:
-                `verification-${request.id}`,
-            missionId:
-                missionSnapshot.mission.id,
-            taskId:
-                firstTask.id,
-            executionRequestId:
-                executionResult.requestId,
-            description:
-                "Verify the first mission task execution.",
-            criteria: [
-                {
-                    id:
-                        "execution-status",
+        let currentMission = missionSnapshot.mission;
+        let currentTasks = missionSnapshot.graph.tasks;
+        let executionRequestId: string | undefined;
+        let verificationRequestId: string | undefined;
+        const allEvidenceIds: string[] = [];
+        let sawNotConnected = false;
+        let sawFailure = false;
+        let sawBlocked = false;
+
+        // Only dependency-ready tasks are eligible. A dependent task is never
+        // released merely because its predecessor produced output; the
+        // predecessor must pass its required verification first.
+        while (true) {
+            const readyTasks = graphEngine
+                .getReadyTasks(
+                    graphEngine.buildGraph(currentTasks),
+                )
+                .sort((left, right) =>
+                    left.order - right.order ||
+                    left.id.localeCompare(right.id),
+                );
+
+            if (readyTasks.length === 0) {
+                break;
+            }
+
+            for (const task of readyTasks) {
+                const running = missionEngine.updateTaskStatus(
+                    currentMission,
+                    currentTasks,
+                    task.id,
+                    "RUNNING",
+                );
+                currentMission = running.mission;
+                currentTasks = running.tasks;
+
+                const runningTask = currentTasks.find(
+                    (item) => item.id === task.id,
+                );
+                if (!runningTask) {
+                    throw new Error(
+                        `Mission task disappeared while starting: ${task.id}`,
+                    );
+                }
+
+                await state.task().update(task.id, runningTask);
+                await state.mission().update(
+                    currentMission.id,
+                    currentMission,
+                );
+
+                const executionRequest = {
+                    id: `exec-${request.id}-${task.id}`,
+                    taskId: task.id,
+                    missionId: currentMission.id,
+                    capability: resolveExecutionCapability(
+                        task.action,
+                        task.targetReference,
+                    ),
+                    action: task.action,
+                    input: {
+                        command: request.command,
+                        taskTitle: task.title,
+                        taskDescription: task.description,
+                        dependencyIds: task.dependencyIds,
+                    },
+                    targetReference: task.targetReference,
+                    requiresApproval: task.requiresApproval,
+                    approved:
+                        !task.requiresApproval || verifiedApproval,
+                    risk: task.requiresApproval
+                        ? "HIGH" as const
+                        : "LOW" as const,
+                    createdAt: new Date().toISOString(),
+                };
+
+                executionRequestId ??= executionRequest.id;
+                await state.execution().create(
+                    executionRequest.id,
+                    executionRequest,
+                    request.userId,
+                );
+
+                const executionResult =
+                    await this.execution.execute(executionRequest);
+
+                await state.execution().update(
+                    executionRequest.id,
+                    {
+                        ...executionRequest,
+                        ...executionResult,
+                        targetReference:
+                            executionRequest.targetReference,
+                    },
+                );
+
+                const executionStageStatus:
+                    HappyPipelineStageResult["status"] =
+                    executionResult.status === "NOT_YET_CONNECTED"
+                        ? "NOT_YET_CONNECTED"
+                        : executionResult.status === "WAITING_APPROVAL"
+                            ? "WAITING_APPROVAL"
+                            : executionResult.status === "COMPLETED"
+                                ? "COMPLETED"
+                                : "FAILED";
+
+                addStage({
+                    stage: "EXECUTION",
+                    status: executionStageStatus,
+                    summary:
+                        `Task "${task.title}" execution returned ${executionResult.status}.`,
+                    referenceId: executionResult.id,
+                    error: executionResult.error,
+                });
+
+                if (executionResult.status === "NOT_YET_CONNECTED") {
+                    sawNotConnected = true;
+                } else if (
+                    executionResult.status === "FAILED"
+                ) {
+                    sawFailure = true;
+                } else if (
+                    executionResult.status !== "COMPLETED"
+                ) {
+                    sawBlocked = true;
+                }
+
+                const verifying = missionEngine.updateTaskStatus(
+                    currentMission,
+                    currentTasks,
+                    task.id,
+                    "VERIFYING",
+                );
+                currentMission = verifying.mission;
+                currentTasks = verifying.tasks;
+                const verifyingTask = currentTasks.find(
+                    (item) => item.id === task.id,
+                );
+                if (!verifyingTask) {
+                    throw new Error(
+                        `Mission task disappeared before verification: ${task.id}`,
+                    );
+                }
+                await state.task().update(task.id, verifyingTask);
+                await state.mission().update(
+                    currentMission.id,
+                    currentMission,
+                );
+
+                const verificationRequest = {
+                    id: `verification-${request.id}-${task.id}`,
+                    missionId: currentMission.id,
+                    taskId: task.id,
+                    executionRequestId: executionResult.requestId,
                     description:
-                        "Execution must have a connected successful result.",
-                    expected:
-                        "COMPLETED",
-                    required:
-                        true,
-                },
-            ],
-            preferredMethods: [
-                "TEST" as const,
-                "COMMAND" as const,
-                "LOG" as const,
-            ],
-            requiresEvidence:
-                true,
-            createdAt:
-                new Date().toISOString(),
-        };
+                        `Verify mission task: ${task.title}`,
+                    criteria: [
+                        {
+                            id: "execution-status",
+                            description:
+                                "Execution must have a connected successful result.",
+                            expected: "COMPLETED",
+                            required: true,
+                        },
+                    ],
+                    preferredMethods: [
+                        "TEST" as const,
+                        "COMMAND" as const,
+                        "LOG" as const,
+                    ],
+                    requiresEvidence: true,
+                    createdAt: new Date().toISOString(),
+                };
+                verificationRequestId = verificationRequest.id;
 
-        await state.verification().create(
-            verificationRequest.id,
-            verificationRequest,
-            request.userId,
-        );
-
-        const executionEvidence =
-            evidenceService.capture({
-                verificationRequestId:
+                await state.verification().create(
                     verificationRequest.id,
-                executionRequestId:
-                    executionResult.requestId,
-                missionId:
-                    missionSnapshot.mission.id,
-                taskId:
-                    firstTask.id,
-                type:
-                    "COMMAND_OUTPUT" as const,
-                source:
-                    "EXECUTION" as const,
-                title:
-                    "Execution result evidence",
-                content:
-                    JSON.stringify({
-                        status:
-                            executionResult.status,
-                        output:
-                            executionResult.output,
-                        error:
-                            executionResult.error,
-                    }),
-                metadata: {
-                    capability:
-                        executionResult.capability,
-                    executionResultId:
-                        executionResult.id,
-                },
-                isPrimary:
-                    true,
-            });
+                    verificationRequest,
+                    request.userId,
+                );
 
-        await state.evidence().create(
-            executionEvidence.id,
-            executionEvidence,
-            request.userId,
-        );
+                const executionEvidence =
+                    evidenceService.capture({
+                        verificationRequestId:
+                            verificationRequest.id,
+                        executionRequestId:
+                            executionResult.requestId,
+                        missionId: currentMission.id,
+                        taskId: task.id,
+                        type: "COMMAND_OUTPUT" as const,
+                        source: "EXECUTION" as const,
+                        title: "Task execution result evidence",
+                        content: JSON.stringify({
+                            status: executionResult.status,
+                            output: executionResult.output,
+                            error: executionResult.error,
+                        }),
+                        metadata: {
+                            capability: executionResult.capability,
+                            executionResultId: executionResult.id,
+                            taskId: task.id,
+                        },
+                        isPrimary: true,
+                    });
 
-        const verificationResult =
-            verificationEngine.verify(
-                verificationRequest,
-                [executionEvidence.id],
+                await state.evidence().create(
+                    executionEvidence.id,
+                    executionEvidence,
+                    request.userId,
+                );
+
+                const verificationResult =
+                    verificationEngine.verify(
+                        verificationRequest,
+                        [executionEvidence.id],
+                    );
+
+                await state.verification().update(
+                    verificationRequest.id,
+                    verificationResult,
+                );
+                allEvidenceIds.push(
+                    ...verificationResult.evidenceIds,
+                );
+
+                addStage({
+                    stage: "VERIFICATION",
+                    status:
+                        verificationResult.status === "PASSED"
+                            ? "COMPLETED"
+                            : verificationResult.status === "PARTIAL"
+                                ? "PARTIAL"
+                                : "FAILED",
+                    summary:
+                        `Task "${task.title}": ${verificationResult.summary}`,
+                    referenceId: verificationResult.id,
+                    error: verificationResult.failureReason,
+                });
+
+                addStage({
+                    stage: "EVIDENCE",
+                    status:
+                        verificationResult.evidenceIds.length > 0
+                            ? "PROCESSING"
+                            : "BLOCKED",
+                    summary:
+                        verificationResult.evidenceIds.length > 0
+                            ? `Evidence captured for task "${task.title}".`
+                            : `No evidence available for task "${task.title}".`,
+                    referenceId: executionEvidence.id,
+                });
+
+                // Do not mark a task complete from an execution status alone
+                // when semantic verification is required.
+                const finalTaskStatus =
+                    executionResult.status === "FAILED"
+                        ? "FAILED" as const
+                        : executionResult.status !== "COMPLETED"
+                            ? "BLOCKED" as const
+                            : !task.verificationRequired ||
+                                verificationResult.status === "PASSED"
+                                ? "COMPLETED" as const
+                                : "BLOCKED" as const;
+
+                if (finalTaskStatus === "BLOCKED") {
+                    sawBlocked = true;
+                }
+
+                const finalized = missionEngine.updateTaskStatus(
+                    currentMission,
+                    currentTasks,
+                    task.id,
+                    finalTaskStatus,
+                );
+                currentMission = finalized.mission;
+                currentTasks = finalized.tasks;
+
+                const finalizedTask = currentTasks.find(
+                    (item) => item.id === task.id,
+                );
+                if (!finalizedTask) {
+                    throw new Error(
+                        `Mission task disappeared after verification: ${task.id}`,
+                    );
+                }
+
+                await state.task().update(task.id, finalizedTask);
+                await state.mission().update(
+                    currentMission.id,
+                    currentMission,
+                );
+            }
+        }
+
+        const allTasksCompleted =
+            currentTasks.length > 0 &&
+            currentTasks.every(
+                (task) => task.status === "COMPLETED",
             );
 
-        await state.verification().update(
-            verificationRequest.id,
-            verificationResult,
-        );
-
-        addStage({
-            stage: "VERIFICATION",
-            status:
-                verificationResult.status ===
-                "PASSED"
+        const finalStatus:
+            HappyPipelineResult["status"] =
+            sawFailure
+                ? "FAILED"
+                : allTasksCompleted
                     ? "COMPLETED"
-                    : verificationResult.status ===
-                      "PARTIAL"
-                        ? "PARTIAL"
-                        : "FAILED",
-            summary:
-                verificationResult.summary,
-            referenceId:
-                verificationResult.id,
-        });
+                    : sawNotConnected
+                        ? "NOT_YET_CONNECTED"
+                        : sawBlocked || currentTasks.some(
+                            (task) => task.status === "BLOCKED",
+                        )
+                            ? "PARTIAL"
+                            : "FAILED";
 
+        const finalStage:
+            HappyPipelineResult["currentStage"] =
+            finalStatus === "COMPLETED"
+                ? "COMPLETE"
+                : finalStatus === "NOT_YET_CONNECTED"
+                    ? "NOT_YET_CONNECTED"
+                    : "BLOCKED";
+
+        // A mission is only reported complete when every task has completed
+        // and all required verification gates have passed.
         addStage({
-            stage: "EVIDENCE",
+            stage: "MISSION",
             status:
-                verificationResult.evidenceIds
-                    .length > 0
-                    ? "PROCESSING"
-                    : "BLOCKED",
+                currentMission.status === "COMPLETED"
+                    ? "COMPLETED"
+                    : currentMission.status === "BLOCKED"
+                        ? "BLOCKED"
+                        : currentMission.status === "FAILED"
+                            ? "FAILED"
+                            : "PARTIAL",
             summary:
-                verificationResult.evidenceIds
-                    .length > 0
-                    ? "Evidence references available."
-                    : "No evidence available.",
+                `Mission progress: ${currentMission.progressPercent}% (${currentMission.completedTaskIds.length}/${currentTasks.length} tasks verified complete).`,
+            referenceId: currentMission.id,
         });
 
         // ==================================================
         // PERSIST
         // ==================================================
 
-        const finalStatus:
-            HappyPipelineResult["status"] =
-            executionResult.status ===
-                "NOT_YET_CONNECTED"
-                ? "NOT_YET_CONNECTED"
-                : verificationResult.status ===
-                    "PASSED"
-                    ? "COMPLETED"
-                    : verificationResult.status ===
-                        "PARTIAL"
-                        ? "PARTIAL"
-                        : "FAILED";
-
-        const finalStage:
-            HappyPipelineResult["currentStage"] =
-            finalStatus === "COMPLETED"
-                ? "COMPLETE"
-                : finalStatus ===
-                    "NOT_YET_CONNECTED"
-                    ? "NOT_YET_CONNECTED"
-                    : "BLOCKED";
-
-        const finalResult = {
-            requestId:
-                request.id,
-            status:
-                finalStatus,
-            currentStage:
-                finalStage,
+        const finalResult: HappyPipelineResult = {
+            requestId: request.id,
+            status: finalStatus,
+            currentStage: finalStage,
             trace: {
-                requestId:
-                    request.id,
+                requestId: request.id,
                 stages: [
                     ...stages,
                     {
-                        stage: "PERSIST" as const,
-                        status: "COMPLETED" as const,
+                        stage: "PERSIST",
+                        status: "COMPLETED",
                         summary:
-                            "Pipeline state persisted to file-backed state.",
+                            "Mission, task transitions, executions, verification and evidence references persisted.",
                     },
                 ],
-                currentStage:
-                    finalStage,
-                status:
-                    finalStatus,
+                currentStage: finalStage,
+                status: finalStatus,
                 startedAt,
-                completedAt:
-                    new Date().toISOString(),
+                completedAt: new Date().toISOString(),
             },
-            missionId:
-                missionSnapshot.mission.id,
-            planId:
-                plan.id,
-            executionRequestId:
-                executionResult.requestId,
-            verificationRequestId:
-                verificationRequest.id,
-            evidenceIds:
-                verificationResult.evidenceIds,
-            persisted:
-                true,
+            missionId: currentMission.id,
+            planId: plan.id,
+            executionRequestId,
+            verificationRequestId,
+            evidenceIds: [...new Set(allEvidenceIds)],
+            persisted: true,
         };
 
         await state.audit().create(
             `audit-final-${request.id}`,
             {
-                event:
-                    "PIPELINE_COMPLETED",
-                requestId:
-                    request.id,
+                event: "PIPELINE_FINALIZED",
+                requestId: request.id,
                 finalStatus,
-                missionId:
-                    missionSnapshot.mission.id,
-                planId:
-                    plan.id,
-                executionRequestId:
-                    executionResult.requestId,
-                verificationRequestId:
-                    verificationRequest.id,
-                trace:
-                    finalResult.trace,
-                createdAt:
-                    new Date().toISOString(),
+                missionId: currentMission.id,
+                planId: plan.id,
+                executionRequestId,
+                verificationRequestId,
+                completedTaskIds: currentMission.completedTaskIds,
+                blockedTaskIds: currentMission.blockedTaskIds,
+                failedTaskIds: currentMission.failedTaskIds,
+                trace: finalResult.trace,
+                createdAt: new Date().toISOString(),
             },
             request.userId,
         );

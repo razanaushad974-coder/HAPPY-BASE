@@ -53,6 +53,39 @@ async function main(): Promise<void> {
         "user-a",
     );
 
+    let mismatchedUserCreateBlocked = false;
+    try {
+        await tenantA.mission().create(
+            "mission-forged-user",
+            { goal: "must not persist", status: "PLANNED" },
+            "user-b",
+        );
+    } catch (error) {
+        mismatchedUserCreateBlocked =
+            error instanceof Error &&
+            error.message === "USER_SCOPE_VIOLATION";
+    }
+
+    // Simulate a legacy/corrupt row with no user principal. A user-scoped
+    // repository must not silently expose it.
+    persistence.create(
+        "MISSION",
+        "mission-missing-user",
+        {
+            data: { goal: "legacy row", status: "PLANNED" },
+            organizationId: "org-a",
+            workspaceId: "workspace-a",
+        },
+    );
+    let missingUserScopeBlocked = false;
+    try {
+        await tenantA.mission().get("mission-missing-user");
+    } catch (error) {
+        missingUserScopeBlocked =
+            error instanceof Error &&
+            error.message === "USER_SCOPE_VIOLATION";
+    }
+
     // --------------------------------------------------
     // SCOPED READ
     // --------------------------------------------------
@@ -167,6 +200,8 @@ async function main(): Promise<void> {
         fetchedA.organizationId === "org-a" &&
         visibleToB.length === 0 &&
         crossTenantBlocked &&
+        mismatchedUserCreateBlocked &&
+        missingUserScopeBlocked &&
         updatedA.version === 2 &&
         restored.version === 2 &&
         restored.data.status === "RUNNING" &&
@@ -195,6 +230,8 @@ async function main(): Promise<void> {
         tenantAIsolation: true,
         tenantBIsolation: true,
         crossTenantBlocked,
+        mismatchedUserCreateBlocked,
+        missingUserScopeBlocked,
         persistentRepository: true,
         restartRecovery: true,
         versionIncrement:

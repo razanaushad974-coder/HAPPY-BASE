@@ -13,7 +13,8 @@ import {
   type CanonicalTenantMembershipStore,
 } from "./canonical-tenant-context";
 import type {
-  SupabasePrivateSchemaClient,
+  SupabaseApproverMembershipRpcClient,
+  SupabaseExecutionRequestRpcClient,
 } from "./supabase-private-tenant-stores";
 
 export interface VerifiedServerIdentityProvider {
@@ -44,19 +45,22 @@ function requiredString(row: Record<string, unknown>, key: string): string | nul
   return typeof value === "string" && value.trim() ? value : null;
 }
 
-/** Reads immutable request principals from the private, server-owned table. */
+/** Reads immutable request principals only through the executor-bound auth.uid() RPC. */
 export class SupabaseDurableExecutionRequestStore implements DurableExecutionRequestStore {
-  constructor(private readonly client: SupabasePrivateSchemaClient) {}
+  constructor(private readonly client: SupabaseExecutionRequestRpcClient) {}
 
   async getByRequestId(requestId: string): Promise<DurableExecutionRequestRecord | null> {
     try {
-      const result = await this.client.schema("private")
-        .from("execution_requests")
-        .select("request_id,task_id,mission_id,requester_user_id,executor_user_id,organization_id,workspace_id")
-        .eq("request_id", requestId)
-        .maybeSingle();
-      if (result.error || !isRecord(result.data)) return null;
-      const row = result.data;
+      if (!requestId.trim()) return null;
+      const result = await this.client.rpc("resolve_authenticated_execution_request", {
+        p_request_id: requestId,
+      });
+      if (result.error) return null;
+      const rows = Array.isArray(result.data)
+        ? result.data
+        : result.data === null || result.data === undefined ? [] : [result.data];
+      if (rows.length !== 1 || !isRecord(rows[0])) return null;
+      const row = rows[0];
       const request = requiredString(row, "request_id");
       const task = requiredString(row, "task_id");
       const mission = requiredString(row, "mission_id");
@@ -132,21 +136,50 @@ export class SupabaseNamedExecutorContextProvider implements NamedExecutorContex
  * The adapter re-reads both current membership rows at authorization time;
  * it does not infer role hierarchy or trust role strings from the JWT.
  */
-/** Resolves the persisted approver from current active tenant membership. */
+/**
+ * Resolves the persisted approver from an executor-JWT-bound RPC. The caller
+ * supplies only grant and tenant selectors; PostgreSQL derives executor via
+ * auth.uid() and obtains approver identity from the immutable persisted grant.
+ */
 export class SupabasePersistedApproverMembershipProvider implements PersistedApproverMembershipProvider {
-  constructor(private readonly memberships: CanonicalTenantMembershipStore) {}
+  constructor(private readonly client: SupabaseApproverMembershipRpcClient) {}
 
   async getActiveActor(
     userId: string,
     scope: { organizationId: string; workspaceId: string },
+    grantId: string,
   ): Promise<AuthenticatedApprovalActor | null> {
     try {
-      const context = await resolveCanonicalTenantContext(
-        { userId },
-        scope,
-        this.memberships,
+      if (!userId.trim() || !grantId.trim() ||
+          !scope.organizationId.trim() || !scope.workspaceId.trim()) return null;
+      const result = await this.client.rpc(
+        "resolve_authenticated_file_mutation_approver_membership",
+        {
+          p_grant_id: grantId,
+          p_organization_id: scope.organizationId,
+          p_workspace_id: scope.workspaceId,
+        },
       );
-      return context?.actor ?? null;
+      if (result.error) return null;
+      const rows = Array.isArray(result.data)
+        ? result.data
+        : result.data === null || result.data === undefined ? [] : [result.data];
+      if (rows.length !== 1 || !isRecord(rows[0])) return null;
+      const row = rows[0];
+      const returnedUserId = requiredString(row, "approver_user_id");
+      const organizationId = requiredString(row, "organization_id");
+      const workspaceId = requiredString(row, "workspace_id");
+      const organizationRole = requiredString(row, "organization_role");
+      const workspaceRole = requiredString(row, "workspace_role");
+      if (returnedUserId !== userId || organizationId !== scope.organizationId ||
+          workspaceId !== scope.workspaceId || !organizationRole || !workspaceRole) return null;
+      return {
+        userId: returnedUserId,
+        organizationIds: [organizationId],
+        workspaceIds: [workspaceId],
+        organizationRole,
+        workspaceRole,
+      };
     } catch {
       return null;
     }
@@ -174,21 +207,25 @@ export class SupabaseMembershipApprovalRoleAuthorizer implements ApprovalRoleAut
       if (!actor.userId.trim() ||
           !actor.organizationIds.includes(scope.organizationId) ||
           !actor.workspaceIds.includes(scope.workspaceId)) return false;
-      const organization = await this.memberships.getOrganizationMembership(
-        actor.userId,
-        scope.organizationId,
-      );
-      const workspace = await this.memberships.getWorkspaceMembership(
+      // A grant-bound executor-JWT RPC may supply the approver's live role
+      // evidence. Do not re-query auth.uid()-bound membership as another user.
+      if (actor.organizationRole && actor.workspaceRole) {
+        return this.rolePolicy(actor.organizationRole, actor.workspaceRole, role) === true;
+      }
+      const pair = await this.memberships.getTenantMembershipPair(
         actor.userId,
         scope.organizationId,
         scope.workspaceId,
       );
+      const organization = pair?.organization;
+      const workspace = pair?.workspace;
       if (!organization || !workspace ||
           organization.status !== "ACTIVE" || workspace.status !== "ACTIVE" ||
           organization.userId !== actor.userId || workspace.userId !== actor.userId ||
           organization.organizationId !== scope.organizationId ||
           workspace.organizationId !== scope.organizationId ||
-          workspace.workspaceId !== scope.workspaceId) return false;
+          workspace.workspaceId !== scope.workspaceId ||
+          !organization.role.trim() || !workspace.role.trim()) return false;
       return this.rolePolicy(organization.role, workspace.role, role) === true;
     } catch {
       return false;

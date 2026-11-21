@@ -70,9 +70,18 @@ function simpleHash(value: string): string {
 }
 
 export class WorkspaceCodeExecutor {
+  /**
+   * The caller must supply an explicitly provisioned workspace root.
+   * Never fall back to process.cwd(), which is the application/repository
+   * directory rather than a tenant-owned workspace.
+   */
   constructor(
-    private readonly workspaceRoot: string = process.cwd(),
-  ) {}
+    private readonly workspaceRoot: string,
+  ) {
+    if (typeof workspaceRoot !== "string" || !workspaceRoot.trim()) {
+      throw new Error("An explicit tenant workspace root is required.");
+    }
+  }
 
   private resolveSafePath(relativePath: string): string {
     if (!relativePath || isAbsolute(relativePath)) {
@@ -102,9 +111,19 @@ export class WorkspaceCodeExecutor {
     for (const segment of relativeCandidate.split(sep).filter(Boolean)) {
       current = resolve(current, segment);
       try {
-        if (lstatSync(current).isSymbolicLink()) {
+        const entry = lstatSync(current);
+        if (entry.isSymbolicLink()) {
           throw new Error(
             `Workspace symlinks are not allowed: ${relativePath}`,
+          );
+        }
+        // A regular file with multiple hard links can alias an inode outside
+        // this workspace even though its pathname contains no symlink.
+        // Reject it before READ or mutation so tenant paths cannot be used
+        // to access or overwrite an externally linked inode.
+        if (entry.isFile() && entry.nlink > 1) {
+          throw new Error(
+            `Workspace hard links are not allowed: ${relativePath}`,
           );
         }
       } catch (error) {

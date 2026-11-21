@@ -23,7 +23,7 @@ export interface NamedExecutorContextProvider {
 
 export interface PersistedApproverMembershipProvider {
   /** Independently loads current approver membership in the exact tenant. */
-  getActiveActor(userId: string, scope: Scope): Promise<AuthenticatedApprovalActor | null>;
+  getActiveActor(userId: string, scope: Scope, grantId: string): Promise<AuthenticatedApprovalActor | null>;
 }
 
 export interface NamedExecutorGrantLookup {
@@ -162,7 +162,7 @@ export class NamedExecutorFileMutationAuthorizer implements FileMutationAuthoriz
 
       // Approver identity comes only from the persisted decision/grant and is
       // independently revalidated; it is never equated to the executor.
-      const approver = await this.approvers.getActiveActor(grant.approverUserId, scope);
+      const approver = await this.approvers.getActiveActor(grant.approverUserId, scope, grant.grantId);
       if (!validActor(approver, grant.approverUserId, scope)) return false;
       if (!await this.roles.hasRequiredRole(approver, grant.requiredRole, scope)) return false;
 

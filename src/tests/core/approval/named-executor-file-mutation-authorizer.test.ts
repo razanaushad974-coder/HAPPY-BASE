@@ -60,7 +60,8 @@ async function main(): Promise<void> {
   const authorizer = new NamedExecutorFileMutationAuthorizer(
     { async getContext() { return context; } },
     store,
-    { async getActiveActor(userId, requested) {
+    { async getActiveActor(userId, requested, grantId) {
+      assert(grantId === "grant-1", "Approver membership lookup must be bound to the persisted grant ID.");
       return userId === approver.userId && requested.organizationId === scope.organizationId &&
         requested.workspaceId === scope.workspaceId ? approver : null;
     } },

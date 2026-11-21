@@ -19,8 +19,21 @@ export class TaskGraphEngine {
       ids.add(task.id);
     }
 
+    const missionIds = new Set(tasks.map((task) => task.missionId));
+    if (missionIds.size > 1) {
+      errors.push("Task graph cannot contain tasks from multiple missions.");
+    }
+
     for (const task of tasks) {
+      const dependencyIds = new Set<string>();
       for (const dependencyId of task.dependencyIds) {
+        if (dependencyIds.has(dependencyId)) {
+          errors.push(
+            `Task ${task.id} contains duplicate dependency ${dependencyId}.`,
+          );
+        }
+        dependencyIds.add(dependencyId);
+
         if (!ids.has(dependencyId)) {
           errors.push(
             `Task ${task.id} references missing dependency ${dependencyId}.`,
@@ -97,10 +110,6 @@ export class TaskGraphEngine {
       );
     }
 
-    const taskMap = new Map(
-      tasks.map((task) => [task.id, task]),
-    );
-
     const roots = tasks
       .filter((task) => task.dependencyIds.length === 0)
       .map((task) => task.id);
@@ -135,6 +144,22 @@ export class TaskGraphEngine {
   }
 
   getReadyTasks(graph: TaskGraph): MissionTask[] {
+    const validation = this.validate(graph.tasks);
+    if (!validation.valid) {
+      throw new Error(
+        `Invalid task graph: ${validation.errors.join(" | ")}`,
+      );
+    }
+
+    if (
+      graph.tasks.length > 0 &&
+      graph.missionId !== graph.tasks[0].missionId
+    ) {
+      throw new Error(
+        "Task graph mission ID does not match its task snapshot.",
+      );
+    }
+
     const completed = new Set(
       graph.tasks
         .filter((task) => task.status === "COMPLETED")

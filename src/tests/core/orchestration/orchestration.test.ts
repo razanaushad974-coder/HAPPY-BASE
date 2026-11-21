@@ -401,10 +401,20 @@ async function main(): Promise<void> {
                     approvedCase.executionRequestId,
                 )
             : undefined;
+    const restoredTasks =
+        await restartedStore
+            .task()
+            .list();
 
     type PersistedExecutionRecord = {
         data?: {
             approved?: boolean;
+        };
+    };
+    type PersistedTaskRecord = {
+        data?: {
+            status?: string;
+            dependencyIds?: string[];
             targetReference?: {
                 entityId?: string;
                 entityType?: string;
@@ -415,41 +425,40 @@ async function main(): Promise<void> {
     const restoredExecutionRecord =
         restoredExecution as
             PersistedExecutionRecord | undefined;
-    const executionTaskTargetPreserved =
-        restoredExecutionRecord?.data?.targetReference?.entityId ===
-            "project-happy";
     const verifiedApprovalReachedExecution =
         restoredExecutionRecord?.data?.approved === true;
 
     assert(
         verifiedApprovalReachedExecution,
-        "Verified approval was not propagated to the downstream execution request.",
+        "Verified approval was not propagated to the execution request.",
+    );
+
+    const persistedTaskRecords =
+        restoredTasks.map(
+            (record) => record as PersistedTaskRecord,
+        );
+    const targetTask = persistedTaskRecords.find(
+        (record) =>
+            record.data?.targetReference?.entityId ===
+            "project-happy",
+    );
+    const rootTask = persistedTaskRecords.find(
+        (record) =>
+            (record.data?.dependencyIds ?? []).length === 0,
     );
 
     assert(
-        executionTaskTargetPreserved,
-        "Execution task selection lost the resolved project target.",
+        targetTask !== undefined,
+        "Resolved project target was not preserved in the persisted mission task graph.",
     );
-
-    console.log({
-        executionTaskTargetPreserved:
-            executionTaskTargetPreserved,
-    });
-
-
-    const executionTargetPreserved =
-        restoredExecutionRecord?.data?.targetReference?.entityId ===
-            "project-happy";
-
     assert(
-        executionTargetPreserved,
-        "Resolved project target was not persisted in ExecutionRequest.",
+        (rootTask?.data?.status === "BLOCKED" || rootTask?.data?.status === "FAILED"),
+        "The root task was not held after execution or verification failed.",
     );
-
-    console.log({
-        executionTargetPreserved:
-            executionTargetPreserved,
-    });
+    assert(
+        targetTask?.data?.status === "PENDING",
+        "A dependent task ran before its prerequisite passed verification.",
+    );
     const restoredVerification =
         approvedCase.verificationRequestId
             ? await restartedStore
@@ -493,11 +502,6 @@ async function main(): Promise<void> {
 
     const evidencePersisted =
         restoredEvidence.length > 0;
-
-    const restoredTasks =
-        await restartedStore
-            .task()
-            .list();
 
     const restoredAudits =
         await restartedStore

@@ -9,6 +9,9 @@ export interface AuthenticatedApprovalActor {
   userId: string;
   organizationIds: string[];
   workspaceIds: string[];
+  /** Present only when returned by an executor-JWT-bound persisted-approver RPC. */
+  organizationRole?: string;
+  workspaceRole?: string;
 }
 
 export interface PersistedPipelineApproval {

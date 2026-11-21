@@ -2,6 +2,7 @@ import {
   SupabaseNamedExecutorContextProvider,
   SupabasePersistedApproverMembershipProvider,
   SupabaseMembershipApprovalRoleAuthorizer,
+  SupabaseDurableExecutionRequestStore,
   type DurableExecutionRequestStore,
   type VerifiedServerIdentityProvider,
 } from "../../../core/tenant/supabase-named-executor-context-provider";
@@ -25,12 +26,12 @@ async function main(): Promise<void> {
     status: "ACTIVE", role: "MEMBER",
   };
   const memberships: CanonicalTenantMembershipStore = {
-    async getOrganizationMembership(userId, organizationId) {
-      return userId === org.userId && organizationId === org.organizationId ? org : null;
-    },
-    async getWorkspaceMembership(userId, organizationId, workspaceId) {
-      return userId === workspace.userId && organizationId === workspace.organizationId &&
-        workspaceId === workspace.workspaceId ? workspace : null;
+    async getTenantMembershipPair(userId, organizationId, workspaceId) {
+      return userId === org.userId &&
+        organizationId === org.organizationId &&
+        workspaceId === workspace.workspaceId
+        ? { organization: org, workspace }
+        : null;
     },
   };
   const identity: VerifiedServerIdentityProvider = {
@@ -51,6 +52,40 @@ async function main(): Promise<void> {
     approved: false, risk: "HIGH", createdAt: "2026-11-19T00:00:00.000Z",
   } as ExecutionRequest;
 
+  const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const rpcStore = new SupabaseDurableExecutionRequestStore({
+    async rpc(name, args) {
+      rpcCalls.push({ name, args });
+      return {
+        error: null,
+        data: [{
+          request_id: "request-1", task_id: "task-1", mission_id: "mission-1",
+          requester_user_id: "requester-1", executor_user_id: "executor-1",
+          organization_id: "org-1", workspace_id: "workspace-1",
+        }],
+      };
+    },
+  });
+  const loadedRequest = await rpcStore.getByRequestId("request-1");
+  assert(loadedRequest?.requesterUserId === "requester-1",
+    "Durable request principals must be loaded from the executor-bound RPC.");
+  assert(rpcCalls.length === 1 &&
+    rpcCalls[0].name === "resolve_authenticated_execution_request" &&
+    rpcCalls[0].args.p_request_id === "request-1" &&
+    Object.keys(rpcCalls[0].args).length === 1,
+    "Request lookup must send only the opaque request ID; auth.uid() supplies executor identity.");
+
+  const deniedRequestStore = new SupabaseDurableExecutionRequestStore({
+    async rpc() { return { error: null, data: [] }; },
+  });
+  assert(await deniedRequestStore.getByRequestId("request-1") === null,
+    "A request not assigned to auth.uid() must be unavailable.");
+  const erroredRequestStore = new SupabaseDurableExecutionRequestStore({
+    async rpc() { return { error: { message: "denied" }, data: null }; },
+  });
+  assert(await erroredRequestStore.getByRequestId("request-1") === null,
+    "RPC errors must fail closed.");
+
   const contexts = new SupabaseNamedExecutorContextProvider(identity, durable, memberships);
   const context = await contexts.getContext(request);
   assert(context?.requesterUserId === "requester-1", "Requester must come from durable request.");
@@ -66,40 +101,85 @@ async function main(): Promise<void> {
   ).getContext(request);
   assert(denied === null, "Session identity different from named executor must be denied.");
 
-  const approverMemberships: CanonicalTenantMembershipStore = {
-    async getOrganizationMembership(userId, organizationId) {
-      return userId === "approver-1" && organizationId === "org-1"
-        ? { userId, organizationId, status: "ACTIVE", role: "FOUNDER" }
-        : null;
+  const approverRpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const approvers = new SupabasePersistedApproverMembershipProvider({
+    async rpc(name, args) {
+      approverRpcCalls.push({ name, args });
+      return {
+        error: null,
+        data: [{
+          approver_user_id: "approver-1",
+          organization_id: "org-1",
+          workspace_id: "workspace-1",
+          organization_role: "FOUNDER",
+          workspace_role: "ADMIN",
+        }],
+      };
     },
-    async getWorkspaceMembership(userId, organizationId, workspaceId) {
-      return userId === "approver-1" && organizationId === "org-1" &&
-        workspaceId === "workspace-1"
-        ? { userId, organizationId, workspaceId, status: "ACTIVE", role: "ADMIN" }
-        : null;
-    },
-  };
-  const approvers = new SupabasePersistedApproverMembershipProvider(approverMemberships);
+  });
   const approver = await approvers.getActiveActor("approver-1", {
     organizationId: "org-1", workspaceId: "workspace-1",
-  });
-  assert(approver?.userId === "approver-1", "Persisted approver active membership was not resolved.");
-  assert(await approvers.getActiveActor("removed-approver", {
-    organizationId: "org-1", workspaceId: "workspace-1",
-  }) === null, "Missing approver membership must deny.");
+  }, "grant-1");
+  assert(approver?.userId === "approver-1", "Persisted approver identity was not resolved.");
+  assert(approver.organizationRole === "FOUNDER" && approver.workspaceRole === "ADMIN",
+    "Current approver role evidence was not mapped.");
+  assert(approverRpcCalls.length === 1 &&
+    approverRpcCalls[0].name === "resolve_authenticated_file_mutation_approver_membership" &&
+    approverRpcCalls[0].args.p_grant_id === "grant-1" &&
+    approverRpcCalls[0].args.p_organization_id === "org-1" &&
+    approverRpcCalls[0].args.p_workspace_id === "workspace-1" &&
+    Object.keys(approverRpcCalls[0].args).length === 3,
+    "Approver lookup must send only persisted grant and tenant selectors; auth.uid() supplies executor.");
 
+  const mismatchedApprover = new SupabasePersistedApproverMembershipProvider({
+    async rpc() {
+      return { error: null, data: [{
+        approver_user_id: "different-user",
+        organization_id: "org-1",
+        workspace_id: "workspace-1",
+        organization_role: "FOUNDER",
+        workspace_role: "ADMIN",
+      }] };
+    },
+  });
+  assert(await mismatchedApprover.getActiveActor("approver-1", {
+    organizationId: "org-1", workspaceId: "workspace-1",
+  }, "grant-1") === null, "RPC result for a different persisted approver was accepted.");
+
+  const revokedApprover = new SupabasePersistedApproverMembershipProvider({
+    async rpc() { return { error: null, data: [] }; },
+  });
+  assert(await revokedApprover.getActiveActor("approver-1", {
+    organizationId: "org-1", workspaceId: "workspace-1",
+  }, "grant-1") === null, "Revoked/missing approver membership must deny.");
+
+  const erroredApprover = new SupabasePersistedApproverMembershipProvider({
+    async rpc() { return { error: { message: "denied" }, data: null }; },
+  });
+  assert(await erroredApprover.getActiveActor("approver-1", {
+    organizationId: "org-1", workspaceId: "workspace-1",
+  }, "grant-1") === null, "Approver RPC error must fail closed.");
+
+  let crossUserMembershipReads = 0;
   const roleAuthorizer = new SupabaseMembershipApprovalRoleAuthorizer(
-    approverMemberships,
+    {
+      async getTenantMembershipPair() {
+        crossUserMembershipReads += 1;
+        return null;
+      },
+    },
     (organizationRole, workspaceRole, requiredRole) =>
       requiredRole === "FOUNDER" && organizationRole === "FOUNDER" &&
       workspaceRole === "ADMIN",
   );
   assert(await roleAuthorizer.hasRequiredRole(approver, "FOUNDER", {
     organizationId: "org-1", workspaceId: "workspace-1",
-  }), "Explicit current membership role policy should authorize.");
+  }), "Explicit role policy should authorize RPC-verified approver role evidence.");
   assert(!(await roleAuthorizer.hasRequiredRole(approver, "ADMIN", {
     organizationId: "org-1", workspaceId: "workspace-1",
   })), "Role policy must not infer ADMIN from FOUNDER.");
+  assert(crossUserMembershipReads === 0,
+    "Role authorization must not re-query auth.uid()-bound membership as the distinct approver.");
 
   console.log("Supabase named-executor context and approver providers: PASS");
 }

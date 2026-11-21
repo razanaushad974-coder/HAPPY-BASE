@@ -46,6 +46,51 @@ async function main(): Promise<void> {
       source: "ACTIVE_CONTEXT" as const,
     };
 
+    const implicitWorkspaceRelativePath =
+      `.happy-implicit-workspace-must-not-write-${Date.now()}.tmp`;
+    const implicitWorkspacePath = join(
+      process.cwd(),
+      implicitWorkspaceRelativePath,
+    );
+    assert(
+      !existsSync(implicitWorkspacePath),
+      "The implicit-workspace regression target unexpectedly exists.",
+    );
+    const unconfiguredAdapter = new FileExecutionAdapter(
+      undefined,
+      {
+        async authorize() {
+          return true;
+        },
+      },
+    );
+    assert(
+      unconfiguredAdapter.status() === "NOT_YET_CONNECTED",
+      "FILE adapter without an explicit workspace executor must remain disconnected.",
+    );
+    const unconfiguredResult = await unconfiguredAdapter.execute({
+      id: "file-no-workspace-test",
+      taskId: "task-file",
+      missionId: "mission-file",
+      capability: "FILE",
+      action: "CREATE",
+      input: {
+        operation: "CREATE",
+        path: implicitWorkspaceRelativePath,
+        content: "must never be written",
+      },
+      targetReference: target,
+      requiresApproval: false,
+      approved: true,
+      risk: "HIGH",
+      createdAt: new Date().toISOString(),
+    });
+    assert(
+      unconfiguredResult.status === "NOT_YET_CONNECTED" &&
+        !existsSync(implicitWorkspacePath),
+      "FILE adapter used an implicit process.cwd() workspace without explicit provisioning.",
+    );
+
     assert(
       adapter.status() === "AVAILABLE",
       "FILE adapter should be AVAILABLE.",
@@ -283,7 +328,9 @@ async function main(): Promise<void> {
 
     console.log({
       fileTargetSupported: true,
-      fileCapabilityAvailable: true,
+      fileCapabilityAvailableWithExplicitExecutor: true,
+      missingExecutorStaysNotYetConnected: true,
+      implicitProcessCwdWorkspaceDenied: true,
       forgedApprovedFlagDenied: true,
       defaultDenyMutationGate: true,
       injectedAuthorizerPath: true,

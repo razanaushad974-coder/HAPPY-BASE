@@ -4,11 +4,55 @@ import type {
 
 import type {
   Mission,
+  MissionStatus,
   MissionTask,
   TaskStatus,
 } from "./types";
 
 import { TaskGraphEngine } from "./task-graph";
+const ALLOWED_TASK_TRANSITIONS: Record<TaskStatus, readonly TaskStatus[]> = {
+  PENDING: ["READY", "RUNNING", "BLOCKED", "CANCELLED"],
+  READY: ["RUNNING", "BLOCKED", "CANCELLED"],
+  RUNNING: ["VERIFYING", "FAILED", "BLOCKED", "CANCELLED"],
+  VERIFYING: ["COMPLETED", "FAILED", "BLOCKED", "CANCELLED"],
+  COMPLETED: [],
+  FAILED: [],
+  BLOCKED: [],
+  CANCELLED: [],
+};
+
+
+function assertMissionTaskSnapshot(
+  mission: Mission,
+  tasks: MissionTask[],
+): void {
+  const declaredIds = new Set(mission.taskIds);
+  if (declaredIds.size !== mission.taskIds.length) {
+    throw new Error(`Mission ${mission.id} contains duplicate task IDs.`);
+  }
+
+  const persistedIds = new Set<string>();
+  for (const task of tasks) {
+    if (task.missionId !== mission.id || !declaredIds.has(task.id)) {
+      throw new Error(
+        `Task snapshot contains a task outside mission ${mission.id}: ${task.id}`,
+      );
+    }
+    if (persistedIds.has(task.id)) {
+      throw new Error(`Task snapshot contains duplicate task ID: ${task.id}`);
+    }
+    persistedIds.add(task.id);
+  }
+
+  if (
+    persistedIds.size !== declaredIds.size ||
+    [...declaredIds].some((taskId) => !persistedIds.has(taskId))
+  ) {
+    throw new Error(
+      `Task snapshot is incomplete for mission ${mission.id}; every declared task must be present exactly once.`,
+    );
+  }
+}
 
 export class MissionEngine {
   private readonly graphEngine = new TaskGraphEngine();
@@ -84,10 +128,64 @@ export class MissionEngine {
     mission: Mission;
     tasks: MissionTask[];
   } {
-    const target = tasks.find((task) => task.id === taskId);
+    assertMissionTaskSnapshot(mission, tasks);
+    // Status transitions are a second scheduling boundary. Do not rely on
+    // callers having passed this snapshot through TaskGraphEngine first.
+    this.graphEngine.buildGraph(tasks);
+    const matchingTasks = tasks.filter((task) => task.id === taskId);
+    if (matchingTasks.length !== 1) {
+      throw new Error(
+        matchingTasks.length === 0
+          ? `Task not found: ${taskId}`
+          : `Task ID is ambiguous in the supplied mission snapshot: ${taskId}`,
+      );
+    }
+    const target = matchingTasks[0];
+    if (target.missionId !== mission.id || !mission.taskIds.includes(taskId)) {
+      throw new Error(`Task ${taskId} does not belong to mission ${mission.id}.`);
+    }
+    if (target.status !== status &&
+        !ALLOWED_TASK_TRANSITIONS[target.status].includes(status)) {
+      throw new Error(
+        `Invalid task status transition: ${target.status} -> ${status}.`,
+      );
+    }
 
-    if (!target) {
-      throw new Error(`Task not found: ${taskId}`);
+    // A task cannot start while its parent mission is awaiting approval,
+    // cancelled, failed, blocked, or otherwise outside an executable state.
+    // Retry explicitly restores a failed mission to READY before another run.
+    if (
+      status === "RUNNING" &&
+      target.status !== "RUNNING" &&
+      mission.status !== "READY" &&
+      mission.status !== "RUNNING" &&
+      mission.status !== "VERIFYING"
+    ) {
+      throw new Error(
+        `Mission ${mission.id} is not executable while in status ${mission.status}.`,
+      );
+    }
+
+    // The transition API is also a trust boundary: callers must not be able
+    // to bypass TaskGraphEngine scheduling by starting a dependent task early.
+    if (status === "RUNNING" && target.status !== "RUNNING") {
+      const dependencies = target.dependencyIds.map((dependencyId) => ({
+        id: dependencyId,
+        matches: tasks.filter((task) => task.id === dependencyId),
+      }));
+      if (dependencies.some(({ id, matches }) =>
+        matches.length !== 1 ||
+        matches[0].missionId !== mission.id ||
+        !mission.taskIds.includes(id) ||
+        matches[0].status !== "COMPLETED"
+      )) {
+        throw new Error(
+          `Task ${taskId} cannot run until every mission dependency is completed.`,
+        );
+      }
+    }
+    if (target.status === status) {
+      return { mission, tasks };
     }
 
     const updatedTasks = tasks.map((task) =>
@@ -153,6 +251,69 @@ export class MissionEngine {
         failedTaskIds,
         blockedTaskIds,
         progressPercent,
+        updatedAt: new Date().toISOString(),
+      },
+      tasks: updatedTasks,
+    };
+  }
+
+  retryMissionTask(
+    mission: Mission,
+    tasks: MissionTask[],
+    taskId: string,
+  ): { mission: Mission; tasks: MissionTask[] } {
+    assertMissionTaskSnapshot(mission, tasks);
+    // Retry must not revive work from a malformed dependency graph either.
+    this.graphEngine.buildGraph(tasks);
+    if (mission.status !== "FAILED" && mission.status !== "BLOCKED") {
+      throw new Error(
+        `Mission ${mission.id} cannot retry tasks while in status ${mission.status}.`,
+      );
+    }
+    const matchingTasks = tasks.filter((item) => item.id === taskId);
+    if (matchingTasks.length !== 1) {
+      throw new Error(
+        matchingTasks.length === 0
+          ? `Task not found: ${taskId}`
+          : `Task ID is ambiguous in the supplied mission snapshot: ${taskId}`,
+      );
+    }
+    const task = matchingTasks[0];
+    if (task.missionId !== mission.id || !mission.taskIds.includes(taskId)) {
+      throw new Error(`Task ${taskId} does not belong to mission ${mission.id}.`);
+    }
+
+    const retriedTask = this.retryTask(task);
+    const updatedTasks = tasks.map((item) =>
+      item.id === taskId ? retriedTask : item,
+    );
+    const completedTaskIds = updatedTasks
+      .filter((item) => item.status === "COMPLETED")
+      .map((item) => item.id);
+    const failedTaskIds = updatedTasks
+      .filter((item) => item.status === "FAILED")
+      .map((item) => item.id);
+    const blockedTaskIds = updatedTasks
+      .filter((item) => item.status === "BLOCKED")
+      .map((item) => item.id);
+    const total = updatedTasks.length;
+
+    let status: MissionStatus = mission.status;
+    if (failedTaskIds.length > 0) status = "FAILED";
+    else if (blockedTaskIds.length > 0) status = "BLOCKED";
+    else if (total > 0 && completedTaskIds.length === total) status = "COMPLETED";
+    else if (updatedTasks.some((item) => item.status === "RUNNING")) status = "RUNNING";
+    else if (updatedTasks.some((item) => item.status === "VERIFYING")) status = "VERIFYING";
+    else status = "READY";
+
+    return {
+      mission: {
+        ...mission,
+        status,
+        completedTaskIds,
+        failedTaskIds,
+        blockedTaskIds,
+        progressPercent: total === 0 ? 0 : Math.round((completedTaskIds.length / total) * 100),
         updatedAt: new Date().toISOString(),
       },
       tasks: updatedTasks,
