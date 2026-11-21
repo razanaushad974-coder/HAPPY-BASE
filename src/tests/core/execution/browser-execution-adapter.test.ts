@@ -129,7 +129,7 @@ async function main(): Promise<void> {
 
   try {
     const adapter =
-      new BrowserExecutionAdapter();
+      new BrowserExecutionAdapter(["127.0.0.1"]);
 
     assert(
       adapter.status() ===
