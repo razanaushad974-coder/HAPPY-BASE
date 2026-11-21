@@ -50,6 +50,7 @@ create table public.happy_execution_dispatch_outbox (
   action text not null check (length(btrim(action)) > 0),
   payload_digest text not null check (payload_digest ~ '^sha256:[a-f0-9]{64}$'),
   payload jsonb not null check (jsonb_typeof(payload) = 'object'),
+  outcome jsonb not null default '{}'::jsonb check (jsonb_typeof(outcome) = 'object'),
   status text not null default 'PENDING'
     check (status in ('PENDING','DISPATCHED','ACKNOWLEDGED','AMBIGUOUS','FAILED','RECONCILIATION_REQUIRED')),
   created_at timestamptz not null default clock_timestamp(),
@@ -488,11 +489,97 @@ begin
 end;
 $dispatch$;
 
+
+create or replace function public.happy_record_dispatch_outcome(
+  p_organization_id uuid,
+  p_workspace_id uuid,
+  p_outbox_id uuid,
+  p_lease_id uuid,
+  p_owner_id text,
+  p_fencing_token bigint,
+  p_status text,
+  p_outcome jsonb
+)
+returns public.happy_execution_dispatch_outbox
+language plpgsql
+security definer
+set search_path = pg_catalog
+as $outcome$
+declare
+  v_actor uuid;
+  v_outbox public.happy_execution_dispatch_outbox%rowtype;
+  v_lease public.happy_mission_task_leases%rowtype;
+begin
+  v_actor := auth.uid();
+  if v_actor is null
+     or p_outbox_id is null
+     or p_status not in ('ACKNOWLEDGED','AMBIGUOUS','FAILED','RECONCILIATION_REQUIRED')
+     or p_outcome is null
+     or jsonb_typeof(p_outcome) is distinct from 'object' then
+    raise exception 'INVALID_DISPATCH_OUTCOME' using errcode = '22023';
+  end if;
+  if not public.happy_lock_active_tenant_scope(p_organization_id, p_workspace_id) then
+    raise exception 'TENANT_SCOPE_DENIED' using errcode = '42501';
+  end if;
+
+  -- Lock order matches enqueue and outbox claim: lease before outbox.
+  select * into v_outbox
+    from public.happy_execution_dispatch_outbox o
+   where o.organization_id = p_organization_id
+     and o.workspace_id = p_workspace_id
+     and o.user_id = v_actor
+     and o.outbox_id = p_outbox_id;
+  if not found then raise exception 'OUTBOX_NOT_FOUND' using errcode = 'P0002'; end if;
+
+  select * into v_lease
+    from public.happy_mission_task_leases l
+   where l.organization_id = p_organization_id
+     and l.workspace_id = p_workspace_id
+     and l.user_id = v_actor
+     and l.mission_id = v_outbox.mission_id
+     and l.task_id = v_outbox.task_id
+   for update;
+  if not found
+     or v_lease.lease_id <> p_lease_id
+     or v_lease.lease_id <> v_outbox.lease_id
+     or v_lease.owner_id <> p_owner_id
+     or v_lease.fencing_token <> p_fencing_token
+     or v_lease.fencing_token <> v_outbox.fencing_token then
+    raise exception 'STALE_LEASE_OUTCOME' using errcode = '55000';
+  end if;
+
+  select * into v_outbox
+    from public.happy_execution_dispatch_outbox o
+   where o.organization_id = p_organization_id
+     and o.workspace_id = p_workspace_id
+     and o.user_id = v_actor
+     and o.outbox_id = p_outbox_id
+   for update;
+  if not found or v_outbox.status <> 'DISPATCHED' then
+    raise exception 'OUTBOX_OUTCOME_ALREADY_RECORDED_OR_NOT_DISPATCHED' using errcode = '55000';
+  end if;
+
+  update public.happy_execution_dispatch_outbox
+     set status = p_status,
+         outcome = p_outcome,
+         updated_at = clock_timestamp()
+   where outbox_id = p_outbox_id
+     and status = 'DISPATCHED'
+  returning * into v_outbox;
+  if not found then
+    raise exception 'OUTBOX_OUTCOME_ALREADY_RECORDED_OR_NOT_DISPATCHED' using errcode = '55000';
+  end if;
+  return v_outbox;
+end;
+$outcome$;
+
 revoke all on function public.happy_claim_mission_task(uuid,uuid,text,text,text,integer)
   from public, anon, service_role;
 revoke all on function public.happy_heartbeat_mission_task_lease(uuid,uuid,text,text,uuid,text,bigint,integer)
   from public, anon, service_role;
 revoke all on function public.happy_claim_dispatch_outbox(uuid,uuid,uuid,uuid,text,bigint)
+  from public, anon, service_role;
+revoke all on function public.happy_record_dispatch_outcome(uuid,uuid,uuid,uuid,text,bigint,text,jsonb)
   from public, anon, service_role;
 revoke all on function public.happy_enqueue_mission_dispatch(uuid,uuid,text,text,uuid,text,bigint,text,text,text,text,text,jsonb)
   from public, anon, service_role;
@@ -501,6 +588,8 @@ grant execute on function public.happy_claim_mission_task(uuid,uuid,text,text,te
 grant execute on function public.happy_heartbeat_mission_task_lease(uuid,uuid,text,text,uuid,text,bigint,integer)
   to authenticated;
 grant execute on function public.happy_claim_dispatch_outbox(uuid,uuid,uuid,uuid,text,bigint)
+  to authenticated;
+grant execute on function public.happy_record_dispatch_outcome(uuid,uuid,uuid,uuid,text,bigint,text,jsonb)
   to authenticated;
 grant execute on function public.happy_enqueue_mission_dispatch(uuid,uuid,text,text,uuid,text,bigint,text,text,text,text,text,jsonb)
   to authenticated;
