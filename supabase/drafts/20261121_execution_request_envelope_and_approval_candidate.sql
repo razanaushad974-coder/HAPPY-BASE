@@ -33,13 +33,7 @@ alter table private.execution_requests
   add column decision_reason text,
   add column idempotency_key text,
   add column input_digest text,
-  add column result jsonb,
-  add column lease_token uuid,
-  add column lease_expires_at timestamptz,
-  add column attempt_count integer not null default 0,
-  add column created_at timestamptz not null default clock_timestamp(),
-  add column started_at timestamptz,
-  add column completed_at timestamptz;
+  add column created_at timestamptz not null default clock_timestamp();
 
 do $legacy$
 begin
@@ -73,7 +67,6 @@ alter table private.execution_requests
   add constraint execution_requests_required_role_check check(required_approval_role='FOUNDER'),
   add constraint execution_requests_idempotency_check check(length(btrim(idempotency_key)) between 1 and 160),
   add constraint execution_requests_digest_check check(input_digest ~ '^[0-9a-f]{64}$'),
-  add constraint execution_requests_attempt_check check(attempt_count between 0 and 1),
   add constraint execution_requests_approval_consistency_check
     check(requires_approval and risk='HIGH'),
   add constraint execution_requests_decision_consistency_check check(
@@ -82,24 +75,20 @@ alter table private.execution_requests
     or
     (approval_status='APPROVED' and approver_user_id is not null and decided_at is not null
       and decision_reason is not null and length(btrim(decision_reason))>0
-      and status in ('READY','RUNNING','COMPLETED','FAILED','BLOCKED'))
+      and status='READY')
     or
     (approval_status='REJECTED' and approver_user_id is not null and decided_at is not null
       and decision_reason is not null and length(btrim(decision_reason))>0 and status='CANCELLED')
   ),
-  add constraint execution_requests_lease_consistency_check check(
-    (status='RUNNING' and lease_token is not null and lease_expires_at is not null and started_at is not null)
-    or (status<>'RUNNING' and lease_token is null and lease_expires_at is null)
-  ),
   add constraint execution_requests_completion_consistency_check check(
-    (status in ('COMPLETED','FAILED','BLOCKED','CANCELLED') and completed_at is not null)
-    or (status not in ('COMPLETED','FAILED','BLOCKED','CANCELLED') and completed_at is null)
+    (status='CANCELLED' and approval_status='REJECTED')
+    or (status<>'CANCELLED' and approval_status<>'REJECTED')
   );
 
 alter table private.execution_requests
   drop constraint if exists execution_requests_status_check,
   add constraint execution_requests_lifecycle_status_check
-    check(status in ('WAITING_APPROVAL','READY','RUNNING','COMPLETED','FAILED','BLOCKED','CANCELLED'));
+    check(status in ('WAITING_APPROVAL','READY','CANCELLED'));
 
 create unique index execution_requests_idempotency_scope_idx
   on private.execution_requests(organization_id,workspace_id,requester_user_id,idempotency_key);
@@ -137,21 +126,9 @@ begin
       is distinct from row(old.approver_user_id,old.decided_at,old.decision_reason) then
     raise exception 'EXECUTION_APPROVAL_DECISION_IMMUTABLE';
   end if;
-  if old.status in ('COMPLETED','FAILED','BLOCKED','CANCELLED')
-    and row(new.result,new.completed_at,new.status)
-      is distinct from row(old.result,old.completed_at,old.status) then
-    raise exception 'EXECUTION_TERMINAL_RESULT_IMMUTABLE';
-  end if;
   if old.status is distinct from new.status and not(
-    (old.status='WAITING_APPROVAL' and new.status in ('READY','CANCELLED'))
-    or(old.status='READY' and new.status='RUNNING')
-    or(old.status='RUNNING' and new.status in ('COMPLETED','FAILED','BLOCKED'))
+    old.status='WAITING_APPROVAL' and new.status in ('READY','CANCELLED')
   ) then raise exception 'INVALID_EXECUTION_REQUEST_TRANSITION'; end if;
-  if old.status='READY' and new.status='RUNNING'
-    and (new.attempt_count <> old.attempt_count + 1 or new.attempt_count <> 1
-      or new.lease_token is null or new.lease_expires_at is null or new.started_at is null) then
-    raise exception 'INVALID_EXECUTION_CLAIM';
-  end if;
   return new;
 end;
 $guard$;
@@ -275,8 +252,7 @@ begin
    or v_request.requester_user_id=v_actor or v_request.executor_user_id=v_actor then return false; end if;
  update private.execution_requests set approval_status=p_decision,approver_user_id=v_actor,
    decided_at=v_now,decision_reason=btrim(p_reason),
-   status=case when p_decision='APPROVED' then 'READY' else 'CANCELLED' end,
-   completed_at=case when p_decision='REJECTED' then v_now else null end
+   status=case when p_decision='APPROVED' then 'READY' else 'CANCELLED' end
  where request_id=p_request_id and status='WAITING_APPROVAL' and approval_status='PENDING';
  if not found then return false; end if;
  insert into private.execution_request_decision_events(request_id,actor_user_id,decision,reason,occurred_at)
@@ -284,64 +260,6 @@ begin
  return true;
 end;
 $decision$;
-
--- One-shot claim; no automatic retry after lease expiry.
-create or replace function public.claim_authenticated_execution_request(p_request_id text,p_lease_seconds integer default 60)
-returns table(request_id text,lease_token uuid,lease_expires_at timestamptz,capability text,
- action text,input jsonb,target_reference jsonb,risk text)
-language plpgsql security definer set search_path=pg_catalog as $claim$
-declare v_actor uuid:=auth.uid(); v_row private.execution_requests%rowtype; v_scope record; v_now timestamptz:=clock_timestamp();
-begin
- if v_actor is null then raise exception 'AUTHENTICATION_REQUIRED' using errcode='42501'; end if;
- if p_lease_seconds is null or p_lease_seconds not between 5 and 300 then raise exception 'INVALID_EXECUTION_LEASE' using errcode='22023'; end if;
- select organization_id,workspace_id into v_scope from private.execution_requests
-  where request_id=p_request_id and executor_user_id=v_actor;
- if not found then raise exception 'EXECUTION_REQUEST_NOT_FOUND' using errcode='P0002'; end if;
- perform 1 from private.organizations where organization_id=v_scope.organization_id and status='ACTIVE' for share;
- if not found then raise exception 'TENANT_SCOPE_DENIED' using errcode='42501'; end if;
- perform 1 from private.workspaces where organization_id=v_scope.organization_id and workspace_id=v_scope.workspace_id and status='ACTIVE' for share;
- if not found then raise exception 'TENANT_SCOPE_DENIED' using errcode='42501'; end if;
- perform 1 from private.organization_memberships where organization_id=v_scope.organization_id and user_id=v_actor and status='ACTIVE' for share;
- if not found then raise exception 'TENANT_SCOPE_DENIED' using errcode='42501'; end if;
- perform 1 from private.workspace_memberships where organization_id=v_scope.organization_id and workspace_id=v_scope.workspace_id and user_id=v_actor and status='ACTIVE' for share;
- if not found then raise exception 'TENANT_SCOPE_DENIED' using errcode='42501'; end if;
- select r.* into v_row from private.execution_requests r where r.request_id=p_request_id and r.executor_user_id=v_actor for update;
- if not found then raise exception 'EXECUTION_REQUEST_NOT_FOUND' using errcode='P0002'; end if;
- if v_row.status<>'READY' or v_row.approval_status<>'APPROVED' or v_row.attempt_count<>0 then
-  raise exception 'EXECUTION_REQUEST_NOT_CLAIMABLE' using errcode='55000'; end if;
- update private.execution_requests r set status='RUNNING',lease_token=gen_random_uuid(),
-  lease_expires_at=v_now+make_interval(secs=>p_lease_seconds),started_at=v_now,attempt_count=1
- where r.request_id=p_request_id returning r.* into v_row;
- return query select v_row.request_id,v_row.lease_token,v_row.lease_expires_at,
-  v_row.capability,v_row.action,v_row.input,v_row.target_reference,v_row.risk;
-end;
-$claim$;
-
-create or replace function public.finish_authenticated_execution_request(
- p_request_id text,p_lease_token uuid,p_terminal_status text,p_result jsonb
-) returns boolean language plpgsql security definer set search_path=pg_catalog as $finish$
-declare v_actor uuid:=auth.uid(); v_scope record; v_now timestamptz:=clock_timestamp();
-begin
- if v_actor is null then return false; end if;
- if p_terminal_status not in ('COMPLETED','FAILED','BLOCKED') or p_result is null or jsonb_typeof(p_result)<>'object' then
-  raise exception 'INVALID_EXECUTION_RESULT' using errcode='22023'; end if;
- select organization_id,workspace_id into v_scope from private.execution_requests
-  where request_id=p_request_id and executor_user_id=v_actor;
- if not found then return false; end if;
- perform 1 from private.organizations where organization_id=v_scope.organization_id and status='ACTIVE' for share;
- if not found then return false; end if;
- perform 1 from private.workspaces where organization_id=v_scope.organization_id and workspace_id=v_scope.workspace_id and status='ACTIVE' for share;
- if not found then return false; end if;
- perform 1 from private.organization_memberships where organization_id=v_scope.organization_id and user_id=v_actor and status='ACTIVE' for share;
- if not found then return false; end if;
- perform 1 from private.workspace_memberships where organization_id=v_scope.organization_id and workspace_id=v_scope.workspace_id and user_id=v_actor and status='ACTIVE' for share;
- if not found then return false; end if;
- update private.execution_requests r set status=p_terminal_status,result=p_result,completed_at=v_now,
-  lease_token=null,lease_expires_at=null where r.request_id=p_request_id and r.executor_user_id=v_actor
-  and r.status='RUNNING' and r.lease_token=p_lease_token and r.lease_expires_at>v_now;
- return found;
-end;
-$finish$;
 
 -- Separate owners: read-only lookup versus tightly scoped request/decision DML.
 do $roles$
@@ -376,19 +294,13 @@ $role_check$;
 alter function public.resolve_authenticated_execution_request(text) owner to happy_execution_request_read_rpc_owner;
 alter function public.create_authenticated_execution_request(text,text,text,uuid,uuid,text,text,jsonb,jsonb,text,text) owner to happy_execution_request_write_rpc_owner;
 alter function public.decide_authenticated_execution_request(text,text,text) owner to happy_execution_request_write_rpc_owner;
-alter function public.claim_authenticated_execution_request(text,integer) owner to happy_execution_request_write_rpc_owner;
-alter function public.finish_authenticated_execution_request(text,uuid,text,jsonb) owner to happy_execution_request_write_rpc_owner;
 
 revoke all on function public.resolve_authenticated_execution_request(text) from public,anon,service_role;
 revoke all on function public.create_authenticated_execution_request(text,text,text,uuid,uuid,text,text,jsonb,jsonb,text,text) from public,anon,service_role;
 revoke all on function public.decide_authenticated_execution_request(text,text,text) from public,anon,service_role;
-revoke all on function public.claim_authenticated_execution_request(text,integer) from public,anon,service_role;
-revoke all on function public.finish_authenticated_execution_request(text,uuid,text,jsonb) from public,anon,service_role;
 grant execute on function public.resolve_authenticated_execution_request(text) to authenticated;
 grant execute on function public.create_authenticated_execution_request(text,text,text,uuid,uuid,text,text,jsonb,jsonb,text,text) to authenticated;
 grant execute on function public.decide_authenticated_execution_request(text,text,text) to authenticated;
-grant execute on function public.claim_authenticated_execution_request(text,integer) to authenticated;
-grant execute on function public.finish_authenticated_execution_request(text,uuid,text,jsonb) to authenticated;
 
 revoke insert,update,delete on private.execution_requests from authenticated;
 revoke insert,update,delete on private.execution_request_decision_events from authenticated;
