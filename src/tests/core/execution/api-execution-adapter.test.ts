@@ -182,7 +182,7 @@ async function main(): Promise<void> {
           url:
             `http://localhost:${port}/health`,
           allowedHosts: [
-            "127.0.0.1",
+            "localhost",
           ],
         },
         requiresApproval: false,
