@@ -52,8 +52,9 @@ async function main(): Promise<void> {
       };
     },
   };
-  assert(await new SupabaseDurableExecutionRequestCreator(createClient).create(command),
-    "A complete server-bound, founder-gated envelope should be accepted.");
+  const createdRequestId = await new SupabaseDurableExecutionRequestCreator(createClient).create(command);
+  assert(createdRequestId === command.requestId,
+    "A complete server-bound, founder-gated envelope should return its persisted request ID.");
   assert(createCalls.length === 1 &&
     createCalls[0].name === "create_authenticated_execution_request" &&
     typeof createCalls[0].args.p_input_digest === "string" &&
@@ -68,13 +69,13 @@ async function main(): Promise<void> {
   const deniedCreate = new SupabaseDurableExecutionRequestCreator({
     async rpc() { return { error: { message: "tenant denied" }, data: null }; },
   });
-  assert(!(await deniedCreate.create(command)), "Create RPC failure must fail closed.");
+  assert((await deniedCreate.create(command)) === null, "Create RPC failure must fail closed.");
   const malformedCreate = new SupabaseDurableExecutionRequestCreator({
     async rpc() {
       return { error: null, data: [{ status: "READY" }] };
     },
   });
-  assert(!(await malformedCreate.create(command)), "A response that is not pending founder approval must be rejected.");
+  assert((await malformedCreate.create(command)) === null, "A malformed durable response must be rejected.");
 
   const decisionCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const decisionClient: SupabaseExecutionRequestDecisionRpcClient = {
