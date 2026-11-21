@@ -13,7 +13,7 @@ import {
   type CanonicalTenantMembershipStore,
 } from "./canonical-tenant-context";
 import type {
-  SupabasePrivateSchemaClient,
+  SupabaseExecutionRequestRpcClient,
 } from "./supabase-private-tenant-stores";
 
 export interface VerifiedServerIdentityProvider {
@@ -44,19 +44,22 @@ function requiredString(row: Record<string, unknown>, key: string): string | nul
   return typeof value === "string" && value.trim() ? value : null;
 }
 
-/** Reads immutable request principals from the private, server-owned table. */
+/** Reads immutable request principals only through the executor-bound auth.uid() RPC. */
 export class SupabaseDurableExecutionRequestStore implements DurableExecutionRequestStore {
-  constructor(private readonly client: SupabasePrivateSchemaClient) {}
+  constructor(private readonly client: SupabaseExecutionRequestRpcClient) {}
 
   async getByRequestId(requestId: string): Promise<DurableExecutionRequestRecord | null> {
     try {
-      const result = await this.client.schema("private")
-        .from("execution_requests")
-        .select("request_id,task_id,mission_id,requester_user_id,executor_user_id,organization_id,workspace_id")
-        .eq("request_id", requestId)
-        .maybeSingle();
-      if (result.error || !isRecord(result.data)) return null;
-      const row = result.data;
+      if (!requestId.trim()) return null;
+      const result = await this.client.rpc("resolve_authenticated_execution_request", {
+        p_request_id: requestId,
+      });
+      if (result.error) return null;
+      const rows = Array.isArray(result.data)
+        ? result.data
+        : result.data === null || result.data === undefined ? [] : [result.data];
+      if (rows.length !== 1 || !isRecord(rows[0])) return null;
+      const row = rows[0];
       const request = requiredString(row, "request_id");
       const task = requiredString(row, "task_id");
       const mission = requiredString(row, "mission_id");
