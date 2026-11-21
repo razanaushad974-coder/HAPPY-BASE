@@ -1,4 +1,5 @@
 import {
+  SupabaseAuthenticatedNamedExecutorGrantLookupStore,
   SupabaseCanonicalTenantMembershipStore,
   SupabaseNamedExecutorGrantStore,
   type SupabasePrivateQuery,
@@ -225,6 +226,112 @@ async function main(): Promise<void> {
     binding,
     "2026-11-19T12:00:05.000Z",
   )), "Thrown RPC failures must fail closed.");
+
+  const lookupRpcCalls: Array<{ functionName: string; args: Record<string, unknown> }> = [];
+  const approvedGrantRow = {
+    grant_id: "grant-1",
+    request_id: "request-1",
+    task_id: "task-1",
+    mission_id: "mission-1",
+    requester_user_id: "requester-1",
+    executor_user_id: "executor-1",
+    approver_user_id: "approver-1",
+    organization_id: "org-1",
+    workspace_id: "workspace-1",
+    target_entity_type: "FILE",
+    target_entity_id: "file-1",
+    operation: "MODIFY",
+    source_path: "docs/plan.md",
+    destination_path: null,
+    input_digest: "a".repeat(64),
+    required_role: "ADMIN",
+    status: "APPROVED",
+    expires_at: "2026-12-01T00:00:00.000Z",
+    consumed_at: null,
+  };
+  const lookupStore = new SupabaseAuthenticatedNamedExecutorGrantLookupStore({
+    async rpc(functionName, args) {
+      lookupRpcCalls.push({ functionName, args });
+      return { data: [approvedGrantRow], error: null };
+    },
+  });
+  const approvedGrant = await lookupStore.getApprovedGrant(
+    { organizationId: "org-1", workspaceId: "workspace-1" },
+    {
+      requestId: "request-1",
+      taskId: "task-1",
+      missionId: "mission-1",
+      requesterUserId: "requester-1",
+      executorUserId: "executor-1",
+      organizationId: "org-1",
+      workspaceId: "workspace-1",
+      targetEntityType: "FILE",
+      targetEntityId: "file-1",
+      operation: "MODIFY",
+      sourcePath: "docs/plan.md",
+      destinationPath: null,
+      inputDigest: "a".repeat(64),
+    },
+  );
+  assert(approvedGrant?.grantId === "grant-1" &&
+    approvedGrant.approverUserId === "approver-1" &&
+    approvedGrant.executorUserId === "executor-1" &&
+    approvedGrant.requiredRole === "ADMIN",
+    "Authenticated grant lookup did not map the exact approved grant.");
+  const lookupCall = lookupRpcCalls[0];
+  assert(lookupCall?.functionName === "resolve_authenticated_file_mutation_approval_grant",
+    "Grant lookup did not use the executor-bound RPC.");
+  assert(lookupCall.args.p_organization_id === "org-1" &&
+    lookupCall.args.p_workspace_id === "workspace-1" &&
+    lookupCall.args.p_request_id === "request-1" &&
+    lookupCall.args.p_task_id === "task-1" &&
+    lookupCall.args.p_mission_id === "mission-1" &&
+    lookupCall.args.p_requester_user_id === "requester-1" &&
+    lookupCall.args.p_target_entity_id === "file-1" &&
+    lookupCall.args.p_operation === "MODIFY" &&
+    lookupCall.args.p_source_path === "docs/plan.md" &&
+    lookupCall.args.p_destination_path === null &&
+    lookupCall.args.p_input_digest === "a".repeat(64),
+    "Grant lookup RPC did not receive the full immutable binding.");
+  assert(!("p_executor_user_id" in lookupCall.args) &&
+    !("p_approver_user_id" in lookupCall.args),
+    "Executor/approver identity must be database-derived or grant-derived, not caller supplied.");
+  assert(!(await lookupStore.consumeApprovedGrant(
+    { organizationId: "org-1", workspaceId: "workspace-1" },
+    "grant-1",
+    binding,
+    "2026-11-19T12:00:06.000Z",
+  )), "Read-only lookup adapter must not consume grants.");
+
+  const ambiguousLookupStore = new SupabaseAuthenticatedNamedExecutorGrantLookupStore({
+    async rpc() { return { data: [approvedGrantRow, approvedGrantRow], error: null }; },
+  });
+  assert(await ambiguousLookupStore.getApprovedGrant(
+    { organizationId: "org-1", workspaceId: "workspace-1" },
+    {
+      requestId: "request-1", taskId: "task-1", missionId: "mission-1",
+      requesterUserId: "requester-1", executorUserId: "executor-1",
+      organizationId: "org-1", workspaceId: "workspace-1",
+      targetEntityType: "FILE", targetEntityId: "file-1",
+      operation: "MODIFY", sourcePath: "docs/plan.md",
+      destinationPath: null, inputDigest: "a".repeat(64),
+    },
+  ) === null, "Ambiguous multiple grant matches must fail closed.");
+
+  const failedLookupStore = new SupabaseAuthenticatedNamedExecutorGrantLookupStore({
+    async rpc() { return { data: null, error: { message: "permission denied" } }; },
+  });
+  assert(await failedLookupStore.getApprovedGrant(
+    { organizationId: "org-1", workspaceId: "workspace-1" },
+    {
+      requestId: "request-1", taskId: "task-1", missionId: "mission-1",
+      requesterUserId: "requester-1", executorUserId: "executor-1",
+      organizationId: "org-1", workspaceId: "workspace-1",
+      targetEntityType: "FILE", targetEntityId: "file-1",
+      operation: "MODIFY", sourcePath: "docs/plan.md",
+      destinationPath: null, inputDigest: "a".repeat(64),
+    },
+  ) === null, "Grant lookup RPC errors must fail closed.");
 
   console.log("Supabase private tenant/grant adapter contract: PASS");
 }
