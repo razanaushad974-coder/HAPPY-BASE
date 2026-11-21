@@ -20,7 +20,8 @@ export type MissionRecoveryReason =
   | "EXECUTION_FAILED"
   | "EXECUTION_WAITING_APPROVAL"
   | "EXECUTION_NOT_CONNECTED"
-  | "EXECUTION_BLOCKED";
+  | "EXECUTION_BLOCKED"
+  | "EXECUTION_CANCELLED";
 
 export interface MissionRecoveryExecution {
   id: string;
@@ -109,6 +110,8 @@ export function assessMissionRecovery(
         return { ...base, disposition: "APPROVAL_REVIEW_REQUIRED" as const, reason: "EXECUTION_WAITING_APPROVAL" as const };
       case "FAILED":
         return { ...base, disposition: "FAILED_EXECUTION_REVIEW_REQUIRED" as const, reason: "EXECUTION_FAILED" as const };
+      case "CANCELLED":
+        return { ...base, disposition: "BLOCKED_REVIEW_REQUIRED" as const, reason: "EXECUTION_CANCELLED" as const };
       case "BLOCKED":
       case "NOT_YET_CONNECTED":
         return { ...base, disposition: "BLOCKED_REVIEW_REQUIRED" as const, reason: execution.status === "BLOCKED" ? "EXECUTION_BLOCKED" as const : "EXECUTION_NOT_CONNECTED" as const };
