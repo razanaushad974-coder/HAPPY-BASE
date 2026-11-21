@@ -198,3 +198,12 @@ This remains a provider-neutral contract. A production implementation still need
 #### Reconciliation input hardening
 
 Provider status responses are external, untrusted input. The reconciliation contract now rejects missing/invalid provider identity, invalid observation timestamps, and unrecognized status values before persisting an observation. Missing optional failure metadata is normalized to explicit safe defaults; malformed provider success identity is kept in RECONCILIATION_REQUIRED rather than treated as verified. Regression tests cover malformed provider response and invalid timestamp paths. This remains contract-level validation; concrete provider schemas and authenticated status APIs must still be validated by each adapter.
+
+
+#### Durable reconciliation evidence persistence candidate
+
+The durable scheduler SQL draft now includes a separate `happy_dispatch_reconciliation_evidence` append-only table and authenticated `happy_append_dispatch_reconciliation_evidence` RPC. The RPC derives the actor from `auth.uid()`, revalidates the active tenant scope, locks and checks the exact outbox row, requires its original outcome to be AMBIGUOUS or RECONCILIATION_REQUIRED, and binds the observation to the original idempotency key and provider identifier recorded in the original outcome. It never updates the outbox outcome or task status.
+
+Each evidence event has a caller-supplied UUID. Repeating the same UUID and identical content is idempotent; reusing it with different content is rejected. Multiple distinct observations can be appended over time. The table has RLS enabled, no direct API table grants, and a trigger rejecting ordinary UPDATE/DELETE. The trigger function is invoker-scoped; only the append RPC is granted to authenticated.
+
+This remains a SQL design candidate, not a deployed schema or verified hosted Supabase implementation. Before promotion it needs an isolated PostgreSQL integration harness covering tenant mismatch, membership revocation, original-outcome mismatch, provider/key mismatch, duplicate event idempotency, changed-payload collision, append-only enforcement, and concurrent append. Also unresolved: function ownership, active-tenant helper ownership, real Supabase JWT/RLS behavior, payload schema/size/redaction/encryption, retention, and a concrete application store adapter.
