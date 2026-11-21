@@ -47,7 +47,7 @@ async function main(): Promise<void> {
           required_approval_role: "FOUNDER",
           status: "WAITING_APPROVAL",
           idempotency_key: command.idempotencyKey,
-          input_digest: String(args.p_input_digest),
+          input_digest: "a".repeat(64),
         }],
       };
     },
@@ -57,9 +57,9 @@ async function main(): Promise<void> {
     "A complete server-bound, founder-gated envelope should return its persisted request ID.");
   assert(createCalls.length > 0 &&
     createCalls[0].name === "create_authenticated_execution_request" &&
-    typeof createCalls[0].args.p_input_digest === "string" &&
-    /^[0-9a-f]{64}$/.test(createCalls[0].args.p_input_digest as string) &&
     createCalls[0].args.p_organization_id === command.organizationId &&
+    createCalls[0].args.p_request_id === command.requestId &&
+    !("p_input_digest" in createCalls[0].args) &&
     createCalls[0].args.p_workspace_id === command.workspaceId &&
     !("p_requester_user_id" in createCalls[0].args) &&
     !("p_executor_user_id" in createCalls[0].args) &&
@@ -70,7 +70,8 @@ async function main(): Promise<void> {
   const retryRequestId = await new SupabaseDurableExecutionRequestCreator(createClient).create(retryCommand);
   assert(retryRequestId === command.requestId &&
     createCalls.length === 2 &&
-    createCalls[0].args.p_input_digest === createCalls[1].args.p_input_digest,
+    createCalls[0].args.p_request_id !== createCalls[1].args.p_request_id &&
+    createCalls[0].args.p_idempotency_key === createCalls[1].args.p_idempotency_key,
     "An identical idempotent retry must resolve to the original persisted ID and stable envelope digest.");
 
   const deniedCreate = new SupabaseDurableExecutionRequestCreator({
