@@ -69,6 +69,18 @@ export interface SupabaseTenantContextRpcClient {
  * User-scoped RPC for loading the immutable execution request assigned to
  * auth.uid(). It intentionally exposes no private-schema table query surface.
  */
+/** Executor-JWT RPC resolves the persisted approver's current membership for one exact grant. */
+export interface SupabaseApproverMembershipRpcClient {
+  rpc(
+    functionName: "resolve_authenticated_file_mutation_approver_membership",
+    args: {
+      p_grant_id: string;
+      p_organization_id: string;
+      p_workspace_id: string;
+    },
+  ): Promise<DatabaseResult>;
+}
+
 export interface SupabaseExecutionRequestRpcClient {
   rpc(
     functionName: "resolve_authenticated_execution_request",
