@@ -609,3 +609,170 @@ grant execute on function public.happy_enqueue_mission_dispatch(uuid,uuid,text,t
 -- 5. Function ownership and the private tenant lock helper's owner privileges
 --    are unresolved. Verify real Supabase JWT/RLS/role behavior before migration.
 -- 6. This is a draft only; no connected database was changed.
+
+
+-- Append-only provider reconciliation evidence.
+-- A reconciliation observation is separate from the immutable first dispatch
+-- outcome above. Repeated reads are new events; retrying the same event ID with
+-- the same payload is idempotent. This is design-only and is NOT applied.
+create table public.happy_dispatch_reconciliation_evidence (
+  evidence_id uuid not null,
+  organization_id uuid not null,
+  workspace_id uuid not null,
+  user_id uuid not null references auth.users(id) on delete restrict,
+  outbox_id uuid not null references public.happy_execution_dispatch_outbox(outbox_id) on delete restrict,
+  idempotency_key text not null check (length(btrim(idempotency_key)) > 0),
+  provider_id text not null check (length(btrim(provider_id)) > 0),
+  observation_status text not null
+    check (observation_status in ('SUCCEEDED','FAILED','PROCESSING','NOT_FOUND','UNKNOWN')),
+  observed_at timestamptz not null,
+  observation jsonb not null check (jsonb_typeof(observation) = 'object'),
+  created_at timestamptz not null default clock_timestamp(),
+  constraint happy_dispatch_reconciliation_evidence_pk
+    primary key (organization_id, workspace_id, user_id, evidence_id),
+  constraint happy_dispatch_reconciliation_evidence_outbox_fk
+    foreign key (organization_id, workspace_id, user_id, outbox_id)
+    references public.happy_execution_dispatch_outbox
+      (organization_id, workspace_id, user_id, outbox_id)
+    on delete restrict,
+  constraint happy_dispatch_reconciliation_evidence_status_binding
+    check (observation->>'status' = observation_status)
+);
+
+create index happy_dispatch_reconciliation_evidence_outbox_idx
+  on public.happy_dispatch_reconciliation_evidence
+    (organization_id, workspace_id, user_id, outbox_id, observed_at, evidence_id);
+
+alter table public.happy_dispatch_reconciliation_evidence enable row level security;
+revoke all on public.happy_dispatch_reconciliation_evidence
+  from public, anon, authenticated, service_role;
+
+comment on table public.happy_dispatch_reconciliation_evidence is
+  'Append-only provider status observations. Never rewrites the original dispatch outcome.';
+
+create or replace function public.happy_reject_reconciliation_evidence_mutation()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog
+as $immutable$
+begin
+  raise exception 'RECONCILIATION_EVIDENCE_APPEND_ONLY' using errcode = '55000';
+end;
+$immutable$;
+
+create trigger happy_dispatch_reconciliation_evidence_immutable
+before update or delete on public.happy_dispatch_reconciliation_evidence
+for each row execute function public.happy_reject_reconciliation_evidence_mutation();
+
+create or replace function public.happy_append_dispatch_reconciliation_evidence(
+  p_organization_id uuid,
+  p_workspace_id uuid,
+  p_outbox_id uuid,
+  p_evidence_id uuid,
+  p_idempotency_key text,
+  p_provider_id text,
+  p_observation_status text,
+  p_observed_at timestamptz,
+  p_observation jsonb
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = pg_catalog
+as $append$
+declare
+  v_actor uuid;
+  v_outbox public.happy_execution_dispatch_outbox%rowtype;
+  v_existing public.happy_dispatch_reconciliation_evidence%rowtype;
+begin
+  v_actor := auth.uid();
+  if v_actor is null
+     or p_outbox_id is null
+     or p_evidence_id is null
+     or p_idempotency_key is null or length(btrim(p_idempotency_key)) = 0
+     or p_provider_id is null or length(btrim(p_provider_id)) = 0
+     or p_observation_status is null
+     or p_observation_status not in ('SUCCEEDED','FAILED','PROCESSING','NOT_FOUND','UNKNOWN')
+     or p_observed_at is null
+     or p_observation is null
+     or jsonb_typeof(p_observation) is distinct from 'object'
+     or p_observation->>'status' is distinct from p_observation_status then
+    raise exception 'INVALID_RECONCILIATION_EVIDENCE' using errcode = '22023';
+  end if;
+
+  if not public.happy_lock_active_tenant_scope(p_organization_id, p_workspace_id) then
+    raise exception 'TENANT_SCOPE_DENIED' using errcode = '42501';
+  end if;
+
+  -- The original outcome remains immutable. Only ambiguous dispatches may
+  -- receive status observations, and the provider/key must match that record.
+  select * into v_outbox
+    from public.happy_execution_dispatch_outbox o
+   where o.organization_id = p_organization_id
+     and o.workspace_id = p_workspace_id
+     and o.user_id = v_actor
+     and o.outbox_id = p_outbox_id
+   for share;
+
+  if not found then raise exception 'OUTBOX_NOT_FOUND' using errcode = 'P0002'; end if;
+  if v_outbox.status not in ('AMBIGUOUS','RECONCILIATION_REQUIRED')
+     or v_outbox.idempotency_key <> p_idempotency_key
+     or v_outbox.outcome->>'provider' is distinct from p_provider_id then
+    raise exception 'RECONCILIATION_TARGET_BINDING_MISMATCH' using errcode = '55000';
+  end if;
+
+  insert into public.happy_dispatch_reconciliation_evidence (
+    evidence_id, organization_id, workspace_id, user_id, outbox_id,
+    idempotency_key, provider_id, observation_status, observed_at, observation
+  ) values (
+    p_evidence_id, p_organization_id, p_workspace_id, v_actor, p_outbox_id,
+    p_idempotency_key, p_provider_id, p_observation_status, p_observed_at, p_observation
+  )
+  on conflict (organization_id, workspace_id, user_id, evidence_id)
+  do nothing;
+
+  if found then return p_evidence_id; end if;
+
+  select * into v_existing
+    from public.happy_dispatch_reconciliation_evidence e
+   where e.organization_id = p_organization_id
+     and e.workspace_id = p_workspace_id
+     and e.user_id = v_actor
+     and e.evidence_id = p_evidence_id;
+
+  if not found
+     or v_existing.outbox_id <> p_outbox_id
+     or v_existing.idempotency_key <> p_idempotency_key
+     or v_existing.provider_id <> p_provider_id
+     or v_existing.observation_status <> p_observation_status
+     or v_existing.observed_at <> p_observed_at
+     or v_existing.observation <> p_observation then
+    raise exception 'RECONCILIATION_EVIDENCE_ID_REUSE_MISMATCH' using errcode = '23505';
+  end if;
+
+  return p_evidence_id;
+end;
+$append$;
+
+revoke all on function public.happy_reject_reconciliation_evidence_mutation()
+  from public, anon, authenticated, service_role;
+revoke all on function public.happy_append_dispatch_reconciliation_evidence(uuid,uuid,uuid,uuid,text,text,text,timestamptz,jsonb)
+  from public, anon, service_role;
+grant execute on function public.happy_append_dispatch_reconciliation_evidence(uuid,uuid,uuid,uuid,text,text,text,timestamptz,jsonb)
+  to authenticated;
+
+-- Reconciliation limitations / gates:
+-- 1. Provider identity is bound to outcome->>'provider' written by the dispatch
+--    coordinator; provider adapters must preserve that exact stable identifier.
+-- 2. The caller supplies a unique evidence_id. Reusing it with an identical
+--    payload is idempotent; reusing it with different content is rejected.
+-- 3. Evidence payload schema, size caps, secret redaction/encryption, and
+--    retention/erasure policy still require capability-specific review.
+-- 4. This SECURITY DEFINER candidate depends on the same unresolved function
+--    ownership and private tenant-scope helper audit as the scheduler RPCs.
+-- 5. The table has no direct API grants; authenticated callers can append only
+--    through the auth.uid()-bound RPC. No SELECT API is exposed in this draft.
+-- 6. The trigger blocks ordinary UPDATE/DELETE, but privileged owners can
+--    disable triggers; production ownership and operational controls remain
+--    mandatory.
