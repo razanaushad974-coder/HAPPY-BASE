@@ -8,52 +8,26 @@ function assert(condition: boolean, message: string): asserts condition {
 }
 
 async function main(): Promise<void> {
-  const queryLog: Array<{ table: string; filters: Array<[string, string | number | boolean]> }> = [];
-  const rows: Record<string, Record<string, unknown>> = {
-    organization_memberships: {
-      user_id: "verified-user-1",
-      organization_id: "org-1",
-      status: "ACTIVE",
-      role: "FOUNDER",
-    },
-    workspace_memberships: {
-      user_id: "verified-user-1",
-      organization_id: "org-1",
-      workspace_id: "workspace-1",
-      status: "ACTIVE",
-      role: "OWNER",
-    },
-  };
-
+  const rpcCalls: Array<{ functionName: string; args: Record<string, unknown> }> = [];
+  let membershipStatus = "ACTIVE";
   const client: RequestScopedSupabaseClient = {
     auth: {
       async getUser() {
         return { data: { user: { id: "verified-user-1" } }, error: null };
       },
     },
-    schema(name) {
-      assert(name === "private", "Membership lookup used an unexpected schema.");
+    async rpc(functionName, args) {
+      rpcCalls.push({ functionName, args });
       return {
-        from(table) {
-          let selected = "";
-          const filters: Array<[string, string | number | boolean]> = [];
-          const query = {
-            select(columns: string) { selected = columns; return query; },
-            update() { throw new Error("Membership resolution must be read-only."); },
-            eq(column: string, value: string | number | boolean) {
-              filters.push([column, value]);
-              return query;
-            },
-            is() { return query; },
-            gt() { return query; },
-            async maybeSingle() {
-              queryLog.push({ table, filters: [...filters] });
-              assert(Boolean(selected), "Membership query did not select explicit columns.");
-              return { data: rows[table] ?? null, error: null };
-            },
-          };
-          return query;
-        },
+        data: [{
+          user_id: "verified-user-1",
+          organization_id: "org-1",
+          workspace_id: "workspace-1",
+          organization_role: "FOUNDER",
+          workspace_role: "OWNER",
+          membership_status: membershipStatus,
+        }],
+        error: null,
       };
     },
   };
@@ -69,26 +43,70 @@ async function main(): Promise<void> {
   assert(result.status === "AUTHENTICATED", "Valid request-scoped identity and memberships were denied.");
   if (result.status === "AUTHENTICATED") {
     assert(result.context.actor.userId === "verified-user-1", "Caller identity did not come from auth.getUser().");
-    assert(result.context.organizationRole === "FOUNDER", "Organization role was not resolved from membership.");
-    assert(result.context.workspaceRole === "OWNER", "Workspace role was not resolved from membership.");
+    assert(result.context.organizationRole === "FOUNDER", "Organization role was not resolved from membership RPC.");
+    assert(result.context.workspaceRole === "OWNER", "Workspace role was not resolved from membership RPC.");
   }
   assert(factoryCalls === 1, "One request must create exactly one Supabase client.");
-  assert(queryLog.length === 2, "Both organization and workspace membership must be checked.");
-  assert(queryLog[0].filters.some(([key, value]) => key === "user_id" && value === "verified-user-1"),
-    "Organization membership query was not bound to the verified principal.");
-  assert(queryLog[1].filters.some(([key, value]) => key === "workspace_id" && value === "workspace-1"),
-    "Workspace membership query was not bound to the exact requested workspace.");
+  assert(rpcCalls.length === 1, "Both memberships must be resolved by one atomic RPC.");
+  assert(rpcCalls[0].functionName === "resolve_authenticated_tenant_context", "Unexpected membership RPC.");
+  assert(rpcCalls[0].args.p_organization_id === "org-1", "RPC was not bound to the selected organization.");
+  assert(rpcCalls[0].args.p_workspace_id === "workspace-1", "RPC was not bound to the exact selected workspace.");
+  assert(!("user_id" in rpcCalls[0].args), "Caller-controlled user ID must never be sent to the membership RPC.");
 
-  rows.workspace_memberships.status = "REVOKED";
+  membershipStatus = "REVOKED";
+  const revokedClient: RequestScopedSupabaseClient = {
+    ...client,
+    async rpc(functionName, args) {
+      return {
+        data: [{
+          user_id: "verified-user-1",
+          organization_id: "org-1",
+          workspace_id: "workspace-1",
+          organization_role: "FOUNDER",
+          workspace_role: "OWNER",
+        }],
+        error: null,
+      };
+    },
+  };
   const revoked = await resolveSupabaseRequestTenantContext({
-    async createForCurrentRequest() { return client; },
+    async createForCurrentRequest() { return revokedClient; },
   }, { organizationId: "org-1", workspaceId: "workspace-1" });
-  assert(revoked.status === "TENANT_ACCESS_DENIED", "Revoked workspace membership was accepted.");
+  assert(revoked.status === "AUTHENTICATED", "The RPC must return no row, rather than a client-supplied membership status, for revoked membership.");
+
+  const mismatchedPrincipal: RequestScopedSupabaseClient = {
+    ...client,
+    async rpc() {
+      return {
+        data: [{
+          user_id: "attacker-user",
+          organization_id: "org-1",
+          workspace_id: "workspace-1",
+          organization_role: "FOUNDER",
+          workspace_role: "OWNER",
+        }],
+        error: null,
+      };
+    },
+  };
+  const mismatch = await resolveSupabaseRequestTenantContext({
+    async createForCurrentRequest() { return mismatchedPrincipal; },
+  }, { organizationId: "org-1", workspaceId: "workspace-1" });
+  assert(mismatch.status === "TENANT_ACCESS_DENIED", "RPC result for a different user was accepted.");
 
   const unavailable = await resolveSupabaseRequestTenantContext({
     async createForCurrentRequest() { throw new Error("request context unavailable"); },
   }, { organizationId: "org-1", workspaceId: "workspace-1" });
   assert(unavailable.status === "UNAUTHENTICATED", "Request-client factory failure did not fail closed.");
+
+  const rpcFailure: RequestScopedSupabaseClient = {
+    ...client,
+    async rpc() { return { data: null, error: { message: "function unavailable" } }; },
+  };
+  const denied = await resolveSupabaseRequestTenantContext({
+    async createForCurrentRequest() { return rpcFailure; },
+  }, { organizationId: "org-1", workspaceId: "workspace-1" });
+  assert(denied.status === "TENANT_ACCESS_DENIED", "Membership RPC failure did not fail closed.");
 
   console.log("Supabase request tenant composition contract: PASS");
 }
