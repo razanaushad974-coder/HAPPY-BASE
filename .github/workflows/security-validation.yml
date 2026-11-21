@@ -8,6 +8,14 @@ on:
       - happy/server-verified-pipeline-approval
       - security/durable-file-mutation-grants
     paths:
+      - "src/lib/supabase/**"
+      - "src/app/auth/**"
+      - "src/app/api/auth/**"
+      - "src/app/login/**"
+      - "src/app/workspace/**"
+      - "src/proxy.ts"
+      - "src/app/page.tsx"
+      - "src/app/layout.tsx"
       - "src/core/approval/**"
       - "src/core/tenant/**"
       - "src/core/execution/**"
