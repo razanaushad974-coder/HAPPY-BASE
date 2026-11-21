@@ -48,6 +48,7 @@ async function main(): Promise<void> {
           status: "WAITING_APPROVAL",
           idempotency_key: command.idempotencyKey,
           input_digest: "a".repeat(64),
+          envelope_digest: "b".repeat(64),
         }],
       };
     },
