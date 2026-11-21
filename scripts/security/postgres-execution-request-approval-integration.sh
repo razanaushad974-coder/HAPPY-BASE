@@ -9,6 +9,7 @@ DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role NOLOGIN BYPASSRLS; END IF;
 END $$;
+DROP TABLE IF EXISTS public.happy_tenant_records CASCADE;
 DROP SCHEMA IF EXISTS private CASCADE;
 DROP SCHEMA IF EXISTS auth CASCADE;
 DROP SCHEMA IF EXISTS extensions CASCADE;
@@ -26,6 +27,7 @@ DROP FUNCTION IF EXISTS public.decide_authenticated_execution_request(text,text,
 SQL
 
 psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f supabase/drafts/20261119_file_mutation_atomic_consume_candidate.sql
+psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f supabase/drafts/20261119_async_tenant_persistence_schema_candidate.sql
 psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f supabase/drafts/20261121_authenticated_execution_request_rpc_candidate.sql
 psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f supabase/drafts/20261121_authenticated_execution_envelope_candidate.sql
 
@@ -62,6 +64,15 @@ create_request() {
   if [[ -z "$input" ]]; then
     input='{"path":"README.md"}'
   fi
+  psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+    INSERT INTO public.happy_tenant_records
+      (organization_id,workspace_id,user_id,entity_type,record_id,version,data)
+    VALUES
+      ('$ORG','$WS','$user','MISSION','$mission',1,
+        jsonb_build_object('id','$mission','status','READY','taskIds',jsonb_build_array('$task'))),
+      ('$ORG','$WS','$user','TASK','$task',1,
+        jsonb_build_object('id','$task','missionId','$mission','status','READY'))
+    ON CONFLICT (organization_id,workspace_id,user_id,entity_type,record_id) DO NOTHING;"
   psql "$DATABASE_URL" -XqAt -v ON_ERROR_STOP=1 -c "
     BEGIN;
     SET LOCAL ROLE authenticated;
@@ -103,6 +114,21 @@ actual="$(resolve_request "$REQUESTER" 'req-approve-1')"
 expect 'WAITING_APPROVAL:FILE:READ:HIGH:PENDING:FOUNDER' "$actual" 'executor receives full immutable envelope'
 actual="$(resolve_request "$OTHER" 'req-approve-1')"
 expect '' "$actual" 'non-executor cannot resolve request'
+
+# The request RPC must reject arbitrary mission/task selectors that are
+# not backed by exact same-user, same-tenant persisted records.
+if psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+  BEGIN;
+  SET LOCAL ROLE authenticated;
+  SET LOCAL request.jwt.claim.sub = '$REQUESTER';
+  SELECT * FROM public.create_authenticated_execution_request(
+    'req-unpersisted','task-unpersisted','mission-unpersisted','$ORG','$WS',
+    'FILE','READ','{\"path\":\"README.md\"}'::jsonb,NULL,'idem-unpersisted'
+  );
+  COMMIT;" >/dev/null 2>&1; then
+  echo "FAIL: execution request accepted unpersisted task/mission selectors" >&2
+  exit 1
+fi
 
 # Same idempotency key and identical immutable intent returns the original row.
 actual="$(create_request "$REQUESTER" 'req-approve-1' 'idem-approve-1')"
