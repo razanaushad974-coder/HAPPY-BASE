@@ -112,7 +112,15 @@ begin
      or p_capability not in ('CODE','FILE','API','BROWSER','SHELL','DATABASE','AI','DEPLOYMENT','PUBLISH','AUTOMATION')
      or p_action is null or length(btrim(p_action)) = 0
      or p_input is null or jsonb_typeof(p_input) <> 'object'
-     or (p_target_reference is not null and jsonb_typeof(p_target_reference) <> 'object')
+     or (p_target_reference is not null and (
+       jsonb_typeof(p_target_reference) <> 'object'
+       or not (p_target_reference ?& array['token','entityType','entityId','confidence','source'])
+       or coalesce(p_target_reference->>'token','') = ''
+       or coalesce(p_target_reference->>'entityId','') = ''
+       or p_target_reference->>'entityType' not in ('PROJECT','MISSION','TASK','FILE','DATABASE')
+       or p_target_reference->>'confidence' not in ('HIGH','MEDIUM','LOW','UNKNOWN')
+       or p_target_reference->>'source' not in ('ACTIVE_CONTEXT','PERSISTED_MEMORY')
+     ))
      or p_idempotency_key is null or length(btrim(p_idempotency_key)) = 0
      or length(p_request_id) > 160 or length(p_task_id) > 160
      or length(p_mission_id) > 160 or length(p_action) > 240
