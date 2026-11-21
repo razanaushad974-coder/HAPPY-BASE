@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   NamedExecutorContext,
   NamedExecutorContextProvider,
@@ -192,7 +193,6 @@ export interface CreateDurableExecutionRequestCommand {
   input: Record<string, unknown>;
   targetReference?: ResolvedReference;
   idempotencyKey: string;
-  inputDigest: string;
 }
 
 /**
@@ -209,8 +209,24 @@ export class SupabaseDurableExecutionRequestCreator {
           !command.organizationId.trim() || !command.workspaceId.trim() ||
           !EXECUTION_CAPABILITIES.includes(command.capability) ||
           !command.action.trim() || command.action.length > 200 ||
-          !isRecord(command.input) || !command.idempotencyKey.trim() ||
-          !/^[0-9a-f]{64}$/.test(command.inputDigest)) return false;
+          !isRecord(command.input) || !command.idempotencyKey.trim()) return false;
+      const canonicalEnvelope = canonicalJson({
+        requestId: command.requestId,
+        taskId: command.taskId,
+        missionId: command.missionId,
+        organizationId: command.organizationId,
+        workspaceId: command.workspaceId,
+        capability: command.capability,
+        action: command.action,
+        input: command.input,
+        targetReference: command.targetReference ?? null,
+        risk: "HIGH",
+        requiresApproval: true,
+        requiredApprovalRole: "FOUNDER",
+        idempotencyKey: command.idempotencyKey,
+      });
+      if (canonicalEnvelope === null) return false;
+      const inputDigest = createHash("sha256").update(canonicalEnvelope, "utf8").digest("hex");
       const result = await this.client.rpc("create_authenticated_execution_request", {
         p_request_id: command.requestId,
         p_task_id: command.taskId,
@@ -222,7 +238,7 @@ export class SupabaseDurableExecutionRequestCreator {
         p_input: command.input,
         p_target_reference: command.targetReference ?? null,
         p_idempotency_key: command.idempotencyKey,
-        p_input_digest: command.inputDigest,
+        p_input_digest: inputDigest,
       });
       if (result.error) return false;
       const rows = Array.isArray(result.data)
@@ -245,7 +261,7 @@ export class SupabaseDurableExecutionRequestCreator {
         row.required_approval_role === "FOUNDER" &&
         row.status === "WAITING_APPROVAL" &&
         row.idempotency_key === command.idempotencyKey &&
-        row.input_digest === command.inputDigest &&
+        row.input_digest === inputDigest &&
         typeof row.requester_user_id === "string" &&
         row.requester_user_id.length > 0 &&
         row.executor_user_id === row.requester_user_id;
