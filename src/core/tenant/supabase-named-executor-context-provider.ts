@@ -72,9 +72,9 @@ const APPROVAL_STATUSES: readonly DurableExecutionApprovalStatus[] = [
 function parseResolvedReference(value: unknown): ResolvedReference | undefined | null {
   if (value === null || value === undefined) return undefined;
   if (!isRecord(value) ||
-      typeof value.token !== "string" ||
+      typeof value.token !== "string" || !value.token.trim() ||
       !["PROJECT", "MISSION", "TASK", "FILE", "DATABASE"].includes(String(value.entityType)) ||
-      typeof value.entityId !== "string" ||
+      typeof value.entityId !== "string" || !value.entityId.trim() ||
       !["HIGH", "MEDIUM", "LOW", "UNKNOWN"].includes(String(value.confidence)) ||
       !["ACTIVE_CONTEXT", "PERSISTED_MEMORY"].includes(String(value.source))) return null;
   return value as unknown as ResolvedReference;
@@ -207,9 +207,12 @@ export class SupabaseDurableExecutionRequestCreator {
     try {
       if (!command.requestId.trim() || !command.taskId.trim() || !command.missionId.trim() ||
           !command.organizationId.trim() || !command.workspaceId.trim() ||
+          command.requestId.length > 160 || command.taskId.length > 160 ||
+          command.missionId.length > 160 || command.idempotencyKey.length > 160 ||
           !EXECUTION_CAPABILITIES.includes(command.capability) ||
           !command.action.trim() || command.action.length > 200 ||
-          !isRecord(command.input) || !command.idempotencyKey.trim()) return false;
+          !isRecord(command.input) || !command.idempotencyKey.trim() ||
+          parseResolvedReference(command.targetReference ?? null) === null) return false;
       const canonicalEnvelope = canonicalJson({
         requestId: command.requestId,
         taskId: command.taskId,
@@ -257,9 +260,9 @@ export class SupabaseDurableExecutionRequestCreator {
         canonicalJson(row.target_reference ?? null) === canonicalJson(command.targetReference ?? null) &&
         row.risk === "HIGH" &&
         row.requires_approval === true &&
-        row.approval_status === "PENDING" &&
+        ["PENDING", "APPROVED", "REJECTED"].includes(String(row.approval_status)) &&
         row.required_approval_role === "FOUNDER" &&
-        row.status === "WAITING_APPROVAL" &&
+        ["WAITING_APPROVAL", "READY", "RUNNING", "COMPLETED", "FAILED", "BLOCKED", "CANCELLED"].includes(String(row.status)) &&
         row.idempotency_key === command.idempotencyKey &&
         row.input_digest === inputDigest &&
         typeof row.requester_user_id === "string" &&
