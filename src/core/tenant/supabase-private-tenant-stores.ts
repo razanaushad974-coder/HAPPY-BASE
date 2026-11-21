@@ -210,6 +210,7 @@ export class SupabaseAuthenticatedNamedExecutorGrantLookupStore implements Named
         row.task_id !== binding.taskId ||
         row.mission_id !== binding.missionId ||
         row.requester_user_id !== binding.requesterUserId ||
+        executorUserId !== binding.executorUserId ||
         row.organization_id !== scope.organizationId ||
         row.workspace_id !== scope.workspaceId ||
         row.target_entity_type !== "FILE" ||
