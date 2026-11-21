@@ -546,12 +546,18 @@ $fencing_reclaim$;
 
 -- Append-only provider reconciliation evidence: tenant/outbox binding,
 -- idempotent event identity, collision rejection, and immutable original result.
+-- Run the function body as the local database owner because internal outbox
+-- rows intentionally have no direct authenticated SELECT grant. auth.uid()
+-- remains derived from the simulated request claim; RPC EXECUTE grants are
+-- checked independently below.
+reset role;
 do $reconciliation$
 declare
   v_outbox public.happy_execution_dispatch_outbox%rowtype;
   v_evidence_id uuid := '90000000-0000-4000-8000-000000000009';
   v_result uuid;
   v_count bigint;
+  v_observed_at timestamptz := clock_timestamp();
 begin
   select * into v_outbox
     from public.happy_execution_dispatch_outbox
@@ -564,7 +570,7 @@ begin
     '10000000-0000-4000-8000-000000000001',
     '20000000-0000-4000-8000-000000000002',
     v_outbox.outbox_id, v_evidence_id, v_outbox.idempotency_key,
-    'test-provider', 'PROCESSING', clock_timestamp(),
+    'test-provider', 'PROCESSING', v_observed_at,
     '{"status":"PROCESSING","providerRequestId":"provider-req-2"}'::jsonb
   );
   if v_result <> v_evidence_id then raise exception 'append RPC returned wrong evidence ID'; end if;
@@ -575,8 +581,7 @@ begin
     '20000000-0000-4000-8000-000000000002',
     v_outbox.outbox_id, v_evidence_id, v_outbox.idempotency_key,
     'test-provider', 'PROCESSING',
-    (select observed_at from public.happy_dispatch_reconciliation_evidence
-      where evidence_id = v_evidence_id),
+    v_observed_at,
     '{"status":"PROCESSING","providerRequestId":"provider-req-2"}'::jsonb
   );
   if v_result <> v_evidence_id then raise exception 'identical evidence retry was not idempotent'; end if;
@@ -636,6 +641,34 @@ begin
   exception when invalid_parameter_value then null;
   end;
 
+  begin
+    perform public.happy_append_dispatch_reconciliation_evidence(
+      '11000000-0000-4000-8000-000000000011',
+      '20000000-0000-4000-8000-000000000002',
+      v_outbox.outbox_id, gen_random_uuid(), v_outbox.idempotency_key,
+      'test-provider', 'PROCESSING', clock_timestamp(),
+      '{"status":"PROCESSING"}'::jsonb
+    );
+    raise exception 'foreign tenant reconciliation append unexpectedly succeeded';
+  exception when insufficient_privilege then null;
+  end;
+
+  perform set_config('request.jwt.claim.sub',
+    '50000000-0000-4000-8000-000000000005', true);
+  begin
+    perform public.happy_append_dispatch_reconciliation_evidence(
+      '10000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000002',
+      v_outbox.outbox_id, gen_random_uuid(), v_outbox.idempotency_key,
+      'test-provider', 'PROCESSING', clock_timestamp(),
+      '{"status":"PROCESSING"}'::jsonb
+    );
+    raise exception 'revoked member reconciliation append unexpectedly succeeded';
+  exception when insufficient_privilege then null;
+  end;
+  perform set_config('request.jwt.claim.sub',
+    '30000000-0000-4000-8000-000000000003', true);
+
   select * into v_outbox
     from public.happy_execution_dispatch_outbox
    where outbox_id = v_outbox.outbox_id;
@@ -650,8 +683,6 @@ begin
   if v_count <> 1 then raise exception 'unexpected reconciliation evidence count'; end if;
 end
 $reconciliation$;
-
-reset role;
 
 -- Even the table owner cannot accidentally mutate evidence through ordinary DML.
 do $append_only$
