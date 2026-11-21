@@ -24,7 +24,6 @@ async function main(): Promise<void> {
           workspace_id: "workspace-1",
           organization_role: "FOUNDER",
           workspace_role: "OWNER",
-          membership_status: membershipStatus,
         }],
         error: null,
       };
