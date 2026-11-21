@@ -7,8 +7,13 @@
 - The database creation RPC derives requester and executor from `auth.uid()`, checks active organization/workspace membership, persists the immutable capability/action/input/optional target reference, and computes an input SHA-256 digest.
 - Every new request is forced to `HIGH` risk, `requires_approval=true`, `approval_status=PENDING`, `required_approval_role=FOUNDER`, and `status=WAITING_APPROVAL`. There is no caller-controlled approval bypass in the RPC signature.
 - `POST /api/execution/requests/[requestId]/decision` delegates the decision to a transactionally scoped RPC. PostgreSQL derives the approver from `auth.uid()`, locks the tenant/request/membership rows, requires active FOUNDER organization membership and exact active workspace membership, and forbids self-approval. Approval moves the request to `READY`; rejection moves it to `CANCELLED`.
-- The durable request resolver returns the full immutable execution envelope only to the assigned executor. The TypeScript store validates the envelope, digest, risk, approval state, required role, and lifecycle state.
+- The durable request resolver returns the full immutable execution envelope only to the assigned executor. The TypeScript store validates the envelope, digest, risk, approval state, required role, and lifecycle state. Idempotency retries return the original request even if its approval state has since advanced; reusing a key for different intent is rejected.
 - Both endpoints return `Cache-Control: private, no-store`. Neither endpoint dispatches work. The response explicitly says `dispatch=NOT_DISPATCHED`.
+
+## Verification harness
+
+- `scripts/security/postgres-execution-request-approval-integration.sh` applies the design candidates to a disposable PostgreSQL database and checks forced founder approval, exact executor lookup, non-executor denial, idempotent create/retry behavior, no self-approval, non-founder denial, founder approval/rejection, membership revocation, and direct DML/pre-approved insert bypass attempts.
+- `.github/workflows/postgres-security-integration.yml` runs this harness in CI. A CI pass is isolated PostgreSQL contract evidence, not proof of hosted Supabase JWT/RLS/function-owner behavior.
 
 ## Database candidate status
 
