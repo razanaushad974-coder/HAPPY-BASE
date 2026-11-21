@@ -101,6 +101,15 @@ Configure the Supabase Auth Site URL and redirect allowlist to include the exact
 - The PostgreSQL harness now checks exact executor success, guessed foreign request denial, different-user denial, non-READY denial, SELECT-only owner privileges, and RPC grants. The local auth.uid() claim remains a stub, not hosted Supabase JWT proof.
 - The adapter is still not wired into production runtime composition; the SQL remains a design-only candidate and has not been applied.
 
+### Named-executor authenticated grant lookup — 2026-11-21
+
+- Added `SupabaseAuthenticatedNamedExecutorGrantLookupStore`, which resolves one exact, unexpired APPROVED FILE grant through `resolve_authenticated_file_mutation_approval_grant` on the executor's request-scoped JWT client. The RPC receives immutable scope/request/task/mission/requester/target/operation/path/digest fields; executor identity is derived by PostgreSQL from `auth.uid()`, and approver identity is returned only from the persisted grant.
+- The adapter rejects missing/malformed results, zero or multiple matches, changed binding fields, consumed/non-APPROVED rows, invalid role values, RPC errors, and exceptions. It is read-only; consumption remains the separate atomic consume RPC.
+- Added design-only SQL candidate `supabase/drafts/20261121_authenticated_file_mutation_grant_lookup_rpc_candidate.sql`. It joins the durable execution request and active organization/workspace, checks the executor against `auth.uid()`, returns only exact matching approved/unexpired grants, and grants execution only to `authenticated`.
+- The lookup function owner is a dedicated NOLOGIN BYPASSRLS role with SELECT-only access to the grant/request/organization/workspace tables and EXECUTE on `auth.uid()`; it is not `service_role`.
+- Added contract coverage for exact RPC arguments, absence of caller-supplied executor/approver IDs, successful mapping, duplicate-result denial, RPC-error denial, and the adapter's inability to consume grants.
+- The lookup and consume adapters are not yet wired into trusted runtime composition. Both SQL files remain design-only candidates; no hosted Supabase role/ownership/RLS behavior or JWT integration has been verified, and no migration/live data change was performed.
+
 ### Named-executor grant consumption boundary hardening — 2026-11-21
 
 - The grant lookup adapter also exposed a legacy direct private-table UPDATE implementation for consumption. Although the SQL candidate revokes API-role table writes and the production-shaped store uses the user-scoped RPC, retaining a second consume path made accidental privileged-client composition possible and contradicted the database boundary.
