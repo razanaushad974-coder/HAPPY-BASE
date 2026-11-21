@@ -15,7 +15,7 @@
 
 1. The SQL remains a design-only candidate. It has not been applied to hosted Supabase. Function ownership, grants, RLS/FORCE RLS, migration ordering, and actual Supabase JWT behavior require review and integration testing.
 2. No claim/dispatch RPC is exposed. Approval moves a request to `READY`, but does not execute it. Do not infer that approval equals execution.
-3. The API currently accepts task and mission IDs as selectors. It does not yet prove that those IDs resolve to canonical persisted TASK/MISSION records in the same tenant. Add that binding before any worker/dispatch path is enabled.
+3. The SQL candidate now proves task/mission binding against `happy_tenant_records`, but that table is itself a design-only schema candidate and the live mission engine is not yet wired to the async tenant repository. Apply and verify both persistence candidates, then route mission/task creation and updates through the tenant-scoped CAS adapter before enabling dispatch.
 4. There is no trusted durable tenant workspace volume/worker composition wired into the execution engine. Keep execution adapters disconnected until that boundary is provisioned and verified.
 5. Delegated executor assignment, multi-stage approvals, non-founder approval policies, cancellation after approval, lease/fencing, provider dispatch reconciliation, and execution-result persistence remain separate future contracts.
 6. An approved request is not a FILE mutation grant. FILE writes still require the separate exact-operation, approver-bound, atomic-consume grant path.
