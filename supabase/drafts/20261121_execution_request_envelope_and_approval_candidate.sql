@@ -105,6 +105,8 @@ create table private.execution_request_decision_events (
 );
 create index execution_request_decision_events_request_idx
   on private.execution_request_decision_events(request_id,occurred_at);
+alter table private.execution_request_decision_events enable row level security;
+revoke all on private.execution_request_decision_events from public,anon,authenticated,service_role;
 
 create or replace function private.guard_execution_request_update()
 returns trigger language plpgsql set search_path=pg_catalog as $guard$
@@ -169,9 +171,11 @@ begin
   end if;
   if p_target_reference is not null and (
     jsonb_typeof(p_target_reference->'token') is distinct from 'string'
+    or length(btrim(p_target_reference->>'token'))=0
     or p_target_reference->>'entityType' is null
     or p_target_reference->>'entityType' not in ('PROJECT','MISSION','TASK','FILE','DATABASE')
     or jsonb_typeof(p_target_reference->'entityId') is distinct from 'string'
+    or length(btrim(p_target_reference->>'entityId'))=0
     or p_target_reference->>'confidence' is null
     or p_target_reference->>'confidence' not in ('HIGH','MEDIUM','LOW','UNKNOWN')
     or p_target_reference->>'source' is null
