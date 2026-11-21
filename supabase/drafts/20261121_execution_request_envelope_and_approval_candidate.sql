@@ -200,7 +200,7 @@ begin
     where r.organization_id=p_organization_id and r.workspace_id=p_workspace_id
       and r.requester_user_id=v_actor and r.idempotency_key=btrim(p_idempotency_key) for share;
   if not found then raise exception 'EXECUTION_REQUEST_CREATE_FAILED'; end if;
-  if v_row.request_id<>btrim(p_request_id) or v_row.task_id<>btrim(p_task_id)
+  if v_row.task_id<>btrim(p_task_id)
     or v_row.mission_id<>btrim(p_mission_id) or v_row.capability<>p_capability
     or v_row.action<>btrim(p_action) or v_row.input<>p_input
     or v_row.target_reference is distinct from p_target_reference
