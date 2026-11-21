@@ -174,7 +174,6 @@ export async function POST(request: NextRequest) {
         persisted.mission_id !== missionId ||
         persisted.capability !== capability ||
         persisted.action !== action ||
-        JSON.stringify(persisted.input) !== JSON.stringify(input) ||
         persisted.requires_approval !== true ||
         persisted.risk !== "HIGH" ||
         persisted.required_approval_role !== "FOUNDER" ||
