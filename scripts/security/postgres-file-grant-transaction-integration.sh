@@ -19,9 +19,11 @@ CREATE FUNCTION auth.uid() RETURNS uuid
 LANGUAGE sql STABLE
 AS $$ SELECT nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
 DROP FUNCTION IF EXISTS public.consume_file_mutation_approval_grant(uuid,uuid,uuid,text,text,text,text,text,text,text,text);
+DROP FUNCTION IF EXISTS public.resolve_authenticated_file_mutation_approval_grant(uuid,uuid,text,text,text,uuid,text,text,text,text,text);
 SQL
 
 psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f supabase/drafts/20261119_file_mutation_atomic_consume_candidate.sql
+psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f supabase/drafts/20261121_authenticated_file_mutation_grant_lookup_rpc_candidate.sql
 
 ORG='00000000-0000-0000-0000-000000000001'
 WS='00000000-0000-0000-0000-000000000011'
@@ -67,6 +69,19 @@ UPDATE private.file_mutation_approval_grants
 SQL
 }
 
+lookup_grant() {
+  local request="$1" user="$2" digest="${3:-$DIGEST}"
+  psql "$DATABASE_URL" -XqAt -v ON_ERROR_STOP=1 -c "
+    BEGIN;
+    SET LOCAL ROLE authenticated;
+    SET LOCAL request.jwt.claim.sub = '$user';
+    SELECT count(*)::text || ':' || coalesce(max(grant_id::text), '')
+      FROM public.resolve_authenticated_file_mutation_approval_grant(
+        '$ORG','$WS','$request','task-$request','mission-$request','$REQUESTER',
+        'file-$request','MODIFY','source-$request',NULL,'$digest'
+      );
+    COMMIT;" | grep -E '^[0-9]+:' | tail -n 1
+}
 invoke_grant() {
   local grant="$1" request="$2" user="$3" digest="${4:-$DIGEST}" application_name="${5:-happy-file-grant-consumer}"
   PGAPPNAME="$application_name" psql "$DATABASE_URL" -XqAt -v ON_ERROR_STOP=1 -c "
@@ -119,8 +134,16 @@ expect_result() {
 }
 
 seed_grant '10000000-0000-0000-0000-000000000001' 'valid-1'
+actual="$(lookup_grant 'valid-1' "$EXECUTOR")"
+expect_result '1:10000000-0000-0000-0000-000000000001' "$actual" 'executor-bound exact grant lookup'
+actual="$(lookup_grant 'valid-1' "$APPROVER")"
+expect_result '0:' "$actual" 'grant lookup by non-executor'
+actual="$(lookup_grant 'valid-1' "$EXECUTOR" 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')"
+expect_result '0:' "$actual" 'grant lookup changed digest'
 actual="$(invoke_grant '10000000-0000-0000-0000-000000000001' 'valid-1' "$EXECUTOR")"
 expect_result t "$actual" 'valid exact binding'
+actual="$(lookup_grant 'valid-1' "$EXECUTOR")"
+expect_result '0:' "$actual" 'consumed grant no longer discoverable'
 actual="$(invoke_grant '10000000-0000-0000-0000-000000000001' 'valid-1' "$EXECUTOR")"
 expect_result f "$actual" 'replay'
 audit_count="$(psql "$DATABASE_URL" -XqAt -c "SELECT count(*) FROM private.file_mutation_approval_events WHERE grant_id='10000000-0000-0000-0000-000000000001' AND event_type='CONSUMED';")"
