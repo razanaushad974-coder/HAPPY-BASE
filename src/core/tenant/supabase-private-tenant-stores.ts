@@ -229,7 +229,7 @@ export class SupabaseNamedExecutorGrantStore implements NamedExecutorGrantStore 
   ): Promise<boolean> {
     return false;
   }
-}}
+}
 
 
 /**
