@@ -59,55 +59,75 @@ const GRANT_COLUMNS = [
   "input_digest", "required_role", "status", "expires_at", "consumed_at",
 ].join(",");
 
+/**
+ * A narrow RPC boundary for resolving the current authenticated user's
+ * membership. The database function derives the principal from auth.uid();
+ * caller-supplied user IDs are never sent to PostgreSQL.
+ */
+export interface SupabaseTenantContextRpcClient {
+  rpc(
+    functionName: "resolve_authenticated_tenant_context",
+    args: { p_organization_id: string; p_workspace_id: string },
+  ): Promise<DatabaseResult>;
+}
+
 export class SupabaseCanonicalTenantMembershipStore
 implements CanonicalTenantMembershipStore {
-  constructor(private readonly client: SupabasePrivateSchemaClient) {}
+  constructor(private readonly client: SupabaseTenantContextRpcClient) {}
 
-  async getOrganizationMembership(
-    userId: string,
-    organizationId: string,
-  ): Promise<OrganizationMembershipRecord | null> {
-    const result = await this.client.schema(PRIVATE)
-      .from("organization_memberships")
-      .select("user_id,organization_id,status,role")
-      .eq("user_id", userId)
-      .eq("organization_id", organizationId)
-      .maybeSingle();
-    if (result.error || !isRecord(result.data)) return null;
-    const user = stringField(result.data, "user_id");
-    const organization = stringField(result.data, "organization_id");
-    const status = membershipStatus(result.data.status);
-    const role = stringField(result.data, "role");
-    if (!user || !organization || !status || !role) return null;
-    return { userId: user, organizationId: organization, status, role };
-  }
-
-  async getWorkspaceMembership(
+  async getTenantMembershipPair(
     userId: string,
     organizationId: string,
     workspaceId: string,
-  ): Promise<WorkspaceMembershipRecord | null> {
-    const result = await this.client.schema(PRIVATE)
-      .from("workspace_memberships")
-      .select("user_id,organization_id,workspace_id,status,role")
-      .eq("user_id", userId)
-      .eq("organization_id", organizationId)
-      .eq("workspace_id", workspaceId)
-      .maybeSingle();
-    if (result.error || !isRecord(result.data)) return null;
-    const user = stringField(result.data, "user_id");
-    const organization = stringField(result.data, "organization_id");
-    const workspace = stringField(result.data, "workspace_id");
-    const status = membershipStatus(result.data.status);
-    const role = stringField(result.data, "role");
-    if (!user || !organization || !workspace || !status || !role) return null;
-    return {
-      userId: user,
-      organizationId: organization,
-      workspaceId: workspace,
-      status,
-      role,
-    };
+  ): Promise<{
+    organization: OrganizationMembershipRecord;
+    workspace: WorkspaceMembershipRecord;
+  } | null> {
+    try {
+      const result = await this.client.rpc("resolve_authenticated_tenant_context", {
+        p_organization_id: organizationId,
+        p_workspace_id: workspaceId,
+      });
+      if (result.error) return null;
+      const rows = Array.isArray(result.data)
+        ? result.data
+        : result.data === null || result.data === undefined
+          ? []
+          : [result.data];
+      if (rows.length !== 1 || !isRecord(rows[0])) return null;
+
+      const row = rows[0];
+      const returnedUserId = stringField(row, "user_id");
+      const returnedOrganizationId = stringField(row, "organization_id");
+      const returnedWorkspaceId = stringField(row, "workspace_id");
+      const organizationRole = stringField(row, "organization_role");
+      const workspaceRole = stringField(row, "workspace_role");
+      if (
+        returnedUserId !== userId ||
+        returnedOrganizationId !== organizationId ||
+        returnedWorkspaceId !== workspaceId ||
+        !organizationRole ||
+        !workspaceRole
+      ) return null;
+
+      return {
+        organization: {
+          userId: returnedUserId,
+          organizationId: returnedOrganizationId,
+          status: "ACTIVE",
+          role: organizationRole,
+        },
+        workspace: {
+          userId: returnedUserId,
+          organizationId: returnedOrganizationId,
+          workspaceId: returnedWorkspaceId,
+          status: "ACTIVE",
+          role: workspaceRole,
+        },
+      };
+    } catch {
+      return null;
+    }
   }
 }
 
