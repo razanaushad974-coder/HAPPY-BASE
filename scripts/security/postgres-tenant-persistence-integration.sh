@@ -348,6 +348,7 @@ declare
   v_outbox public.happy_execution_dispatch_outbox%rowtype;
   v_duplicate public.happy_execution_dispatch_outbox%rowtype;
   v_dispatched public.happy_execution_dispatch_outbox%rowtype;
+  v_recorded public.happy_execution_dispatch_outbox%rowtype;
   v_heartbeat timestamptz;
   v_payload jsonb;
 begin
@@ -397,6 +398,25 @@ begin
   if v_dispatched.status <> 'DISPATCHED' then
     raise exception 'outbox claim did not transition PENDING to DISPATCHED';
   end if;
+  v_recorded := public.happy_record_dispatch_outcome(
+    '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
+    v_outbox.outbox_id,v_claim.lease_id,'worker-a',v_claim.fencing_token,
+    'ACKNOWLEDGED','{"provider":"test-provider","providerRequestId":"provider-req-1","httpStatus":200}'::jsonb
+  );
+  if v_recorded.status <> 'ACKNOWLEDGED'
+     or v_recorded.outcome->>'providerRequestId' <> 'provider-req-1' then
+    raise exception 'provider outcome was not persisted with exact dispatch record';
+  end if;
+  begin
+    perform public.happy_record_dispatch_outcome(
+      '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
+      v_outbox.outbox_id,v_claim.lease_id,'worker-a',v_claim.fencing_token,
+      'ACKNOWLEDGED','{"providerRequestId":"different"}'::jsonb
+    );
+    raise exception 'second provider outcome unexpectedly overwrote immutable result';
+  exception when sqlstate '55000' then
+    if sqlerrm <> 'OUTBOX_OUTCOME_ALREADY_RECORDED_OR_NOT_DISPATCHED' then raise; end if;
+  end;
   begin
     perform public.happy_claim_dispatch_outbox(
       '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
@@ -471,6 +491,8 @@ select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000003'
 do $fencing_reclaim$
 declare
   v_reclaimed record;
+  v_reclaim_outbox public.happy_execution_dispatch_outbox%rowtype;
+  v_ambiguous public.happy_execution_dispatch_outbox%rowtype;
 begin
   select * into v_reclaimed from public.happy_claim_mission_task(
     '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
@@ -500,13 +522,25 @@ begin
   exception when sqlstate '55000' then
     if sqlerrm <> 'STALE_OR_EXPIRED_LEASE' then raise; end if;
   end;
-  perform public.happy_enqueue_mission_dispatch(
+  v_reclaim_outbox := public.happy_enqueue_mission_dispatch(
     '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
     'mission-scheduler','task-scheduler-reclaim',v_reclaimed.lease_id,'worker-b',v_reclaimed.fencing_token,
     'request-scheduler-2','tenant-attempt-key-2','API','POST',
     'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
     '{"id":"request-scheduler-2","missionId":"mission-scheduler","taskId":"task-scheduler-reclaim","capability":"API","action":"POST"}'
   );
+  perform public.happy_claim_dispatch_outbox(
+    '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
+    v_reclaim_outbox.outbox_id,v_reclaimed.lease_id,'worker-b',v_reclaimed.fencing_token
+  );
+  v_ambiguous := public.happy_record_dispatch_outcome(
+    '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
+    v_reclaim_outbox.outbox_id,v_reclaimed.lease_id,'worker-b',v_reclaimed.fencing_token,
+    'AMBIGUOUS','{"reason":"provider_timeout_after_send","retryAllowed":false}'::jsonb
+  );
+  if v_ambiguous.status <> 'AMBIGUOUS' then
+    raise exception 'ambiguous provider outcome was not preserved for reconciliation';
+  end if;
 end
 $fencing_reclaim$;
 reset role;
@@ -521,7 +555,8 @@ begin
   if has_function_privilege('service_role','public.happy_claim_mission_task(uuid,uuid,text,text,text,integer)','EXECUTE')
      or has_function_privilege('service_role','public.happy_enqueue_mission_dispatch(uuid,uuid,text,text,uuid,text,bigint,text,text,text,text,text,jsonb)','EXECUTE')
      or has_function_privilege('service_role','public.happy_heartbeat_mission_task_lease(uuid,uuid,text,text,uuid,text,bigint,integer)','EXECUTE')
-     or has_function_privilege('service_role','public.happy_claim_dispatch_outbox(uuid,uuid,uuid,uuid,text,bigint)','EXECUTE') then
+     or has_function_privilege('service_role','public.happy_claim_dispatch_outbox(uuid,uuid,uuid,uuid,text,bigint)','EXECUTE')
+     or has_function_privilege('service_role','public.happy_record_dispatch_outcome(uuid,uuid,uuid,uuid,text,bigint,text,jsonb)','EXECUTE') then
     raise exception 'service_role can invoke authenticated scheduler RPCs';
   end if;
 end
