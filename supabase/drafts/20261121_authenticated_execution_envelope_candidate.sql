@@ -25,14 +25,14 @@ alter table private.execution_requests add constraint execution_requests_envelop
   check (
     (capability is null and action is null and input is null and requires_approval is null and risk is null and approval_status is null and input_digest is null and idempotency_key is null)
     or
-    (capability in ('CODE','FILE','API','BROWSER','SHELL','DATABASE','AI','DEPLOYMENT','PUBLISH','AUTOMATION')
+    (capability is not null and capability in ('CODE','FILE','API','BROWSER','SHELL','DATABASE','AI','DEPLOYMENT','PUBLISH','AUTOMATION')
      and action is not null and length(btrim(action)) > 0
      and input is not null and jsonb_typeof(input) = 'object'
      and (target_reference is null or jsonb_typeof(target_reference) = 'object')
      and requires_approval is not null
-     and risk in ('LOW','MEDIUM','HIGH','CRITICAL')
-     and approval_status in ('NOT_REQUIRED','PENDING','APPROVED','REJECTED')
-     and input_digest ~ '^[0-9a-f]{64}$'
+     and risk is not null and risk in ('LOW','MEDIUM','HIGH','CRITICAL')
+     and approval_status is not null and approval_status in ('NOT_REQUIRED','PENDING','APPROVED','REJECTED')
+     and input_digest is not null and input_digest ~ '^[0-9a-f]{64}$'
      and idempotency_key is not null and length(btrim(idempotency_key)) > 0)
   );
 
@@ -192,7 +192,7 @@ $role$;
 grant usage on schema private,auth,extensions to happy_execution_request_create_rpc_owner;
 grant select,insert on private.execution_requests to happy_execution_request_create_rpc_owner;
 grant select on private.organization_memberships,private.workspace_memberships to happy_execution_request_create_rpc_owner;
-grant execute on function auth.uid() to happy_execution_request_rpc_owner;
+grant execute on function auth.uid() to happy_execution_request_create_rpc_owner;
 grant execute on function extensions.digest(bytea,text) to happy_execution_request_create_rpc_owner;
 
 alter function public.create_authenticated_execution_request(text,text,text,uuid,uuid,text,text,jsonb,jsonb,boolean,text,text)
