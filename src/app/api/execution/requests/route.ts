@@ -32,6 +32,15 @@ function jsonObject(value: unknown): Record<string, unknown> | null {
   return isRecord(value) ? value : null;
 }
 
+function validTargetReference(value: Record<string, unknown> | null): boolean {
+  if (value === null) return true;
+  return typeof value.token === "string" && value.token.length > 0 &&
+    ["PROJECT", "MISSION", "TASK", "FILE", "DATABASE"].includes(String(value.entityType)) &&
+    typeof value.entityId === "string" && value.entityId.length > 0 &&
+    ["HIGH", "MEDIUM", "LOW", "UNKNOWN"].includes(String(value.confidence)) &&
+    ["ACTIVE_CONTEXT", "PERSISTED_MEMORY"].includes(String(value.source));
+}
+
 function response(status: number, payload: Record<string, unknown>) {
   return NextResponse.json(payload, {
     status,
@@ -56,7 +65,7 @@ export async function POST(request: NextRequest) {
     }
 
     const idempotencyKey = requiredText(request.headers.get("idempotency-key"), 160);
-    if (!idempotencyKey) {
+    if (!idempotencyKey || !/^[A-Za-z0-9._:-]{8,160}$/.test(idempotencyKey)) {
       return response(400, { status: "IDEMPOTENCY_KEY_REQUIRED" });
     }
 
@@ -84,9 +93,11 @@ export async function POST(request: NextRequest) {
       ? null
       : jsonObject(body.targetReference);
 
-    if (!organizationId || !workspaceId || !taskId || !missionId || !action ||
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!organizationId || !workspaceId || !uuidPattern.test(organizationId) || !uuidPattern.test(workspaceId) ||
+        !taskId || !missionId || !action ||
         !capability || !CAPABILITIES.includes(capability as typeof CAPABILITIES[number]) ||
-        !input || (body.targetReference !== undefined && body.targetReference !== null && !targetReference)) {
+        !input || !validTargetReference(targetReference)) {
       return response(400, { status: "INVALID_REQUEST_ENVELOPE" });
     }
 
