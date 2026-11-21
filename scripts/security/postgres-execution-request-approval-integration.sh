@@ -120,6 +120,8 @@ actual="$(decide_request "$FOUNDER" 'req-approve-1' 'APPROVED')"
 expect t "$actual" 'active founder approves exact request'
 actual="$(resolve_request "$REQUESTER" 'req-approve-1')"
 expect 'READY:FILE:READ:HIGH:APPROVED:FOUNDER' "$actual" 'approved request moves to READY'
+event="$(psql "$DATABASE_URL" -XqAt -F ':' -c "SELECT actor_user_id::text || ':' || decision FROM private.execution_request_approval_events WHERE request_id='req-approve-1';")"
+expect "$FOUNDER:APPROVED" "$event" 'append-only approval event records founder decision'
 actual="$(create_request "$REQUESTER" 'new-generated-id-1' 'idem-approve-1' 'READ' '{"path":"README.md"}' 'task-req-approve-1' 'mission-req-approve-1')"
 expect 'READY:HIGH:APPROVED:FOUNDER:true' "$actual" 'idempotent retry after approval returns existing READY state'
 actual="$(decide_request "$FOUNDER" 'req-approve-1' 'APPROVED')"
@@ -131,6 +133,8 @@ actual="$(decide_request "$FOUNDER" 'req-reject-1' 'REJECTED')"
 expect t "$actual" 'founder rejects request'
 actual="$(resolve_request "$REQUESTER" 'req-reject-1')"
 expect 'CANCELLED:FILE:READ:HIGH:REJECTED:FOUNDER' "$actual" 'rejected request is cancelled'
+event="$(psql "$DATABASE_URL" -XqAt -F ':' -c "SELECT actor_user_id::text || ':' || decision FROM private.execution_request_approval_events WHERE request_id='req-reject-1';")"
+expect "$FOUNDER:REJECTED" "$event" 'append-only rejection event records founder decision'
 actual="$(create_request "$REQUESTER" 'new-generated-id-2' 'idem-reject-1' 'READ' '{"path":"README.md"}' 'task-req-reject-1' 'mission-req-reject-1')"
 expect 'CANCELLED:HIGH:REJECTED:FOUNDER:true' "$actual" 'idempotent retry after rejection returns existing cancelled state'
 
@@ -164,6 +168,20 @@ if psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
   UPDATE private.execution_requests SET input='{"path":"tampered"}'::jsonb
    WHERE request_id='req-approve-1';" >/dev/null 2>&1; then
   echo "FAIL: immutable execution envelope trigger allowed mutation" >&2
+  exit 1
+fi
+
+# Approval evidence cannot be rewritten or deleted, even by the migration owner.
+if psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+  UPDATE private.execution_request_approval_events SET reason='rewritten'
+   WHERE request_id='req-approve-1';" >/dev/null 2>&1; then
+  echo "FAIL: approval event was rewritten" >&2
+  exit 1
+fi
+if psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+  DELETE FROM private.execution_request_approval_events
+   WHERE request_id='req-approve-1';" >/dev/null 2>&1; then
+  echo "FAIL: approval event was deleted" >&2
   exit 1
 fi
 
