@@ -100,3 +100,11 @@ Configure the Supabase Auth Site URL and redirect allowlist to include the exact
 - Added a dedicated NOLOGIN BYPASSRLS function owner with SELECT-only access to private.execution_requests and EXECUTE on auth.uid(); the SQL candidate revokes RPC execution from public/anon/service_role and grants it only to authenticated.
 - The PostgreSQL harness now checks exact executor success, guessed foreign request denial, different-user denial, non-READY denial, SELECT-only owner privileges, and RPC grants. The local auth.uid() claim remains a stub, not hosted Supabase JWT proof.
 - The adapter is still not wired into production runtime composition; the SQL remains a design-only candidate and has not been applied.
+
+### Named-executor grant consumption boundary hardening — 2026-11-21
+
+- The grant lookup adapter also exposed a legacy direct private-table UPDATE implementation for consumption. Although the SQL candidate revokes API-role table writes and the production-shaped store uses the user-scoped RPC, retaining a second consume path made accidental privileged-client composition possible and contradicted the database boundary.
+- Disabled direct grant consumption in `SupabaseNamedExecutorGrantStore`. It remains a lookup adapter only in effective behavior; `consumeApprovedGrant` now fails closed without issuing a table UPDATE.
+- The only supported application consume path is `SupabaseTransactionalNamedExecutorGrantStore` with a request-scoped, user-JWT RPC client calling `consume_file_mutation_approval_grant`. The database derives executor identity from `auth.uid()` and performs the atomic exact-binding transition.
+- Updated the store contract test to assert no private-table UPDATE or table access occurs through the legacy method. Existing transactional RPC tests continue to verify exact arguments and fail-closed responses.
+- This is source-level hardening only. The RPC SQL remains a design candidate; the runtime composition is not wired, no hosted migration was applied, and no live grant was read or changed.
