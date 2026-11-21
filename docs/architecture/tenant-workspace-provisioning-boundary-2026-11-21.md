@@ -10,6 +10,10 @@ HAPPY must not derive a tenant workspace from `process.cwd()`, a request-supplie
 
 The new `TenantWorkspaceProvisioner` contract accepts only a `CanonicalTenantContext`, which is expected to come from verified request identity plus exact active organization/workspace membership. It can return an executor only when its binding exactly matches the verified user, organization, and workspace, and the provider declares an isolated persistent volume. Any incomplete context, provider error, disconnected provider, or scope mismatch returns `NOT_YET_CONNECTED`.
 
+## Filesystem executor boundary
+
+The current path validator rejects traversal, symlink components (including dangling final symlinks), and regular files with multiple hard links. Regression tests exercise symlink and hard-link escape attempts. This is defense in depth, not a substitute for an OS-enforced sandbox: path validation followed by ordinary Node filesystem operations can still have time-of-check/time-of-use races if an untrusted process can mutate the mounted tree concurrently. A production provider must prevent untrusted concurrent mutation of directory entries or use descriptor-relative/no-follow filesystem operations in an isolated worker. Do not treat the current executor as safe for adversarial multi-process access to a shared mount.
+
 ## Provider requirements before implementation
 
 A production provider must prove all of the following before returning `PROVISIONED`:
