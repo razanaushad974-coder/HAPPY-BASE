@@ -246,7 +246,6 @@ export class SupabaseDurableExecutionRequestCreator {
         ["PENDING", "APPROVED", "REJECTED"].includes(String(row.approval_status)) &&
         row.required_approval_role === "FOUNDER" &&
         ["WAITING_APPROVAL", "READY", "CANCELLED"].includes(String(row.status)) &&
-        row.idempotency_key === command.idempotencyKey &&
         typeof row.input_digest === "string" && /^[0-9a-f]{64}$/.test(row.input_digest) &&
         typeof row.requester_user_id === "string" &&
         row.requester_user_id.length > 0 &&
