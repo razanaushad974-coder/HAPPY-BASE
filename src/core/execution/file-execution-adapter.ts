@@ -69,6 +69,13 @@ function normalizeOperation(
   };
 }
 
+function isSafeRelativeWorkspacePath(value: string): boolean {
+  if (!value.trim() || value.includes("\\0") ||
+      value.startsWith("/") || value.startsWith("\\\\") ||
+      /^[A-Za-z]:/.test(value)) return false;
+  return !value.split(/[\\/]+/).includes("..");
+}
+
 function isWorkspaceFileOperationResult(value: unknown): value is WorkspaceFileOperationResult {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const result = value as Record<string, unknown>;
@@ -78,7 +85,8 @@ function isWorkspaceFileOperationResult(value: unknown): value is WorkspaceFileO
     typeof result.path === "string" &&
     (result.destinationPath === undefined || typeof result.destinationPath === "string") &&
     (result.content === undefined || typeof result.content === "string") &&
-    Array.isArray(result.changedFiles) && result.changedFiles.every((path) => typeof path === "string") &&
+    Array.isArray(result.changedFiles) &&
+    result.changedFiles.every((path) => typeof path === "string" && isSafeRelativeWorkspacePath(path)) &&
     Array.isArray(result.errors) && result.errors.every((error) => typeof error === "string");
 }
 
@@ -240,6 +248,17 @@ export class FileExecutionAdapter
       };
     }
 
+    // Do not let a remote provider weaken the relative-path contract that
+    // the local executor enforces itself.
+    if (!isSafeRelativeWorkspacePath(operation.path) ||
+        (operation.destinationPath !== undefined &&
+          !isSafeRelativeWorkspacePath(operation.destinationPath))) {
+      return {
+        ...baseResult(request, "BLOCKED", startedAt),
+        error: "Workspace operation paths must remain inside the tenant workspace.",
+      };
+    }
+
     // Do not consume a one-time approval grant when there is no explicitly
     // provisioned workspace root to execute against. The adapter remains
     // disconnected until trusted runtime composition supplies one.
@@ -320,9 +339,7 @@ export class FileExecutionAdapter
           shellExecuted:
             false,
         },
-        error:
-          result.errors.join("; ") ||
-          "File execution failed.",
+        error: "Tenant workspace operation did not complete.",
       };
     }
 
