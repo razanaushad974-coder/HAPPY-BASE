@@ -130,6 +130,29 @@ if psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
   exit 1
 fi
 
+# A task record whose missionId disagrees with the selected mission is denied.
+psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+  INSERT INTO public.happy_tenant_records
+    (organization_id,workspace_id,user_id,entity_type,record_id,version,data)
+  VALUES
+    ('$ORG','$WS','$REQUESTER','MISSION','mission-mismatch',1,
+      jsonb_build_object('id','mission-mismatch','status','READY','taskIds',jsonb_build_array('task-mismatch'))),
+    ('$ORG','$WS','$REQUESTER','TASK','task-mismatch',1,
+      jsonb_build_object('id','task-mismatch','missionId','different-mission','status','READY'))
+  ON CONFLICT (organization_id,workspace_id,user_id,entity_type,record_id) DO NOTHING;";
+if psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+  BEGIN;
+  SET LOCAL ROLE authenticated;
+  SET LOCAL request.jwt.claim.sub = '$REQUESTER';
+  SELECT * FROM public.create_authenticated_execution_request(
+    'req-mismatched-task','task-mismatch','mission-mismatch','$ORG','$WS',
+    'FILE','READ','{\"path\":\"README.md\"}'::jsonb,NULL,'idem-mismatched-task'
+  );
+  COMMIT;" >/dev/null 2>&1; then
+  echo "FAIL: execution request accepted task linked to a different mission" >&2
+  exit 1
+fi
+
 # Same idempotency key and identical immutable intent returns the original row.
 actual="$(create_request "$REQUESTER" 'req-approve-1' 'idem-approve-1')"
 expect 'WAITING_APPROVAL:HIGH:PENDING:FOUNDER:true' "$actual" 'idempotent request retry'
