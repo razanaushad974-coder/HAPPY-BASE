@@ -145,10 +145,26 @@ begin
 
   if v_mission->>'status' not in ('READY','RUNNING','VERIFYING')
      or v_task->>'missionId' <> p_mission_id
-     or v_task->>'status' <> 'READY'
+     or v_task->>'status' not in ('READY','RUNNING')
      or jsonb_typeof(v_mission->'taskIds') <> 'array'
      or not ((v_mission->'taskIds') ? p_task_id) then
     raise exception 'TASK_NOT_ELIGIBLE' using errcode = '55000';
+  end if;
+
+  -- RUNNING tasks are reclaimable only when their previous persisted lease
+  -- exists and has expired. A missing lease is an ambiguous crash window and
+  -- must be reconciled, not treated as proof that dispatch never happened.
+  if v_task->>'status' = 'RUNNING' and not exists (
+    select 1
+      from public.happy_mission_task_leases prior
+     where prior.organization_id = p_organization_id
+       and prior.workspace_id = p_workspace_id
+       and prior.user_id = v_actor
+       and prior.mission_id = p_mission_id
+       and prior.task_id = p_task_id
+       and prior.expires_at <= clock_timestamp()
+  ) then
+    raise exception 'RUNNING_TASK_REQUIRES_RECONCILIATION' using errcode = '55000';
   end if;
 
   if v_task ? 'dependencyIds' then
