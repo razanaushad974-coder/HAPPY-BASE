@@ -239,7 +239,8 @@ create or replace function public.decide_authenticated_execution_request(
 declare v_actor uuid:=auth.uid(); v_scope record; v_request private.execution_requests%rowtype; v_now timestamptz:=clock_timestamp();
 begin
  if v_actor is null then return false; end if;
- if p_decision not in ('APPROVED','REJECTED') or p_reason is null or length(btrim(p_reason)) not between 1 and 1000 then
+ if p_decision is null or p_decision not in ('APPROVED','REJECTED')
+   or p_reason is null or length(btrim(p_reason)) not between 1 and 1000 then
   raise exception 'INVALID_EXECUTION_DECISION' using errcode='22023'; end if;
  select organization_id,workspace_id into v_scope from private.execution_requests where request_id=p_request_id;
  if not found then return false; end if;
