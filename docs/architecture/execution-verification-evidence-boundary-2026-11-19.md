@@ -95,3 +95,10 @@ The task graph builder validates graph structure, but the ready-task selector al
 ### Direct mission transition graph validation (2026-11-20)
 
 The mission status-transition and retry APIs now independently rebuild/validate the supplied task graph after checking exact mission snapshot membership. This prevents callers from bypassing graph validation by invoking `MissionEngine.updateTaskStatus` or `retryMissionTask` directly with duplicate dependencies, missing dependencies, or dependency cycles. Regression cases cover each malformed graph at the direct transition boundary. This remains in-memory validation; it does not replace atomic persistence, version checks, or durable scheduler claims.
+
+
+### Read-only mission crash-recovery assessment — 2026-11-21
+
+Added `src/core/mission/recovery-assessment.ts` as a deterministic, read-only classifier for active mission tasks. It requires an exact mission/task snapshot and rejects execution records from another mission or task. For active RUNNING/VERIFYING tasks it distinguishes: missing execution record (reconciliation required), duplicate records (ambiguous/reconciliation required), unknown or still-running execution outcome (never blindly replay), completed execution (resume verification), approval wait, failed execution review, and blocked/not-connected review. Non-active tasks are left unchanged.
+
+Regression coverage verifies missing, in-flight, completed, duplicate, and foreign execution records. The assessment performs no writes, retries, dispatches, or state transitions. It is a safety/reconciliation primitive only: it does not prove external side effects, establish durable leases/fencing/idempotency, or make the legacy JSON orchestration crash-safe. Production use still requires a transactional scheduler, durable execution identity, adapter-side idempotency, and explicit reconciliation evidence.
