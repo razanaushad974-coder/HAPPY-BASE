@@ -90,12 +90,12 @@ export async function reconcileProviderDispatch(
         : { status: "RECONCILIATION_REQUIRED", reason: "PROVIDER_SUCCESS_MISSING_REQUEST_ID" };
       break;
     case "FAILED":
-      decision = observation.providerRequestId.trim()
-        ? { status: "FAILED_EXECUTION_REVIEW_REQUIRED", providerRequestId: observation.providerRequestId, code: code: typeof observation.code === "string" ? observation.code : "PROVIDER_FAILED", message: typeof observation.message === "string" ? observation.message : "Provider reported failure." }
+      decision = typeof observation.providerRequestId === "string" && observation.providerRequestId.trim()
+        ? { status: "FAILED_EXECUTION_REVIEW_REQUIRED", providerRequestId: observation.providerRequestId, code: typeof observation.code === "string" ? observation.code : "PROVIDER_FAILED", message: typeof observation.message === "string" ? observation.message : "Provider reported failure." }
         : { status: "RECONCILIATION_REQUIRED", reason: "PROVIDER_FAILURE_MISSING_REQUEST_ID" };
       break;
     case "PROCESSING":
-      decision = observation.providerRequestId.trim()
+      decision = typeof observation.providerRequestId === "string" && observation.providerRequestId.trim()
         ? { status: "PROVIDER_STILL_PROCESSING", providerRequestId: observation.providerRequestId }
         : { status: "RECONCILIATION_REQUIRED", reason: "PROVIDER_PROCESSING_MISSING_REQUEST_ID" };
       break;
