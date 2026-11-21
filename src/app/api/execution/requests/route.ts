@@ -1,12 +1,18 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import {
+  SupabaseDurableExecutionRequestCreator,
+  SupabaseDurableExecutionRequestStore,
+} from "@/core/tenant/supabase-named-executor-context-provider";
+import {
   resolveSupabaseRequestTenantContext,
   type RequestScopedSupabaseClient,
 } from "@/core/tenant/supabase-request-tenant-composition";
 import type {
   SupabaseExecutionRequestCreateRpcClient,
+  SupabaseExecutionRequestRpcClient,
 } from "@/core/tenant/supabase-private-tenant-stores";
+import type { ResolvedReference } from "@/core/context/types";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -115,32 +121,51 @@ export async function POST(request: NextRequest) {
       return response(403, { status: "TENANT_ACCESS_DENIED" });
     }
 
-    const rpc = supabase as unknown as SupabaseExecutionRequestCreateRpcClient;
-    const result = await rpc.rpc("create_authenticated_execution_request", {
-      p_request_id: crypto.randomUUID(),
-      p_task_id: taskId,
-      p_mission_id: missionId,
-      p_organization_id: organizationId,
-      p_workspace_id: workspaceId,
-      p_capability: capability as typeof CAPABILITIES[number],
-      p_action: action,
-      p_input: input,
-      p_target_reference: targetReference,
-      p_idempotency_key: idempotencyKey,
+    const requestId = crypto.randomUUID();
+    const creator = new SupabaseDurableExecutionRequestCreator(
+      supabase as unknown as SupabaseExecutionRequestCreateRpcClient,
+    );
+    const created = await creator.create({
+      requestId,
+      taskId,
+      missionId,
+      organizationId,
+      workspaceId,
+      capability: capability as typeof CAPABILITIES[number],
+      action,
+      input,
+      targetReference: targetReference as unknown as ResolvedReference | undefined,
+      idempotencyKey,
     });
-
-    if (result.error) {
-      return response(503, { status: "NOT_YET_CONNECTED", reason: "DURABLE_EXECUTION_REQUEST_STORE_UNAVAILABLE" });
-    }
-
-    const rows = Array.isArray(result.data)
-      ? result.data
-      : result.data === null || result.data === undefined ? [] : [result.data];
-    if (rows.length !== 1 || !isRecord(rows[0])) {
+    if (!created) {
       return response(503, { status: "PERSISTENCE_UNVERIFIED" });
     }
 
-    const persisted = rows[0];
+    const durableStore = new SupabaseDurableExecutionRequestStore(
+      supabase as unknown as SupabaseExecutionRequestRpcClient,
+    );
+    const persistedRecord = await durableStore.getByRequestId(requestId);
+    if (!persistedRecord) {
+      return response(503, { status: "PERSISTENCE_UNVERIFIED" });
+    }
+    const persisted = {
+      request_id: persistedRecord.requestId,
+      requester_user_id: persistedRecord.requesterUserId,
+      executor_user_id: persistedRecord.executorUserId,
+      organization_id: persistedRecord.organizationId,
+      workspace_id: persistedRecord.workspaceId,
+      task_id: persistedRecord.taskId,
+      mission_id: persistedRecord.missionId,
+      capability: persistedRecord.executionRequest.capability,
+      action: persistedRecord.executionRequest.action,
+      input: persistedRecord.executionRequest.input,
+      requires_approval: persistedRecord.executionRequest.requiresApproval,
+      risk: persistedRecord.executionRequest.risk,
+      required_approval_role: persistedRecord.requiredApprovalRole,
+      approval_status: persistedRecord.approvalStatus,
+      status: persistedRecord.status,
+      input_digest: persistedRecord.inputDigest,
+    };
     if (persisted.requester_user_id !== tenant.context.actor.userId ||
         persisted.executor_user_id !== tenant.context.actor.userId ||
         persisted.organization_id !== organizationId ||
@@ -149,11 +174,10 @@ export async function POST(request: NextRequest) {
         persisted.mission_id !== missionId ||
         persisted.capability !== capability ||
         persisted.action !== action ||
+        JSON.stringify(persisted.input) !== JSON.stringify(input) ||
         persisted.requires_approval !== true ||
         persisted.risk !== "HIGH" ||
         persisted.required_approval_role !== "FOUNDER" ||
-        typeof persisted.request_id !== "string" ||
-        typeof persisted.input_digest !== "string" ||
         !/^[0-9a-f]{64}$/.test(persisted.input_digest)) {
       return response(503, { status: "PERSISTENCE_UNVERIFIED" });
     }
