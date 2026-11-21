@@ -145,13 +145,39 @@ psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
 actual="$(decide_request "$FOUNDER" 'req-revoked-founder-1' 'APPROVED')"
 expect f "$actual" 'revoked founder cannot approve'
 
-# Even the service role cannot rewrite immutable execution intent; the trigger
-# protects the envelope independently of table-level privilege.
+# service_role cannot directly rewrite an existing request.
 if psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
   SET ROLE service_role;
-  UPDATE private.execution_requests SET input='{""path"":""tampered""}'::jsonb
+  UPDATE private.execution_requests SET input='{"path":"tampered"}'::jsonb
    WHERE request_id='req-approve-1';" >/dev/null 2>&1; then
-  echo "FAIL: immutable execution envelope was rewritten" >&2
+  echo "FAIL: service_role directly updated an execution request" >&2
+  exit 1
+fi
+
+# Even a privileged RPC owner cannot rewrite immutable intent through direct DML.
+if psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+  SET ROLE happy_execution_request_decision_rpc_owner;
+  UPDATE private.execution_requests SET input='{"path":"tampered"}'::jsonb
+   WHERE request_id='req-approve-1';" >/dev/null 2>&1; then
+  echo "FAIL: immutable execution envelope trigger allowed mutation" >&2
+  exit 1
+fi
+
+# service_role cannot insert a pre-approved execution envelope.
+if psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+  SET ROLE service_role;
+  INSERT INTO private.execution_requests (
+    request_id,task_id,mission_id,requester_user_id,executor_user_id,
+    organization_id,workspace_id,status,capability,action,input,
+    requires_approval,risk,approval_status,required_approval_role,
+    input_digest,idempotency_key
+  ) VALUES (
+    'forged-ready','task-forged','mission-forged','$REQUESTER','$REQUESTER',
+    '$ORG','$WS','READY','FILE','DELETE','{"path":"x"}'::jsonb,
+    true,'HIGH','APPROVED','FOUNDER',
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','forged-idem'
+  );" >/dev/null 2>&1; then
+  echo "FAIL: service_role inserted a pre-approved execution request" >&2
   exit 1
 fi
 
