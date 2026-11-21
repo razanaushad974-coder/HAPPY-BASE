@@ -237,7 +237,12 @@ export class SupabaseAuthenticatedNamedExecutorGrantLookupStore implements Named
     }
   }
 
-  async consumeApprovedGrant(): Promise<boolean> {
+  async consumeApprovedGrant(
+    _scope: { organizationId: string; workspaceId: string },
+    _grantId: string,
+    _binding: NamedExecutorGrantBinding,
+    _consumedAt: string,
+  ): Promise<boolean> {
     // Lookup is deliberately read-only. Consumption belongs to the separate
     // executor-JWT transactional RPC adapter.
     return false;
