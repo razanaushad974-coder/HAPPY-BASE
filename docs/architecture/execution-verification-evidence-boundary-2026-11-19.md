@@ -193,3 +193,8 @@ Added `src/core/mission/provider-dispatch-reconciliation.ts`. This is a read-onl
 Regression tests cover success-to-verification, definitive failure review, processing, not-found no-replay, unsupported idempotency providers, lookup failure, and evidence persistence failure. The test is included in `test:security`.
 
 This remains a provider-neutral contract. A production implementation still needs authenticated provider credentials, a concrete provider status API, durable append-only reconciliation evidence storage, tenant-bound worker composition, polling/lease lifecycle, and explicit human/policy handling for NOT_FOUND. No production DB, migration, merge, or deployment changes were made.
+
+
+#### Reconciliation input hardening
+
+Provider status responses are external, untrusted input. The reconciliation contract now rejects missing/invalid provider identity, invalid observation timestamps, and unrecognized status values before persisting an observation. Missing optional failure metadata is normalized to explicit safe defaults; malformed provider success identity is kept in RECONCILIATION_REQUIRED rather than treated as verified. Regression tests cover malformed provider response and invalid timestamp paths. This remains contract-level validation; concrete provider schemas and authenticated status APIs must still be validated by each adapter.
