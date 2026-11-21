@@ -151,17 +151,24 @@ export async function POST(request: NextRequest) {
         persisted.action !== action ||
         persisted.requires_approval !== true ||
         persisted.risk !== "HIGH" ||
-        persisted.approval_status !== "PENDING" ||
         persisted.required_approval_role !== "FOUNDER" ||
-        persisted.status !== "WAITING_APPROVAL" ||
         typeof persisted.request_id !== "string" ||
         typeof persisted.input_digest !== "string" ||
         !/^[0-9a-f]{64}$/.test(persisted.input_digest)) {
       return response(503, { status: "PERSISTENCE_UNVERIFIED" });
     }
 
-    return response(202, {
-      status: "WAITING_APPROVAL",
+    const lifecycleIsConsistent =
+      (persisted.approval_status === "PENDING" && persisted.status === "WAITING_APPROVAL") ||
+      (persisted.approval_status === "APPROVED" && persisted.status === "READY") ||
+      (persisted.approval_status === "REJECTED" && persisted.status === "CANCELLED");
+    if (!lifecycleIsConsistent) {
+      return response(503, { status: "PERSISTENCE_UNVERIFIED" });
+    }
+
+    return response(persisted.status === "WAITING_APPROVAL" ? 202 : 200, {
+      status: persisted.status,
+      approvalStatus: persisted.approval_status,
       requestId: persisted.request_id,
       risk: "HIGH",
       requiredApprovalRole: "FOUNDER",
