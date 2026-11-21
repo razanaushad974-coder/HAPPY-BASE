@@ -41,7 +41,9 @@ alter table private.execution_requests add constraint execution_requests_envelop
      and risk is not null and risk in ('LOW','MEDIUM','HIGH','CRITICAL')
      and approval_status is not null and approval_status in ('NOT_REQUIRED','PENDING','APPROVED','REJECTED')
      and required_approval_role is not null and required_approval_role = 'FOUNDER'
-     and input_digest is not null and input_digest ~ '^[0-9a-f]{64}
+     and input_digest is not null and input_digest ~ '^[0-9a-f]{64}$'
+     and envelope_digest is not null and envelope_digest ~ '^[0-9a-f]{64}$'
+     and idempotency_key is not null and length(btrim(idempotency_key)) > 0
   );
 
 drop index if exists private.execution_requests_idempotency_idx;
