@@ -513,6 +513,7 @@ begin
   v_actor := auth.uid();
   if v_actor is null
      or p_outbox_id is null
+     or p_status is null
      or p_status not in ('ACKNOWLEDGED','AMBIGUOUS','FAILED','RECONCILIATION_REQUIRED')
      or p_outcome is null
      or jsonb_typeof(p_outcome) is distinct from 'object' then
