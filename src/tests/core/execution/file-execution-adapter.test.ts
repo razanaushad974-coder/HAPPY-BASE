@@ -48,8 +48,8 @@ async function main(): Promise<void> {
         };
       },
     };
-    const remoteAdapter = new FileExecutionAdapter(remoteExecutor, {
-      async authorize(_request, operation) {
+    const remoteAdapter = new FileExecutionAdapter(remoteExecutor, undefined, {
+      async authorizeRead(_request, operation) {
         return operation.action === "READ" && operation.path === "remote/README.md";
       },
     });
