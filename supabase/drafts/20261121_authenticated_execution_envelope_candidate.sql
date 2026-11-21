@@ -323,6 +323,7 @@ declare
   v_member private.organization_memberships%rowtype;
   v_workspace_member private.workspace_memberships%rowtype;
   v_approver_org_role text;
+  v_approver_workspace_role text;
   v_decided_at timestamptz;
   v_requester_org_active boolean := false;
   v_approver_org_active boolean := false;
@@ -394,10 +395,12 @@ begin
       v_requester_workspace_active := v_workspace_member.status = 'ACTIVE';
     elsif v_workspace_member.user_id = v_approver then
       v_approver_workspace_active := v_workspace_member.status = 'ACTIVE';
+      v_approver_workspace_role := v_workspace_member.role;
     end if;
   end loop;
 
-  if not v_requester_workspace_active or not v_approver_workspace_active then
+  if not v_requester_workspace_active or not v_approver_workspace_active
+     or v_approver_workspace_role not in ('FOUNDER','ADMIN','OWNER') then
     return false;
   end if;
 
