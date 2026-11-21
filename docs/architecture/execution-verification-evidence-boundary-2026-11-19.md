@@ -214,3 +214,12 @@ This remains a SQL design candidate, not a deployed schema or verified hosted Su
 The existing disposable PostgreSQL 17 tenant-persistence harness now exercises the reconciliation RPC against the scheduler candidate: authenticated principal claim, exact ambiguous outbox/provider/idempotency binding, idempotent retry of an identical event UUID, changed-payload UUID collision rejection, multiple distinct observations, malformed status/payload rejection, foreign tenant denial, revoked workspace-member denial, and preservation of the original AMBIGUOUS outbox outcome. It also verifies that ordinary UPDATE/DELETE hit the append-only trigger and that authenticated has RPC execute permission but no direct table privileges, while service_role cannot invoke the append RPC.
 
 The harness runs its internal evidence assertions as the local database owner because the evidence/outbox tables deliberately expose no direct SELECT API. The simulated `auth.uid()` still comes from a request-claim setting; this does not prove hosted Supabase JWT signature validation, real RLS behavior, production function ownership, or concurrent append behavior. No live database was modified.
+
+
+#### Authenticated application-side reconciliation evidence adapter
+
+Added `PostgresProviderReconciliationEvidenceStore`, implementing the existing append-only evidence port over the existing `PostgresTenantSessionProvider`. It binds organization/workspace/user scope to a trusted server identity session and invokes only the authenticated append RPC; it never issues direct table INSERT/SELECT/UPDATE/DELETE.
+
+The adapter generates an evidence UUID, validates tenant/outbox UUIDs and timestamps, bounds identifiers and serialized payload size, and persists only an allow-listed observation summary. In particular, arbitrary `SUCCEEDED.result` provider response bodies are deliberately excluded because they may contain credentials, personal data, or unbounded payloads. Semantic verification must obtain capability-specific evidence through a separately scoped path. The adapter verifies the RPC returns the same event UUID and fails closed on unconfirmed persistence.
+
+A fake-session contract test verifies exact tenant binding, RPC invocation, evidence identity, malformed scope/timestamp rejection before database access, and omission of provider result bodies. This is an application adapter contract, not proof of hosted Supabase operation; production composition, trusted identity wiring, SQL deployment, and hosted JWT/RLS/function ownership remain unconnected.
