@@ -129,6 +129,14 @@ grant execute on function public.resolve_authenticated_file_mutation_approval_gr
 
 do $privileges$
 begin
+  if not exists (
+    select 1 from pg_roles
+     where rolname = 'happy_file_grant_lookup_rpc_owner'
+       and rolcanlogin = false
+       and rolbypassrls = true
+  ) then
+    raise exception 'file grant lookup RPC owner must be NOLOGIN BYPASSRLS';
+  end if;
   if not has_table_privilege('happy_file_grant_lookup_rpc_owner',
       'private.file_mutation_approval_grants', 'SELECT')
      or not has_table_privilege('happy_file_grant_lookup_rpc_owner',
@@ -142,7 +150,11 @@ begin
   if has_table_privilege('happy_file_grant_lookup_rpc_owner',
       'private.file_mutation_approval_grants', 'INSERT,UPDATE,DELETE')
      or has_table_privilege('happy_file_grant_lookup_rpc_owner',
-      'private.execution_requests', 'INSERT,UPDATE,DELETE') then
+      'private.execution_requests', 'INSERT,UPDATE,DELETE')
+     or has_table_privilege('happy_file_grant_lookup_rpc_owner',
+      'private.organizations', 'INSERT,UPDATE,DELETE')
+     or has_table_privilege('happy_file_grant_lookup_rpc_owner',
+      'private.workspaces', 'INSERT,UPDATE,DELETE') then
     raise exception 'file grant lookup RPC owner unexpectedly has write privileges';
   end if;
   if not has_function_privilege('authenticated',
