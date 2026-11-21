@@ -22,7 +22,6 @@ async function main(): Promise<void> {
     action: "MODIFY",
     input: { path: "docs/plan.md", content: "approved content" },
     idempotencyKey: "idem-1",
-    inputDigest: "a".repeat(64),
   };
   const createCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const createClient: SupabaseExecutionRequestCreateRpcClient = {
@@ -48,7 +47,7 @@ async function main(): Promise<void> {
           required_approval_role: "FOUNDER",
           status: "WAITING_APPROVAL",
           idempotency_key: command.idempotencyKey,
-          input_digest: command.inputDigest,
+          input_digest: String(args.p_input_digest),
         }],
       };
     },
@@ -57,7 +56,8 @@ async function main(): Promise<void> {
     "A complete server-bound, founder-gated envelope should be accepted.");
   assert(createCalls.length === 1 &&
     createCalls[0].name === "create_authenticated_execution_request" &&
-    createCalls[0].args.p_input_digest === command.inputDigest &&
+    typeof createCalls[0].args.p_input_digest === "string" &&
+    /^[0-9a-f]{64}$/.test(createCalls[0].args.p_input_digest as string) &&
     createCalls[0].args.p_organization_id === command.organizationId &&
     createCalls[0].args.p_workspace_id === command.workspaceId &&
     !("p_requester_user_id" in createCalls[0].args) &&
