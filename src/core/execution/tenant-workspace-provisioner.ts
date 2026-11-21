@@ -1,5 +1,5 @@
 import type { CanonicalTenantContext } from "../tenant/canonical-tenant-context";
-import { WorkspaceCodeExecutor } from "./workspace-code-executor";
+import type { WorkspaceFileExecutor } from "./workspace-code-executor";
 
 export interface TenantWorkspaceBinding {
   userId: string;
@@ -52,7 +52,7 @@ export async function resolveTenantWorkspaceExecutor(
   context: CanonicalTenantContext,
   provisioner: TenantWorkspaceProvisioner,
 ): Promise<
-  | { status: "AVAILABLE"; executor: WorkspaceCodeExecutor }
+  | { status: "AVAILABLE"; executor: WorkspaceFileExecutor }
   | { status: "NOT_YET_CONNECTED"; reason: string }
 > {
   const userId = context.actor?.userId?.trim();
@@ -85,7 +85,8 @@ export async function resolveTenantWorkspaceExecutor(
       result.binding.organizationId !== organizationId ||
       result.binding.workspaceId !== workspaceId ||
       result.storage !== "ISOLATED_PERSISTENT_VOLUME" ||
-      !(result.executor instanceof WorkspaceCodeExecutor)
+      !result.executor ||
+      typeof result.executor.executeOperation !== "function"
     ) {
       return {
         status: "NOT_YET_CONNECTED",
