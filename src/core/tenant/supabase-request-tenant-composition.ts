@@ -30,8 +30,8 @@ export interface RequestScopedSupabaseClientFactory {
 /**
  * Resolve the caller and exact tenant membership using one request-scoped
  * client instance. No user ID is accepted from the request; auth.getUser()
- * supplies the principal, and membership rows are read through that same
- * user's JWT-bound client.
+ * supplies the principal, and the membership RPC derives the same principal
+ * independently from auth.uid() on the user's JWT-bound client.
  *
  * This is the core composition boundary. A Next.js adapter must implement
  * the factory with cookies() from next/headers and a user-scoped Supabase
