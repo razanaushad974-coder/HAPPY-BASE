@@ -311,7 +311,7 @@ async function main(): Promise<void> {
         makeRequest(
           "NAVIGATE",
           `http://localhost:${port}/`,
-          {},
+          { allowedHosts: ["localhost"] },
         ),
       );
 
