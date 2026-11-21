@@ -149,6 +149,46 @@ async function main(): Promise<void> {
       "Remote worker responses for a different operation/path must be rejected.",
     );
 
+    let unsafeRemoteCalls = 0;
+    const unsafePathAdapter = new FileExecutionAdapter({
+      async executeOperation(operation) {
+        unsafeRemoteCalls += 1;
+        return {
+          action: operation.action,
+          status: "COMPLETED",
+          path: operation.path,
+          content: "must not be read",
+          changedFiles: [],
+          errors: [],
+        };
+      },
+    }, undefined, {
+      async authorizeRead() { return true; },
+    });
+    const unsafePathResult = await unsafePathAdapter.execute({
+      id: "file-remote-traversal-test",
+      taskId: "task-remote",
+      missionId: "mission-remote",
+      capability: "FILE",
+      action: "READ",
+      input: { operation: "READ", path: "../outside/secret.txt" },
+      targetReference: {
+        token: "remote-file",
+        entityType: "FILE",
+        entityId: "remote-file-1",
+        confidence: "HIGH",
+        source: "ACTIVE_CONTEXT",
+      },
+      requiresApproval: false,
+      approved: false,
+      risk: "LOW",
+      createdAt: new Date().toISOString(),
+    });
+    assert(
+      unsafePathResult.status === "BLOCKED" && unsafeRemoteCalls === 0,
+      "Traversal paths must be rejected before invoking a remote workspace worker.",
+    );
+
     const adapter =
       new FileExecutionAdapter(executor);
 
