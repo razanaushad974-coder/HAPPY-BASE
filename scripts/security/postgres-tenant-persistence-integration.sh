@@ -9,8 +9,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCHEMA_FILE="$ROOT_DIR/supabase/drafts/20261119_async_tenant_persistence_schema_candidate.sql"
+SCHEDULER_SCHEMA_FILE="$ROOT_DIR/supabase/drafts/20261121_durable_mission_scheduler_candidate.sql"
 RACE_SCRIPT="$ROOT_DIR/scripts/security/postgres-tenant-cas-concurrency.sh"
-for required_file in "$SCHEMA_FILE" "$RACE_SCRIPT"; do
+for required_file in "$SCHEMA_FILE" "$SCHEDULER_SCHEMA_FILE" "$RACE_SCRIPT"; do
   if [[ ! -f "$required_file" ]]; then
     echo "Required tenant persistence test file not found: $required_file" >&2
     exit 1
@@ -121,6 +122,7 @@ grant select, insert, update on private.organizations, private.workspaces,
 SQL
 
 "${psql_base[@]}" -f "$SCHEMA_FILE"
+"${psql_base[@]}" -f "$SCHEDULER_SCHEMA_FILE"
 
 # Real PostgreSQL 17 roles/RLS/functions; auth.uid() is stubbed from a local
 # claim setting. This is not Supabase JWT signature or hosted-project testing.
@@ -307,6 +309,151 @@ end
 $rollback$;
 
 select 'PostgreSQL tenant persistence RLS/CAS integration: PASS' as result;
+SQL
+
+
+# Durable scheduler SQL candidate: claim eligibility, dependency gating,
+# lease fencing/reclaim, transactional outbox, and idempotent intent insertion.
+"\${psql_base[@]}" <<'SQL'
+set role authenticated;
+select set_config('request.jwt.claim.sub',
+  '30000000-0000-4000-8000-000000000003', false);
+select * from public.happy_create_tenant_record(
+  '10000000-0000-4000-8000-000000000001',
+  '20000000-0000-4000-8000-000000000002',
+  'MISSION', 'mission-scheduler',
+  '{"status":"READY","taskIds":["task-scheduler-root","task-scheduler-child"]}'
+);
+select * from public.happy_create_tenant_record(
+  '10000000-0000-4000-8000-000000000001',
+  '20000000-0000-4000-8000-000000000002',
+  'TASK', 'task-scheduler-root',
+  '{"missionId":"mission-scheduler","status":"READY","dependencyIds":[]}'
+);
+select * from public.happy_create_tenant_record(
+  '10000000-0000-4000-8000-000000000001',
+  '20000000-0000-4000-8000-000000000002',
+  'TASK', 'task-scheduler-child',
+  '{"missionId":"mission-scheduler","status":"READY","dependencyIds":["task-scheduler-root"]}'
+);
+do $scheduler$
+declare
+  v_claim record;
+  v_outbox public.happy_execution_dispatch_outbox%rowtype;
+  v_duplicate public.happy_execution_dispatch_outbox%rowtype;
+  v_payload jsonb;
+begin
+  begin
+    perform * from public.happy_claim_mission_task(
+      '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
+      'mission-scheduler','task-scheduler-child','worker-a',30000
+    );
+    raise exception 'task with incomplete dependency was claimed';
+  exception when sqlstate '55000' then
+    if sqlerrm <> 'TASK_DEPENDENCY_NOT_COMPLETED' then raise; end if;
+  end;
+  select * into v_claim from public.happy_claim_mission_task(
+    '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
+    'mission-scheduler','task-scheduler-root','worker-a',30000
+  );
+  if v_claim.attempt <> 1 or v_claim.fencing_token <> 1 then
+    raise exception 'initial lease must start at attempt/fencing token 1';
+  end if;
+  v_payload := '{"id":"request-scheduler-1","missionId":"mission-scheduler","taskId":"task-scheduler-root","capability":"API","action":"POST","input":{"value":1},"requiresApproval":false,"approved":false,"risk":"LOW","createdAt":"2026-11-21T12:00:00.000Z"}'::jsonb;
+  v_outbox := public.happy_enqueue_mission_dispatch(
+    '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
+    'mission-scheduler','task-scheduler-root',v_claim.lease_id,'worker-a',v_claim.fencing_token,
+    'request-scheduler-1','tenant-attempt-key-1','API','POST',
+    'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',v_payload
+  );
+  v_duplicate := public.happy_enqueue_mission_dispatch(
+    '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
+    'mission-scheduler','task-scheduler-root',v_claim.lease_id,'worker-a',v_claim.fencing_token,
+    'request-scheduler-1','tenant-attempt-key-1','API','POST',
+    'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',v_payload
+  );
+  if v_duplicate.outbox_id <> v_outbox.outbox_id then
+    raise exception 'identical idempotent dispatch did not return original outbox row';
+  end if;
+  begin
+    perform public.happy_enqueue_mission_dispatch(
+      '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
+      'mission-scheduler','task-scheduler-root',v_claim.lease_id,'worker-a',v_claim.fencing_token,
+      'request-scheduler-1','tenant-attempt-key-1','API','POST',
+      'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      jsonb_set(v_payload,'{input,value}','2'::jsonb)
+    );
+    raise exception 'idempotency key reuse with changed payload unexpectedly succeeded';
+  exception when unique_violation then null;
+  end;
+  begin
+    perform * from public.happy_claim_mission_task(
+      '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
+      'mission-scheduler','task-scheduler-root','worker-b',30000
+    );
+    raise exception 'active lease was unexpectedly stolen';
+  exception when sqlstate '55000' then
+    if sqlerrm <> 'RUNNING_TASK_REQUIRES_RECONCILIATION' then raise; end if;
+  end;
+end
+$scheduler$;
+reset role;
+update public.happy_mission_task_leases
+   set expires_at = clock_timestamp() - interval '1 second'
+ where organization_id = '10000000-0000-4000-8000-000000000001'
+   and workspace_id = '20000000-0000-4000-8000-000000000002'
+   and user_id = '30000000-0000-4000-8000-000000000003'
+   and mission_id = 'mission-scheduler' and task_id = 'task-scheduler-root';
+set role authenticated;
+select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000003',false);
+do $fencing$
+declare
+  v_reclaimed record;
+begin
+  select * into v_reclaimed from public.happy_claim_mission_task(
+    '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
+    'mission-scheduler','task-scheduler-root','worker-b',30000
+  );
+  if v_reclaimed.attempt <> 2 or v_reclaimed.fencing_token <> 2 then
+    raise exception 'reclaimed lease did not advance attempt and fencing token';
+  end if;
+  begin
+    perform public.happy_enqueue_mission_dispatch(
+      '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
+      'mission-scheduler','task-scheduler-root',v_reclaimed.lease_id,'worker-a',1,
+      'request-old-worker','old-key','API','POST',
+      'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+      '{"id":"request-old-worker","missionId":"mission-scheduler","taskId":"task-scheduler-root","capability":"API","action":"POST"}'
+    );
+    raise exception 'stale worker dispatch unexpectedly succeeded';
+  exception when sqlstate '55000' then
+    if sqlerrm <> 'STALE_OR_EXPIRED_LEASE' then raise; end if;
+  end;
+  perform public.happy_enqueue_mission_dispatch(
+    '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
+    'mission-scheduler','task-scheduler-root',v_reclaimed.lease_id,'worker-b',v_reclaimed.fencing_token,
+    'request-scheduler-2','tenant-attempt-key-2','API','POST',
+    'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+    '{"id":"request-scheduler-2","missionId":"mission-scheduler","taskId":"task-scheduler-root","capability":"API","action":"POST"}'
+  );
+end
+$fencing$;
+reset role;
+do $scheduler_privileges$
+begin
+  if has_table_privilege('authenticated','public.happy_mission_task_leases','SELECT')
+     or has_table_privilege('authenticated','public.happy_mission_task_leases','INSERT')
+     or has_table_privilege('authenticated','public.happy_execution_dispatch_outbox','SELECT')
+     or has_table_privilege('authenticated','public.happy_execution_dispatch_outbox','INSERT') then
+    raise exception 'authenticated can access scheduler internals directly';
+  end if;
+  if has_function_privilege('service_role','public.happy_claim_mission_task(uuid,uuid,text,text,text,integer)','EXECUTE')
+     or has_function_privilege('service_role','public.happy_enqueue_mission_dispatch(uuid,uuid,text,text,uuid,text,bigint,text,text,text,text,text,jsonb)','EXECUTE') then
+    raise exception 'service_role can invoke authenticated scheduler RPCs';
+  end if;
+end
+$scheduler_privileges$;
+select 'PostgreSQL durable mission lease/outbox integration: PASS' as result;
 SQL
 
 bash "$RACE_SCRIPT"
