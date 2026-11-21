@@ -12,6 +12,7 @@ This change adds a request-scoped Supabase SSR authentication boundary to the ex
 - `src/lib/supabase/proxy.ts` refreshes the session and writes updated cookies/required cache headers. Missing environment configuration is treated as an unconfigured preview and passes through; invalid configuration fails rather than silently falling back.
 - `src/proxy.ts` wires the helper into the Next.js 16 Proxy entry point.
 - `src/lib/supabase/auth.ts` derives the actor only from Supabase-verified JWT claims via `auth.getClaims()`. User-editable metadata is not an authorization source.
+- `src/lib/supabase/tenant.ts` bridges the request-scoped SSR client into the canonical tenant resolver. Organization/workspace IDs remain selectors; the resolver must confirm both active memberships against the private schema before access. Missing schema, denied queries, or inactive membership fail closed.
 - `GET /api/auth/session` exposes only a coarse authentication state and is explicitly non-cacheable.
 - `GET /auth/callback` exchanges the PKCE code and restricts the post-login path to same-origin relative paths.
 - `POST /auth/signout` checks the request Origin and signs out only the current local session.
@@ -53,3 +54,12 @@ Configure the Supabase Auth Site URL and redirect allowlist to include the exact
 
 - Supabase SSR client and Next.js 16 Proxy guidance: https://supabase.com/docs/guides/auth/server-side/creating-a-client
 - Supabase SSR advanced session and caching guidance: https://supabase.com/docs/guides/auth/server-side/advanced-guide
+
+
+## Canonical tenant request adapter follow-up
+
+- Added `src/lib/supabase/tenant.ts` to compose the Next.js cookie-bound server client with the existing canonical tenant membership resolver.
+- The helper creates a fresh server client per call and delegates identity verification plus exact organization/workspace membership checks to the existing core composition.
+- This is a server-side adapter only. No page or API route is granted tenant data access merely by supplying IDs; callers must handle `UNAUTHENTICATED` and `TENANT_ACCESS_DENIED` explicitly.
+- The private membership schema and deployed tables are still not confirmed in hosted Supabase. Therefore this helper is fail-closed and does not imply tenant persistence is live.
+- No schema, migration, database row, or production setting was changed.
