@@ -32,17 +32,18 @@ export interface WorkspaceMembershipRecord {
  * verified user ID and exact requested scope. Do not implement with JWT
  * user_metadata, request-body role arrays, or client-provided membership.
  */
-export interface CanonicalTenantMembershipStore {
-  getOrganizationMembership(
-    userId: string,
-    organizationId: string,
-  ): Promise<OrganizationMembershipRecord | null>;
+export interface CanonicalTenantMembershipPair {
+  organization: OrganizationMembershipRecord;
+  workspace: WorkspaceMembershipRecord;
+}
 
-  getWorkspaceMembership(
+export interface CanonicalTenantMembershipStore {
+  /** One authoritative, user-bound lookup for the exact organization/workspace pair. */
+  getTenantMembershipPair(
     userId: string,
     organizationId: string,
     workspaceId: string,
-  ): Promise<WorkspaceMembershipRecord | null>;
+  ): Promise<CanonicalTenantMembershipPair | null>;
 }
 
 export interface CanonicalTenantContext {
@@ -71,26 +72,19 @@ export async function resolveCanonicalTenantContext(
   if (!userId || !organizationId || !workspaceId) return null;
 
   try {
-    const organization = await memberships.getOrganizationMembership(
+    const pair = await memberships.getTenantMembershipPair(
       userId,
       organizationId,
+      workspaceId,
     );
+    const organization = pair?.organization;
+    const workspace = pair?.workspace;
     if (
       !organization ||
       organization.userId !== userId ||
       organization.organizationId !== organizationId ||
       organization.status !== "ACTIVE" ||
-      !organization.role.trim()
-    ) {
-      return null;
-    }
-
-    const workspace = await memberships.getWorkspaceMembership(
-      userId,
-      organizationId,
-      workspaceId,
-    );
-    if (
+      !organization.role.trim() ||
       !workspace ||
       workspace.userId !== userId ||
       workspace.organizationId !== organizationId ||
