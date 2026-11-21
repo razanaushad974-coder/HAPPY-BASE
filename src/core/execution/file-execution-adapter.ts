@@ -70,9 +70,8 @@ function normalizeOperation(
 }
 
 function isSafeRelativeWorkspacePath(value: string): boolean {
-  if (!value.trim() || value.includes("\\0") ||
-      value.startsWith("/") || value.startsWith("\\\\") ||
-      /^[A-Za-z]:/.test(value)) return false;
+  if (!value.trim() || /[\\u0000-\\u001f]/.test(value) ||
+      /^[\\/]/.test(value) || /^[A-Za-z]:/.test(value)) return false;
   return !value.split(/[\\/]+/).includes("..");
 }
 
