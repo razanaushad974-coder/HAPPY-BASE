@@ -83,37 +83,9 @@ async function main(): Promise<void> {
     binding,
     "2026-11-19T12:00:00.000Z",
   );
-  assert(consumed, "A matching returned grant row was not accepted.");
-  assert(query.updateCount === 1, "Grant consumption must be exactly one UPDATE.");
-  assert(tables.length === 1 && tables[0] === "file_mutation_approval_grants", "Unexpected table access.");
-  for (const [column, value] of [
-    ["grant_id", "grant-1"],
-    ["organization_id", "org-1"],
-    ["workspace_id", "workspace-1"],
-    ["request_id", "request-1"],
-    ["task_id", "task-1"],
-    ["mission_id", "mission-1"],
-    ["requester_user_id", "requester-1"],
-    ["executor_user_id", "executor-1"],
-    ["approver_user_id", "approver-1"],
-    ["target_entity_type", "FILE"],
-    ["target_entity_id", "file-1"],
-    ["operation", "MODIFY"],
-    ["source_path", "docs/plan.md"],
-    ["input_digest", "a".repeat(64)],
-    ["status", "APPROVED"],
-  ] as const) {
-    assert(query.calls.some((call) => call[0] === "eq" && call[1] === column && call[2] === value),
-      `Missing exact consume predicate: ${column}`);
-  }
-  assert(query.calls.some((call) => call[0] === "is" && call[1] === "consumed_at" && call[2] === null),
-    "Consume must require consumed_at IS NULL.");
-  assert(query.calls.some((call) => call[0] === "is" && call[1] === "destination_path" && call[2] === null),
-    "Null destination path was not matched with IS NULL.");
-  assert(query.calls.some((call) => call[0] === "gt" && call[1] === "expires_at"),
-    "Consume must require an unexpired grant.");
-  assert(query.calls.some((call) => call[0] === "select" && call[1] === "grant_id"),
-    "Consume must use RETURNING grant_id.");
+  assert(!consumed, "Direct private-table consumption must be disabled; use the auth.uid()-bound RPC.");
+  assert(query.updateCount === 0, "The lookup adapter must never directly UPDATE approval grants.");
+  assert(tables.length === 0, "Direct consume must not access the private grant table.");
 
   query.result = { data: null, error: null };
   assert(!(await store.consumeApprovedGrant(
