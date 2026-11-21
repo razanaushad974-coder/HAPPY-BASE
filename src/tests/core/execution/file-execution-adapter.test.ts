@@ -78,6 +78,77 @@ async function main(): Promise<void> {
       "FILE adapter must await and consume a trusted remote workspace executor result.",
     );
 
+    const throwingRemoteAdapter = new FileExecutionAdapter({
+      async executeOperation() {
+        throw new Error("provider secret details must not escape");
+      },
+    }, undefined, {
+      async authorizeRead() { return true; },
+    });
+    const throwingRemoteResult = await throwingRemoteAdapter.execute({
+      id: "file-remote-worker-error-test",
+      taskId: "task-remote",
+      missionId: "mission-remote",
+      capability: "FILE",
+      action: "READ",
+      input: { operation: "READ", path: "remote/README.md" },
+      targetReference: {
+        token: "remote-file",
+        entityType: "FILE",
+        entityId: "remote-file-1",
+        confidence: "HIGH",
+        source: "ACTIVE_CONTEXT",
+      },
+      requiresApproval: false,
+      approved: false,
+      risk: "LOW",
+      createdAt: new Date().toISOString(),
+    });
+    assert(
+      throwingRemoteResult.status === "FAILED" &&
+        throwingRemoteResult.error === "Tenant workspace executor failed.",
+      "Remote worker exceptions must be contained and sanitized.",
+    );
+
+    const malformedRemoteAdapter = new FileExecutionAdapter({
+      async executeOperation() {
+        return {
+          action: "READ",
+          status: "COMPLETED",
+          path: "remote/other-file.md",
+          content: "unrelated content",
+          changedFiles: [],
+          errors: [],
+        } as unknown as Awaited<ReturnType<WorkspaceFileExecutor["executeOperation"]>>;
+      },
+    }, undefined, {
+      async authorizeRead() { return true; },
+    });
+    const malformedRemoteResult = await malformedRemoteAdapter.execute({
+      id: "file-remote-worker-mismatch-test",
+      taskId: "task-remote",
+      missionId: "mission-remote",
+      capability: "FILE",
+      action: "READ",
+      input: { operation: "READ", path: "remote/README.md" },
+      targetReference: {
+        token: "remote-file",
+        entityType: "FILE",
+        entityId: "remote-file-1",
+        confidence: "HIGH",
+        source: "ACTIVE_CONTEXT",
+      },
+      requiresApproval: false,
+      approved: false,
+      risk: "LOW",
+      createdAt: new Date().toISOString(),
+    });
+    assert(
+      malformedRemoteResult.status === "FAILED" &&
+        malformedRemoteResult.error === "Tenant workspace executor returned an invalid or mismatched operation result.",
+      "Remote worker responses for a different operation/path must be rejected.",
+    );
+
     const adapter =
       new FileExecutionAdapter(executor);
 
