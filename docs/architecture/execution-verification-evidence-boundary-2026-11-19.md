@@ -176,3 +176,20 @@ Added `src/core/mission/durable-dispatch-worker-contract.ts` and its regression 
 Regression tests cover idempotency-key forwarding, refusal of non-idempotent providers before invocation, transport ambiguity, mismatched request rejection, and no provider replay when outcome persistence fails. The test is included in `test:security`.
 
 Remaining limitations: no durable outbox poller/worker lifecycle, provider credential vault, concrete provider implementation, provider status-query reconciliation, hosted Supabase integration, or task completion/verification composition is activated. The SQL candidate remains design-only and no production database, merge, or deployment changes were made.
+
+
+### Provider status reconciliation contract — 2026-11-21
+
+Added `src/core/mission/provider-dispatch-reconciliation.ts`. This is a read-only provider lookup coordinator for outbox items whose original result is AMBIGUOUS or RECONCILIATION_REQUIRED.
+
+- Looks up the original stable idempotency key; it never dispatches or retries.
+- Provider SUCCEEDED routes to VERIFICATION_REQUIRED, not task completion.
+- Provider FAILED routes to FAILED_EXECUTION_REVIEW_REQUIRED.
+- PROCESSING remains pending; UNKNOWN and lookup failures remain unresolved.
+- Provider NOT_FOUND routes to NO_PROVIDER_RECORD_REVIEW_REQUIRED. It is explicitly not treated as proof that no side effect occurred and never authorizes replay.
+- Every successful lookup observation is appended to a separate append-only evidence interface; it does not overwrite the original immutable dispatch outcome.
+- If evidence persistence fails, the result is EVIDENCE_PERSISTENCE_FAILED rather than falsely claiming reconciliation was recorded.
+
+Regression tests cover success-to-verification, definitive failure review, processing, not-found no-replay, unsupported idempotency providers, lookup failure, and evidence persistence failure. The test is included in `test:security`.
+
+This remains a provider-neutral contract. A production implementation still needs authenticated provider credentials, a concrete provider status API, durable append-only reconciliation evidence storage, tenant-bound worker composition, polling/lease lifecycle, and explicit human/policy handling for NOT_FOUND. No production DB, migration, merge, or deployment changes were made.
