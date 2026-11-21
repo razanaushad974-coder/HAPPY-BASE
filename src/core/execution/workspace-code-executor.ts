@@ -58,6 +58,17 @@ export interface WorkspaceExecutionResult {
   errors: string[];
 }
 
+/**
+ * Execution boundary for tenant-isolated workspace providers. Local filesystem
+ * execution is one implementation; a trusted remote persistent worker may
+ * implement the same operation contract without exposing a host path.
+ */
+export interface WorkspaceFileExecutor {
+  executeOperation(
+    request: WorkspaceFileOperationRequest,
+  ): WorkspaceFileOperationResult | Promise<WorkspaceFileOperationResult>;
+}
+
 function simpleHash(value: string): string {
   let hash = 2166136261;
 
@@ -69,7 +80,7 @@ function simpleHash(value: string): string {
   return (hash >>> 0).toString(16);
 }
 
-export class WorkspaceCodeExecutor {
+export class WorkspaceCodeExecutor implements WorkspaceFileExecutor {
   /**
    * The caller must supply an explicitly provisioned workspace root.
    * Never fall back to process.cwd(), which is the application/repository
