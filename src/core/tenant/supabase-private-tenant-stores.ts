@@ -88,6 +88,25 @@ export interface SupabaseExecutionRequestRpcClient {
   ): Promise<DatabaseResult>;
 }
 
+/** Request creation RPC: database derives requester/executor and forces founder approval. */
+export interface SupabaseExecutionRequestCreateRpcClient {
+  rpc(
+    functionName: "create_authenticated_execution_request",
+    args: {
+      p_request_id: string;
+      p_task_id: string;
+      p_mission_id: string;
+      p_organization_id: string;
+      p_workspace_id: string;
+      p_capability: "CODE" | "FILE" | "API" | "BROWSER" | "SHELL" | "DATABASE" | "AI" | "DEPLOYMENT" | "PUBLISH" | "AUTOMATION";
+      p_action: string;
+      p_input: Record<string, unknown>;
+      p_target_reference: Record<string, unknown> | null;
+      p_idempotency_key: string;
+    },
+  ): Promise<DatabaseResult>;
+}
+
 export class SupabaseCanonicalTenantMembershipStore
 implements CanonicalTenantMembershipStore {
   constructor(private readonly client: SupabaseTenantContextRpcClient) {}
