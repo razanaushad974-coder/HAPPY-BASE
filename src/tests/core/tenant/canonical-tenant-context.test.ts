@@ -17,14 +17,14 @@ async function main(): Promise<void> {
   const org: OrganizationMembershipRecord = {
     userId: "verified-user-1",
     organizationId: "org-1",
-    status: "ACTIVE" as const,
+    status: "ACTIVE",
     role: "FOUNDER",
   };
   const workspace: WorkspaceMembershipRecord = {
     userId: "verified-user-1",
     organizationId: "org-1",
     workspaceId: "workspace-1",
-    status: "ACTIVE" as const,
+    status: "ACTIVE",
     role: "ADMIN",
   };
 
@@ -32,28 +32,25 @@ async function main(): Promise<void> {
     overrides: Partial<{
       organization: OrganizationMembershipRecord | null;
       workspace: WorkspaceMembershipRecord | null;
-      failOrganization: boolean;
-      failWorkspace: boolean;
+      failLookup: boolean;
     }> = {},
   ): CanonicalTenantMembershipStore {
     return {
-      async getOrganizationMembership(userId, organizationId) {
-        if (overrides.failOrganization) throw new Error("membership store unavailable");
-        if (userId !== identity.userId || organizationId !== scope.organizationId) return null;
-        return overrides.organization === undefined ? org : overrides.organization;
-      },
-      async getWorkspaceMembership(userId, organizationId, workspaceId) {
-        if (overrides.failWorkspace) throw new Error("membership store unavailable");
+      async getTenantMembershipPair(userId, organizationId, workspaceId) {
+        if (overrides.failLookup) throw new Error("membership RPC unavailable");
         if (
           userId !== identity.userId ||
           organizationId !== scope.organizationId ||
           workspaceId !== scope.workspaceId
         ) return null;
-        return overrides.workspace === undefined ? workspace : overrides.workspace;
+        const organization = overrides.organization === undefined ? org : overrides.organization;
+        const workspace = overrides.workspace === undefined ? { ...workspaceRecord } : overrides.workspace;
+        return organization && workspace ? { organization, workspace } : null;
       },
     };
   }
 
+  const workspaceRecord = workspace;
   const resolved = await resolveCanonicalTenantContext(identity, scope, store());
   assert(resolved !== null, "Valid active membership was rejected.");
   assert(resolved.actor.userId === identity.userId, "Resolved actor did not use verified identity.");
@@ -71,43 +68,29 @@ async function main(): Promise<void> {
   assert(await resolveCanonicalTenantContext(identity, scope, store({ organization: { ...org, userId: "attacker" } })) === null, "Mismatched organization member identity was accepted.");
   assert(await resolveCanonicalTenantContext(identity, scope, store({ workspace: { ...workspace, organizationId: "other-org" } })) === null, "Cross-organization workspace membership was accepted.");
   assert(await resolveCanonicalTenantContext(identity, scope, store({ workspace: { ...workspace, workspaceId: "other-workspace" } })) === null, "Mismatched workspace membership was accepted.");
-  assert(await resolveCanonicalTenantContext(identity, scope, store({ failOrganization: true })) === null, "Organization store failure did not fail closed.");
-  assert(await resolveCanonicalTenantContext(identity, scope, store({ failWorkspace: true })) === null, "Workspace store failure did not fail closed.");
-
+  assert(await resolveCanonicalTenantContext(identity, scope, store({ failLookup: true })) === null, "Membership RPC failure did not fail closed.");
 
   const verifiedIdentityProvider: VerifiedServerIdentityProvider = {
-    async getVerifiedIdentity() {
-      return identity;
-    },
+    async getVerifiedIdentity() { return identity; },
   };
-  const authenticated = await resolveAuthenticatedTenantContext(
-    verifiedIdentityProvider,
-    scope,
-    store(),
-  );
+  const authenticated = await resolveAuthenticatedTenantContext(verifiedIdentityProvider, scope, store());
   assert(authenticated.status === "AUTHENTICATED", "Verified server identity was not composed with active tenant membership.");
   if (authenticated.status === "AUTHENTICATED") {
     assert(authenticated.context.actor.userId === "verified-user-1", "Authenticated tenant actor did not come from the verified session.");
   }
 
   const unauthenticated = await resolveAuthenticatedTenantContext(
-    { async getVerifiedIdentity() { return null; } },
-    scope,
-    store(),
+    { async getVerifiedIdentity() { return null; } }, scope, store(),
   );
   assert(unauthenticated.status === "UNAUTHENTICATED", "Missing server session did not fail closed.");
 
   const identityProviderFailure = await resolveAuthenticatedTenantContext(
-    { async getVerifiedIdentity() { throw new Error("auth provider unavailable"); } },
-    scope,
-    store(),
+    { async getVerifiedIdentity() { throw new Error("auth provider unavailable"); } }, scope, store(),
   );
   assert(identityProviderFailure.status === "UNAUTHENTICATED", "Identity provider failure did not fail closed.");
 
   const tenantDenied = await resolveAuthenticatedTenantContext(
-    verifiedIdentityProvider,
-    { ...scope, workspaceId: "attacker-selected-workspace" },
-    store(),
+    verifiedIdentityProvider, { ...scope, workspaceId: "attacker-selected-workspace" }, store(),
   );
   assert(tenantDenied.status === "TENANT_ACCESS_DENIED", "Unmatched caller-selected workspace was accepted.");
 
