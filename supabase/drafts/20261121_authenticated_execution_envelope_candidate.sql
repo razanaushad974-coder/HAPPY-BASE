@@ -44,8 +44,6 @@ alter table private.execution_requests add constraint execution_requests_envelop
      and input_digest is not null and input_digest ~ '^[0-9a-f]{64}$'
      and envelope_digest is not null and envelope_digest ~ '^[0-9a-f]{64}$'
      and idempotency_key is not null and length(btrim(idempotency_key)) > 0
-     and envelope_digest is not null and envelope_digest ~ '^[0-9a-f]{64}$'
-     and idempotency_key is not null and length(btrim(idempotency_key)) > 0
   );
 
 drop index if exists private.execution_requests_idempotency_idx;
@@ -491,3 +489,6 @@ revoke all on function public.decide_authenticated_execution_request(text,text,t
 grant execute on function public.decide_authenticated_execution_request(text,text,text)
   to authenticated;
 
+-- Remaining blockers before dispatch: a separately authenticated worker claim,
+-- fenced one-shot dispatch, durable outcome evidence, and crash reconciliation
+-- are not implemented here. No execution route or worker is enabled.
