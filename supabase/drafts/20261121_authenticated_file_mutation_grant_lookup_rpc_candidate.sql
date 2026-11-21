@@ -233,7 +233,10 @@ as $function$
     and g.decided_at is not null
     and g.consumed_at is null
     and g.expires_at > clock_timestamp()
-    and g.required_role in ('FOUNDER','ADMIN')
+    and (
+      (g.required_role = 'FOUNDER' and om.role = 'FOUNDER')
+      or (g.required_role = 'ADMIN' and om.role in ('FOUNDER','ADMIN'))
+    )
     and length(btrim(om.role)) > 0
     and length(btrim(wm.role)) > 0;
 $function$;
