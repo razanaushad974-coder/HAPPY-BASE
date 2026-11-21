@@ -10,9 +10,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCHEMA_FILE="$ROOT_DIR/supabase/drafts/20261119_async_tenant_persistence_schema_candidate.sql"
 SCHEDULER_SCHEMA_FILE="$ROOT_DIR/supabase/drafts/20261121_durable_mission_scheduler_candidate.sql"
+TENANT_CONTEXT_RPC_FILE="$ROOT_DIR/supabase/drafts/20261121_authenticated_tenant_context_rpc_candidate.sql"
 RACE_SCRIPT="$ROOT_DIR/scripts/security/postgres-tenant-cas-concurrency.sh"
 RECONCILIATION_RACE_SCRIPT="$ROOT_DIR/scripts/security/postgres-reconciliation-evidence-concurrency.sh"
-for required_file in "$SCHEMA_FILE" "$SCHEDULER_SCHEMA_FILE" "$RACE_SCRIPT" "$RECONCILIATION_RACE_SCRIPT"; do
+for required_file in "$SCHEMA_FILE" "$SCHEDULER_SCHEMA_FILE" "$TENANT_CONTEXT_RPC_FILE" "$RACE_SCRIPT" "$RECONCILIATION_RACE_SCRIPT"; do
   if [[ ! -f "$required_file" ]]; then
     echo "Required tenant persistence test file not found: $required_file" >&2
     exit 1
@@ -124,6 +125,7 @@ SQL
 
 "${psql_base[@]}" -f "$SCHEMA_FILE"
 "${psql_base[@]}" -f "$SCHEDULER_SCHEMA_FILE"
+"${psql_base[@]}" -f "$TENANT_CONTEXT_RPC_FILE"
 
 # Real PostgreSQL 17 roles/RLS/functions; auth.uid() is stubbed from a local
 # claim setting. This is not Supabase JWT signature or hosted-project testing.
@@ -131,6 +133,41 @@ SQL
 set role authenticated;
 select set_config('request.jwt.claim.sub',
   '30000000-0000-4000-8000-000000000003', false);
+
+do $tenant_context_rpc$
+declare
+  v_context record;
+  v_count bigint;
+begin
+  select * into v_context
+    from public.resolve_authenticated_tenant_context(
+      '10000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000002'
+    );
+  if not found
+     or v_context.user_id <> auth.uid()
+     or v_context.organization_id <> '10000000-0000-4000-8000-000000000001'
+     or v_context.workspace_id <> '20000000-0000-4000-8000-000000000002'
+     or v_context.organization_role <> 'MEMBER'
+     or v_context.workspace_role <> 'MEMBER' then
+    raise exception 'authenticated tenant context RPC did not return the exact active scope';
+  end if;
+
+  perform set_config('request.jwt.claim.sub',
+    '50000000-0000-4000-8000-000000000005', false);
+  select count(*) into v_count
+    from public.resolve_authenticated_tenant_context(
+      '10000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000002'
+    );
+  if v_count <> 0 then
+    raise exception 'revoked workspace member received tenant context';
+  end if;
+
+  perform set_config('request.jwt.claim.sub',
+    '30000000-0000-4000-8000-000000000003', false);
+end
+$tenant_context_rpc$;
 
 select * from public.happy_create_tenant_record(
   '10000000-0000-4000-8000-000000000001',
@@ -267,6 +304,19 @@ reset role;
 
 do $privileges$
 begin
+  if has_schema_privilege('authenticated', 'private', 'USAGE') then
+    raise exception 'authenticated has direct private-schema USAGE';
+  end if;
+  if has_table_privilege('authenticated', 'private.organization_memberships', 'SELECT') then
+    raise exception 'authenticated has direct private membership SELECT';
+  end if;
+  if not has_function_privilege('authenticated', 'public.resolve_authenticated_tenant_context(uuid,uuid)', 'EXECUTE') then
+    raise exception 'authenticated cannot execute the user-scoped tenant context RPC';
+  end if;
+  if has_function_privilege('anon', 'public.resolve_authenticated_tenant_context(uuid,uuid)', 'EXECUTE')
+     or has_function_privilege('service_role', 'public.resolve_authenticated_tenant_context(uuid,uuid)', 'EXECUTE') then
+    raise exception 'tenant context RPC is executable by anon or service_role';
+  end if;
   if has_table_privilege('authenticated', 'public.happy_tenant_records', 'INSERT') then
     raise exception 'authenticated has direct INSERT privilege';
   end if;
