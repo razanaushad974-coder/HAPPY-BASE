@@ -74,6 +74,7 @@ async function main(): Promise<void> {
           target_reference: null, requires_approval: true, risk: "HIGH",
           approval_status: "PENDING", required_approval_role: "FOUNDER",
           status: "WAITING_APPROVAL", input_digest: "a".repeat(64),
+          envelope_digest: "b".repeat(64),
           created_at: "2026-11-19T00:00:00.000Z",
         }],
       };
