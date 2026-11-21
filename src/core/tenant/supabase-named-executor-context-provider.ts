@@ -203,7 +203,7 @@ export interface CreateDurableExecutionRequestCommand {
 export class SupabaseDurableExecutionRequestCreator {
   constructor(private readonly client: SupabaseExecutionRequestCreateRpcClient) {}
 
-  async create(command: CreateDurableExecutionRequestCommand): Promise<boolean> {
+  async create(command: CreateDurableExecutionRequestCommand): Promise<string | null> {
     try {
       if (!command.requestId.trim() || !command.taskId.trim() || !command.missionId.trim() ||
           !command.organizationId.trim() || !command.workspaceId.trim() ||
@@ -212,7 +212,7 @@ export class SupabaseDurableExecutionRequestCreator {
           !EXECUTION_CAPABILITIES.includes(command.capability) ||
           !command.action.trim() || command.action.length > 200 ||
           !isRecord(command.input) || !command.idempotencyKey.trim() ||
-          parseResolvedReference(command.targetReference ?? null) === null) return false;
+          parseResolvedReference(command.targetReference ?? null) === null) return null;
       const canonicalEnvelope = canonicalJson({
         requestId: command.requestId,
         taskId: command.taskId,
@@ -228,7 +228,7 @@ export class SupabaseDurableExecutionRequestCreator {
         requiredApprovalRole: "FOUNDER",
         idempotencyKey: command.idempotencyKey,
       });
-      if (canonicalEnvelope === null) return false;
+      if (canonicalEnvelope === null) return null;
       const inputDigest = createHash("sha256").update(canonicalEnvelope, "utf8").digest("hex");
       const result = await this.client.rpc("create_authenticated_execution_request", {
         p_request_id: command.requestId,
@@ -243,13 +243,13 @@ export class SupabaseDurableExecutionRequestCreator {
         p_idempotency_key: command.idempotencyKey,
         p_input_digest: inputDigest,
       });
-      if (result.error) return false;
+      if (result.error) return null;
       const rows = Array.isArray(result.data)
         ? result.data
         : result.data === null || result.data === undefined ? [] : [result.data];
-      if (rows.length !== 1 || !isRecord(rows[0])) return false;
+      if (rows.length !== 1 || !isRecord(rows[0])) return null;
       const row = rows[0];
-      return row.request_id === command.requestId &&
+      const matchesEnvelope = typeof row.request_id === "string" && row.request_id.length > 0 &&
         row.task_id === command.taskId &&
         row.mission_id === command.missionId &&
         row.organization_id === command.organizationId &&
@@ -262,14 +262,15 @@ export class SupabaseDurableExecutionRequestCreator {
         row.requires_approval === true &&
         ["PENDING", "APPROVED", "REJECTED"].includes(String(row.approval_status)) &&
         row.required_approval_role === "FOUNDER" &&
-        ["WAITING_APPROVAL", "READY", "RUNNING", "COMPLETED", "FAILED", "BLOCKED", "CANCELLED"].includes(String(row.status)) &&
+        ["WAITING_APPROVAL", "READY", "CANCELLED"].includes(String(row.status)) &&
         row.idempotency_key === command.idempotencyKey &&
         row.input_digest === inputDigest &&
         typeof row.requester_user_id === "string" &&
         row.requester_user_id.length > 0 &&
         row.executor_user_id === row.requester_user_id;
+      return matchesEnvelope ? row.request_id as string : null;
     } catch {
-      return false;
+      return null;
     }
   }
 }
