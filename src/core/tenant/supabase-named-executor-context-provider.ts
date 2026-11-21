@@ -174,21 +174,20 @@ export class SupabaseMembershipApprovalRoleAuthorizer implements ApprovalRoleAut
       if (!actor.userId.trim() ||
           !actor.organizationIds.includes(scope.organizationId) ||
           !actor.workspaceIds.includes(scope.workspaceId)) return false;
-      const organization = await this.memberships.getOrganizationMembership(
-        actor.userId,
-        scope.organizationId,
-      );
-      const workspace = await this.memberships.getWorkspaceMembership(
+      const pair = await this.memberships.getTenantMembershipPair(
         actor.userId,
         scope.organizationId,
         scope.workspaceId,
       );
+      const organization = pair?.organization;
+      const workspace = pair?.workspace;
       if (!organization || !workspace ||
           organization.status !== "ACTIVE" || workspace.status !== "ACTIVE" ||
           organization.userId !== actor.userId || workspace.userId !== actor.userId ||
           organization.organizationId !== scope.organizationId ||
           workspace.organizationId !== scope.organizationId ||
-          workspace.workspaceId !== scope.workspaceId) return false;
+          workspace.workspaceId !== scope.workspaceId ||
+          !organization.role.trim() || !workspace.role.trim()) return false;
       return this.rolePolicy(organization.role, workspace.role, role) === true;
     } catch {
       return false;
