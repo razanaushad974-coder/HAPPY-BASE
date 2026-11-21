@@ -119,3 +119,24 @@ This is a validation contract, not a scheduler implementation. The pure validato
 The pure dispatch validator now binds an outbox intent to the exact execution request ID, a deterministic tenant/mission/task/logical-attempt/capability/action idempotency key, and a canonical SHA-256 digest of the complete immutable request fields. Canonical JSON sorts object keys, preserves array order, and rejects non-JSON values, non-plain objects, and cycles. Regression tests cover request-ID substitution, idempotency-key reuse, payload-digest substitution, malformed digest values, and equivalent object-key ordering.
 
 This is still a validation primitive, not an outbox implementation. A durable adapter must persist the intent and task/lease transition atomically, enforce a unique constraint on the tenant-scoped idempotency key, make the stored binding immutable, and require downstream adapters to deduplicate side effects. A caller that can replace both the request and its digest is not constrained by this helper alone; trusted request construction and storage-boundary enforcement remain mandatory. No worker, DB schema, or production integration is activated by this change.
+
+
+## Durable mission lease and transactional outbox candidate (2026-11-21)
+
+Added design-only SQL candidate `supabase/drafts/20261121_durable_mission_scheduler_candidate.sql` and extended the disposable PostgreSQL tenant integration harness to exercise it. The candidate is deliberately not a migration and is not applied to any connected Supabase project.
+
+The candidate introduces two private-by-privilege tables:
+- `happy_mission_task_leases`, keyed by complete organization/workspace/user/mission/task scope, with lease ID, worker owner, attempt, monotonically increasing fencing token, and expiry.
+- `happy_execution_dispatch_outbox`, with tenant-scoped unique idempotency key and unique execution request ID, immutable lease/attempt binding, payload digest, JSON payload, and explicit dispatch/reconciliation statuses.
+
+The authenticated claim RPC uses the tenant membership lock helper, locks the mission and task rows, verifies mission membership and READY status, and checks every declared dependency resolves to a same-mission COMPLETED task. It changes the task to RUNNING and creates/renews the lease in one PostgreSQL transaction. An expired lease can be reclaimed only when no outbox intent exists for that lease. If an outbox row exists, the outcome may already be in flight or have occurred; the task is held for reconciliation rather than replayed. Reclaim increments both attempt and fencing token. The enqueue RPC locks the current lease, checks owner/token/expiry and exact request ID/mission/task/capability/action binding, and inserts an immutable outbox row under unique tenant-scoped keys. Exact duplicate requests return the original row; changed payload reuse is rejected.
+
+The disposable integration harness now covers dependency gating, initial lease identity, active lease non-steal, identical outbox deduplication, idempotency-key payload mismatch, no automatic replay after an expired lease with an outbox row, safe reclaim when no outbox row exists, fencing-token advancement, stale-worker rejection, and direct table/service-role privilege denial.
+
+Important boundaries:
+- This is a database contract candidate, not a production adapter or worker. No outbox poller, provider dispatch, heartbeat, fenced completion, or external adapter-side idempotency is active.
+- The candidate's caller-supplied payload digest is format-checked and stored immutably, but the SQL function does not independently recompute the TypeScript canonical JSON digest. A production adapter must verify the digest at a trusted boundary or standardize one canonical digest implementation across TypeScript and PostgreSQL.
+- The idempotency key is unique per tenant, and request ID is independently unique per tenant; the database does not independently regenerate the SHA-256 key.
+- Outbox payload encryption/redaction, size limits, retention, function ownership, private-schema grants, real Supabase JWT/RLS behavior, and hosted concurrency remain deployment gates.
+- The harness uses a disposable PostgreSQL database with a local `auth.uid()` claim stub. It does not prove hosted Supabase identity or production migration compatibility.
+- No production database writes, migrations, merge, or deployment were performed.
