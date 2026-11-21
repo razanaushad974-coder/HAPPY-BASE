@@ -59,7 +59,7 @@ const EXECUTION_CAPABILITIES: readonly ExecutionCapability[] = [
 const EXECUTION_RISKS: readonly ExecutionRisk[] = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
 const EXECUTION_STATUSES: readonly ExecutionStatus[] = [
   "RECEIVED", "WAITING_APPROVAL", "READY", "RUNNING", "COMPLETED",
-  "FAILED", "BLOCKED", "NOT_YET_CONNECTED",
+  "FAILED", "BLOCKED", "NOT_YET_CONNECTED", "CANCELLED",
 ];
 const APPROVAL_STATUSES: readonly DurableExecutionApprovalStatus[] = [
   "NOT_REQUIRED", "PENDING", "APPROVED", "REJECTED",
