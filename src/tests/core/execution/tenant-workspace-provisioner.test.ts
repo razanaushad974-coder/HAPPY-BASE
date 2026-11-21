@@ -41,6 +41,36 @@ async function main(): Promise<void> {
   assert(invalidContext.status === "NOT_YET_CONNECTED", "Incomplete tenant context must not provision a workspace.");
   assert(provisionCalls === 0, "Provisioner was called before canonical tenant context validation.");
 
+  const actorScopeMismatch = await resolveTenantWorkspaceExecutor(
+    {
+      ...context,
+      actor: { ...context.actor, workspaceIds: ["workspace-other"] },
+    },
+    {
+      async provision() {
+        provisionCalls += 1;
+        return { status: "NOT_YET_CONNECTED", reason: "unexpected" };
+      },
+    },
+  );
+  assert(actorScopeMismatch.status === "NOT_YET_CONNECTED", "Actor membership arrays must match the canonical workspace.");
+  assert(provisionCalls === 0, "Provisioner was called with an actor whose workspace membership did not match.");
+
+  const actorOrganizationMismatch = await resolveTenantWorkspaceExecutor(
+    {
+      ...context,
+      actor: { ...context.actor, organizationIds: ["org-other"] },
+    },
+    {
+      async provision() {
+        provisionCalls += 1;
+        return { status: "NOT_YET_CONNECTED", reason: "unexpected" };
+      },
+    },
+  );
+  assert(actorOrganizationMismatch.status === "NOT_YET_CONNECTED", "Actor membership arrays must match the canonical organization.");
+  assert(provisionCalls === 0, "Provisioner was called with an actor whose organization membership did not match.");
+
   const root = mkdtempSync(join(tmpdir(), "happy-tenant-workspace-"));
   try {
     const executor = new WorkspaceCodeExecutor(root);
