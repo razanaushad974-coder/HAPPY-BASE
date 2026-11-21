@@ -55,6 +55,32 @@ begin
 end
 $idempotency_constraint$;
 
+-- Append-only approval evidence. One final decision event per request.
+create table if not exists private.execution_request_approval_events (
+  event_id uuid primary key default gen_random_uuid(),
+  request_id text not null unique
+    references private.execution_requests(request_id) on delete restrict,
+  actor_user_id uuid not null references auth.users(id) on delete restrict,
+  decision text not null check (decision in ('APPROVED','REJECTED')),
+  reason text not null check (length(btrim(reason)) > 0 and length(reason) <= 1000),
+  occurred_at timestamptz not null default clock_timestamp()
+);
+alter table private.execution_request_approval_events enable row level security;
+revoke all on private.execution_request_approval_events from public,anon,authenticated,service_role;
+
+create or replace function private.reject_execution_request_approval_event_mutation()
+returns trigger language plpgsql set search_path = pg_catalog
+as $immutable$
+begin
+  raise exception 'Execution request approval events are append-only';
+end;
+$immutable$;
+
+drop trigger if exists execution_request_approval_event_no_update on private.execution_request_approval_events;
+create trigger execution_request_approval_event_no_update
+before update or delete on private.execution_request_approval_events
+for each row execute function private.reject_execution_request_approval_event_mutation();
+
 create or replace function private.guard_execution_request_update()
 returns trigger language plpgsql security definer set search_path = pg_catalog
 as $guard$
@@ -276,6 +302,7 @@ declare
   v_member private.organization_memberships%rowtype;
   v_workspace_member private.workspace_memberships%rowtype;
   v_approver_org_role text;
+  v_decided_at timestamptz;
   v_requester_org_active boolean := false;
   v_approver_org_active boolean := false;
   v_requester_workspace_active boolean := false;
@@ -353,16 +380,22 @@ begin
     return false;
   end if;
 
+  v_decided_at := clock_timestamp();
   update private.execution_requests
      set approval_status = p_decision,
-         decided_at = clock_timestamp(),
+         decided_at = v_decided_at,
          decided_by = v_approver,
          decision_reason = btrim(p_reason),
          status = case when p_decision = 'APPROVED' then 'READY' else 'CANCELLED' end
    where request_id = p_request_id
      and approval_status = 'PENDING'
      and status = 'WAITING_APPROVAL';
-  return found;
+  if not found then return false; end if;
+
+  insert into private.execution_request_approval_events(
+    request_id,actor_user_id,decision,reason,occurred_at
+  ) values (p_request_id,v_approver,p_decision,btrim(p_reason),v_decided_at);
+  return true;
 end;
 $decision$;
 
@@ -374,6 +407,7 @@ end
 $role$;
 grant usage on schema private,auth to happy_execution_request_decision_rpc_owner;
 grant select,update on private.execution_requests to happy_execution_request_decision_rpc_owner;
+grant insert,select on private.execution_request_approval_events to happy_execution_request_decision_rpc_owner;
 grant select,update on private.organizations,private.workspaces,
   private.organization_memberships,private.workspace_memberships
   to happy_execution_request_decision_rpc_owner;
