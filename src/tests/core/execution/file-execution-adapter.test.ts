@@ -46,9 +46,11 @@ async function main(): Promise<void> {
       source: "ACTIVE_CONTEXT" as const,
     };
 
+    const implicitWorkspaceRelativePath =
+      `.happy-implicit-workspace-must-not-write-${Date.now()}.tmp`;
     const implicitWorkspacePath = join(
       process.cwd(),
-      `.happy-implicit-workspace-must-not-write-${Date.now()}.tmp`,
+      implicitWorkspaceRelativePath,
     );
     assert(
       !existsSync(implicitWorkspacePath),
@@ -74,7 +76,7 @@ async function main(): Promise<void> {
       action: "CREATE",
       input: {
         operation: "CREATE",
-        path: `.happy-implicit-workspace-must-not-write-${Date.now()}.tmp`,
+        path: implicitWorkspaceRelativePath,
         content: "must never be written",
       },
       targetReference: target,
