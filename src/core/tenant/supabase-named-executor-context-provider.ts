@@ -15,6 +15,8 @@ import {
 } from "./canonical-tenant-context";
 import type {
   SupabaseApproverMembershipRpcClient,
+  SupabaseExecutionRequestCreateRpcClient,
+  SupabaseExecutionRequestDecisionRpcClient,
   SupabaseExecutionRequestRpcClient,
 } from "./supabase-private-tenant-stores";
 
@@ -175,6 +177,109 @@ export class SupabaseDurableExecutionRequestStore implements DurableExecutionReq
       };
     } catch {
       return null;
+    }
+  }
+}
+
+export interface CreateDurableExecutionRequestCommand {
+  requestId: string;
+  taskId: string;
+  missionId: string;
+  organizationId: string;
+  workspaceId: string;
+  capability: ExecutionCapability;
+  action: string;
+  input: Record<string, unknown>;
+  targetReference?: ResolvedReference;
+  idempotencyKey: string;
+  inputDigest: string;
+}
+
+/**
+ * Creates only high-risk, founder-gated durable envelopes. The database RPC
+ * derives requester/executor from auth.uid(), checks active tenant membership,
+ * and binds the idempotency key to the complete immutable envelope.
+ */
+export class SupabaseDurableExecutionRequestCreator {
+  constructor(private readonly client: SupabaseExecutionRequestCreateRpcClient) {}
+
+  async create(command: CreateDurableExecutionRequestCommand): Promise<boolean> {
+    try {
+      if (!command.requestId.trim() || !command.taskId.trim() || !command.missionId.trim() ||
+          !command.organizationId.trim() || !command.workspaceId.trim() ||
+          !EXECUTION_CAPABILITIES.includes(command.capability) ||
+          !command.action.trim() || command.action.length > 200 ||
+          !isRecord(command.input) || !command.idempotencyKey.trim() ||
+          !/^[0-9a-f]{64}$/.test(command.inputDigest)) return false;
+      const result = await this.client.rpc("create_authenticated_execution_request", {
+        p_request_id: command.requestId,
+        p_task_id: command.taskId,
+        p_mission_id: command.missionId,
+        p_organization_id: command.organizationId,
+        p_workspace_id: command.workspaceId,
+        p_capability: command.capability,
+        p_action: command.action,
+        p_input: command.input,
+        p_target_reference: command.targetReference ?? null,
+        p_idempotency_key: command.idempotencyKey,
+        p_input_digest: command.inputDigest,
+      });
+      if (result.error) return false;
+      const rows = Array.isArray(result.data)
+        ? result.data
+        : result.data === null || result.data === undefined ? [] : [result.data];
+      if (rows.length !== 1 || !isRecord(rows[0])) return false;
+      const row = rows[0];
+      return row.request_id === command.requestId &&
+        row.task_id === command.taskId &&
+        row.mission_id === command.missionId &&
+        row.organization_id === command.organizationId &&
+        row.workspace_id === command.workspaceId &&
+        row.capability === command.capability &&
+        row.action === command.action &&
+        canonicalJson(row.input) === canonicalJson(command.input) &&
+        canonicalJson(row.target_reference ?? null) === canonicalJson(command.targetReference ?? null) &&
+        row.risk === "HIGH" &&
+        row.requires_approval === true &&
+        row.approval_status === "PENDING" &&
+        row.required_approval_role === "FOUNDER" &&
+        row.status === "WAITING_APPROVAL" &&
+        row.idempotency_key === command.idempotencyKey &&
+        row.input_digest === command.inputDigest &&
+        typeof row.requester_user_id === "string" &&
+        row.requester_user_id.length > 0 &&
+        row.executor_user_id === row.requester_user_id;
+    } catch {
+      return false;
+    }
+  }
+}
+
+/** Atomic decision RPC adapter. Identity and approver role are derived in PostgreSQL. */
+export class SupabaseExecutionRequestApprovalDecisionStore {
+  constructor(private readonly client: SupabaseExecutionRequestDecisionRpcClient) {}
+
+  async decide(
+    requestId: string,
+    decision: "APPROVED" | "REJECTED",
+    reason: string,
+  ): Promise<boolean> {
+    try {
+      if (!requestId.trim() || !reason.trim() || reason.length > 1000) return false;
+      const result = await this.client.rpc("decide_authenticated_execution_request", {
+        p_request_id: requestId,
+        p_decision: decision,
+        p_reason: reason,
+      });
+      if (result.error) return false;
+      if (result.data === true) return true;
+      if (Array.isArray(result.data) && result.data.length === 1) {
+        const value = result.data[0];
+        if (value === true || (isRecord(value) && value.decided === true)) return true;
+      }
+      return isRecord(result.data) && result.data.decided === true;
+    } catch {
+      return false;
     }
   }
 }
