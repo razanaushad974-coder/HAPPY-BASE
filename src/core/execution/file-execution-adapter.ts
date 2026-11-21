@@ -73,7 +73,7 @@ function isSafeRelativeWorkspacePath(value: string): boolean {
   if (!value.trim() || [...value].some((character) => character.charCodeAt(0) < 32)) return false;
   const firstCharacter = value.charCodeAt(0);
   if (firstCharacter === 47 || firstCharacter === 92 || /^[A-Za-z]:/.test(value)) return false;
-  return !value.replaceAll(String.fromCharCode(92), "/").split("/").includes("..");
+  return !value.split(String.fromCharCode(92)).join("/").split("/").includes("..");
 }
 
 function isWorkspaceFileOperationResult(value: unknown): value is WorkspaceFileOperationResult {
