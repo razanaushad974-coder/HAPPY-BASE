@@ -83,7 +83,8 @@ function isWorkspaceFileOperationResult(value: unknown): value is WorkspaceFileO
   return actions.includes(String(result.action)) &&
     ["COMPLETED","BLOCKED","FAILED"].includes(String(result.status)) &&
     typeof result.path === "string" &&
-    (result.destinationPath === undefined || typeof result.destinationPath === "string") &&
+    (result.destinationPath === undefined ||
+      (typeof result.destinationPath === "string" && isSafeRelativeWorkspacePath(result.destinationPath))) &&
     (result.content === undefined || typeof result.content === "string") &&
     Array.isArray(result.changedFiles) &&
     result.changedFiles.every((path) => typeof path === "string" && isSafeRelativeWorkspacePath(path)) &&
@@ -300,8 +301,7 @@ export class FileExecutionAdapter
       if (!isWorkspaceFileOperationResult(candidate) ||
           candidate.action !== operation.action ||
           candidate.path !== operation.path ||
-          (operation.destinationPath !== undefined &&
-            candidate.destinationPath !== operation.destinationPath) ||
+          candidate.destinationPath !== operation.destinationPath ||
           (operation.action === "READ" && typeof candidate.content !== "string")) {
         return {
           ...baseResult(request, "FAILED", startedAt),
