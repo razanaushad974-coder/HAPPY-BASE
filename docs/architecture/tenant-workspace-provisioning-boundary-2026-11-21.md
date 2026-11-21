@@ -8,7 +8,7 @@
 
 HAPPY must not derive a tenant workspace from `process.cwd()`, a request-supplied path, a user ID in request JSON, or a shared application directory. The current `WorkspaceCodeExecutor` requires an explicit root, but that alone does not establish tenant ownership, persistence, or safe multi-instance behavior.
 
-The new `TenantWorkspaceProvisioner` contract accepts only a `CanonicalTenantContext`, which is expected to come from verified request identity plus exact active organization/workspace membership. It can return an executor only when its binding exactly matches the verified user, organization, and workspace, and the provider declares an isolated persistent volume. Any incomplete context, provider error, disconnected provider, or scope mismatch returns `NOT_YET_CONNECTED`.
+The `TenantWorkspaceProvisioner` contract accepts only a `CanonicalTenantContext`, which is expected to come from verified request identity plus exact active organization/workspace membership. Its executor now implements the asynchronous-capable `WorkspaceFileExecutor` operation interface. This permits either a local executor over a genuinely durable isolated volume or a remote persistent worker; it does not assume that a host path is available. The provider result is accepted only when its binding exactly matches the verified user, organization, and workspace and it declares an isolated persistent volume. Any incomplete context, provider error, disconnected provider, malformed executor, or scope mismatch returns `NOT_YET_CONNECTED`.
 
 ## Filesystem executor boundary
 
@@ -30,10 +30,11 @@ A production provider must prove all of the following before returning `PROVISIO
 ## Current runtime state
 
 - `NotConnectedTenantWorkspaceProvisioner` is the safe default and always returns `NOT_YET_CONNECTED`.
-- `resolveTenantWorkspaceExecutor` validates canonical context and exact provider binding before returning an executor.
+- `resolveTenantWorkspaceExecutor` validates canonical context and exact provider binding before returning a `WorkspaceFileExecutor`.
+- `FileExecutionAdapter` awaits the executor operation, so a future remote worker can return asynchronous results without changing the authorization boundary.
 - The contract is not wired into `ExecutionEngine` or an API route.
 - FILE execution therefore remains unavailable unless a separately trusted runtime explicitly injects a tenant-bound executor and its read/mutation authorizers.
-- No local filesystem provider is presented as production-ready; no database migration, storage provisioning, deployment, or production write was performed.
+- No local or remote provider is connected or presented as production-ready; no database migration, storage provisioning, deployment, or production write was performed.
 
 ## Verification
 
