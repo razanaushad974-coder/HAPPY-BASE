@@ -3,6 +3,7 @@ import { MissionOrchestrator } from "../../../core/mission/orchestrator";
 import { TaskGraphEngine } from "../../../core/mission/task-graph";
 import { MissionEngine } from "../../../core/mission/mission-engine";
 import type { MissionTask, TaskGraph } from "../../../core/mission/types";
+import { assessMissionRecovery } from "../../../core/mission/recovery-assessment";
 import type { ResolvedReference } from "../../../core/context/types";
 
 const reasoning = new ReasoningOrchestrator();
@@ -620,4 +621,78 @@ for (const [label, malformedGraph] of malformedReadyGraphs) {
   if (!malformedGraphDenied) {
     throw new Error(`Ready-task selection accepted ${label}.`);
   }
+}
+
+
+// Recovery assessment is read-only and never treats a missing or incomplete
+// execution record as proof that a side effect did not happen.
+const recoveryMission = readySnapshot.mission;
+const recoveryTask = readySnapshot.graph.tasks[0];
+const activeRecoveryTasks = readySnapshot.graph.tasks.map((task) =>
+  task.id === recoveryTask.id ? { ...task, status: "RUNNING" as const } : task,
+);
+const missingExecutionAssessment = assessMissionRecovery(
+  recoveryMission,
+  activeRecoveryTasks,
+  [],
+);
+if (
+  missingExecutionAssessment[0]?.disposition !== "RECONCILIATION_REQUIRED" ||
+  missingExecutionAssessment[0]?.reason !== "EXECUTION_RECORD_MISSING"
+) {
+  throw new Error("Recovery assessment did not quarantine a missing execution record.");
+}
+
+const unknownExecutionAssessment = assessMissionRecovery(
+  recoveryMission,
+  activeRecoveryTasks,
+  [{
+    id: "recovery-execution-running",
+    missionId: recoveryMission.id,
+    taskId: recoveryTask.id,
+    status: "RUNNING",
+  }],
+);
+if (unknownExecutionAssessment[0]?.disposition !== "EXECUTION_OUTCOME_UNKNOWN") {
+  throw new Error("Recovery assessment incorrectly treated an in-flight side effect as safe to replay.");
+}
+
+const completedExecutionAssessment = assessMissionRecovery(
+  recoveryMission,
+  activeRecoveryTasks,
+  [{
+    id: "recovery-execution-completed",
+    missionId: recoveryMission.id,
+    taskId: recoveryTask.id,
+    status: "COMPLETED",
+  }],
+);
+if (completedExecutionAssessment[0]?.disposition !== "VERIFICATION_RESUME_REQUIRED") {
+  throw new Error("Recovery assessment did not route completed execution to verification.");
+}
+
+const duplicateExecutionAssessment = assessMissionRecovery(
+  recoveryMission,
+  activeRecoveryTasks,
+  [
+    { id: "recovery-execution-a", missionId: recoveryMission.id, taskId: recoveryTask.id, status: "RUNNING" },
+    { id: "recovery-execution-b", missionId: recoveryMission.id, taskId: recoveryTask.id, status: "RUNNING" },
+  ],
+);
+if (duplicateExecutionAssessment[0]?.reason !== "MULTIPLE_EXECUTION_RECORDS") {
+  throw new Error("Recovery assessment did not quarantine ambiguous execution records.");
+}
+
+let foreignRecoveryExecutionDenied = false;
+try {
+  assessMissionRecovery(
+    recoveryMission,
+    activeRecoveryTasks,
+    [{ id: "foreign-execution", missionId: "other-mission", taskId: recoveryTask.id, status: "COMPLETED" }],
+  );
+} catch {
+  foreignRecoveryExecutionDenied = true;
+}
+if (!foreignRecoveryExecutionDenied) {
+  throw new Error("Recovery assessment accepted an execution from another mission.");
 }
