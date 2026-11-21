@@ -216,43 +216,20 @@ export class SupabaseNamedExecutorGrantStore implements NamedExecutorGrantStore 
     }
   }
 
+  /**
+   * Direct private-table consumption is intentionally disabled. Authenticated
+   * callers have no private-table UPDATE grant, and privileged server clients
+   * must not bypass the auth.uid()-bound transactional consume RPC.
+   */
   async consumeApprovedGrant(
-    scope: { organizationId: string; workspaceId: string },
-    grantId: string,
-    binding: NamedExecutorGrantBinding,
-    consumedAt: string,
+    _scope: { organizationId: string; workspaceId: string },
+    _grantId: string,
+    _binding: NamedExecutorGrantBinding,
+    _consumedAt: string,
   ): Promise<boolean> {
-    try {
-      let query = this.client.schema(PRIVATE)
-        .from("file_mutation_approval_grants")
-        .update({ status: "CONSUMED", consumed_at: consumedAt, updated_at: consumedAt })
-        .eq("grant_id", grantId)
-        .eq("organization_id", scope.organizationId)
-        .eq("workspace_id", scope.workspaceId)
-        .eq("request_id", binding.requestId)
-        .eq("task_id", binding.taskId)
-        .eq("mission_id", binding.missionId)
-        .eq("requester_user_id", binding.requesterUserId)
-        .eq("executor_user_id", binding.executorUserId)
-        .eq("approver_user_id", binding.approverUserId)
-        .eq("target_entity_type", "FILE")
-        .eq("target_entity_id", binding.targetEntityId)
-        .eq("operation", binding.operation)
-        .eq("source_path", binding.sourcePath)
-        .eq("input_digest", binding.inputDigest)
-        .eq("status", "APPROVED")
-        .is("consumed_at", null)
-        .gt("expires_at", consumedAt);
-      query = binding.destinationPath === null
-        ? query.is("destination_path", null)
-        : query.eq("destination_path", binding.destinationPath);
-      const result = await query.select("grant_id").maybeSingle();
-      return !result.error && isRecord(result.data) && result.data.grant_id === grantId;
-    } catch {
-      return false;
-    }
+    return false;
   }
-}
+}}
 
 
 /**
