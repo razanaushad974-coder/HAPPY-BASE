@@ -306,11 +306,11 @@ begin
     raise exception 'STALE_OR_EXPIRED_LEASE' using errcode = '55000';
   end if;
 
-  if p_payload->>'id' <> p_execution_request_id
-     or p_payload->>'missionId' <> p_mission_id
-     or p_payload->>'taskId' <> p_task_id
-     or p_payload->>'capability' <> p_capability
-     or p_payload->>'action' <> p_action then
+  if p_payload->>'id' is distinct from p_execution_request_id
+     or p_payload->>'missionId' is distinct from p_mission_id
+     or p_payload->>'taskId' is distinct from p_task_id
+     or p_payload->>'capability' is distinct from p_capability
+     or p_payload->>'action' is distinct from p_action then
     raise exception 'DISPATCH_PAYLOAD_BINDING_MISMATCH' using errcode = '22023';
   end if;
 
