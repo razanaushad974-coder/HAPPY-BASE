@@ -34,7 +34,7 @@ export type MissionLeaseContractErrorCode =
   | "INVALID_DISPATCH_INTENT";
 
 export class MissionLeaseContractError extends Error {
-  constructor(readonly code: MissionLeaseContractErrorCode, message = code) {
+  constructor(readonly code: MissionLeaseContractErrorCode, message: string = code) {
     super(message);
     this.name = "MissionLeaseContractError";
   }
