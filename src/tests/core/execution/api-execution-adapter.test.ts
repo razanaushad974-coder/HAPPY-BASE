@@ -87,6 +87,12 @@ async function main(): Promise<void> {
     await startServer();
 
   try {
+    const disconnectedAdapter = new ApiExecutionAdapter();
+    assert(
+      disconnectedAdapter.status() === "NOT_YET_CONNECTED",
+      "API adapter without server-owned network policy must remain disconnected.",
+    );
+
     const adapter =
       new ApiExecutionAdapter(["127.0.0.1"]);
 
