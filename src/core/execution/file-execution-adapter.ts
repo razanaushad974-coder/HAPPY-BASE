@@ -8,6 +8,7 @@ import type {
 import type {
   WorkspaceFileExecutor,
   WorkspaceFileOperationRequest,
+  WorkspaceFileOperationResult,
 } from "./workspace-code-executor";
 
 function baseResult(
@@ -66,6 +67,19 @@ function normalizeOperation(
         ? value.expectedPreviousContentHash
         : undefined,
   };
+}
+
+function isWorkspaceFileOperationResult(value: unknown): value is WorkspaceFileOperationResult {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const result = value as Record<string, unknown>;
+  const actions = ["READ","CREATE","MODIFY","COPY","MOVE","RENAME","DELETE"];
+  return actions.includes(String(result.action)) &&
+    ["COMPLETED","BLOCKED","FAILED"].includes(String(result.status)) &&
+    typeof result.path === "string" &&
+    (result.destinationPath === undefined || typeof result.destinationPath === "string") &&
+    (result.content === undefined || typeof result.content === "string") &&
+    Array.isArray(result.changedFiles) && result.changedFiles.every((path) => typeof path === "string") &&
+    Array.isArray(result.errors) && result.errors.every((error) => typeof error === "string");
 }
 
 function extractOperation(
@@ -261,7 +275,27 @@ export class FileExecutionAdapter
       };
     }
 
-    const result = await this.executor.executeOperation(operation);
+    let result: WorkspaceFileOperationResult;
+    try {
+      const candidate: unknown = await this.executor.executeOperation(operation);
+      if (!isWorkspaceFileOperationResult(candidate) ||
+          candidate.action !== operation.action ||
+          candidate.path !== operation.path ||
+          (operation.destinationPath !== undefined &&
+            candidate.destinationPath !== operation.destinationPath) ||
+          (operation.action === "READ" && typeof candidate.content !== "string")) {
+        return {
+          ...baseResult(request, "FAILED", startedAt),
+          error: "Tenant workspace executor returned an invalid or mismatched operation result.",
+        };
+      }
+      result = candidate;
+    } catch {
+      return {
+        ...baseResult(request, "FAILED", startedAt),
+        error: "Tenant workspace executor failed.",
+      };
+    }
 
     if (result.status !== "COMPLETED") {
       return {
