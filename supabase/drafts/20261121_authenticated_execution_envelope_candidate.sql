@@ -302,7 +302,7 @@ begin
 exception when duplicate_object then null;
 end
 $role$;
-grant usage on schema private,auth,extensions to happy_execution_request_create_rpc_owner;
+grant usage on schema private,auth,extensions,public to happy_execution_request_create_rpc_owner;
 grant select,insert on private.execution_requests to happy_execution_request_create_rpc_owner;
 grant select on private.organizations,private.workspaces,
   private.organization_memberships,private.workspace_memberships,
