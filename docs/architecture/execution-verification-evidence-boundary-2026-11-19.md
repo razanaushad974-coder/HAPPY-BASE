@@ -140,3 +140,13 @@ Important boundaries:
 - Outbox payload encryption/redaction, size limits, retention, function ownership, private-schema grants, real Supabase JWT/RLS behavior, and hosted concurrency remain deployment gates.
 - The harness uses a disposable PostgreSQL database with a local `auth.uid()` claim stub. It does not prove hosted Supabase identity or production migration compatibility.
 - No production database writes, migrations, merge, or deployment were performed.
+
+
+### Lease heartbeat and one-time outbox claim extension
+
+The scheduler SQL candidate now also includes:
+- `happy_heartbeat_mission_task_lease`: extends only a currently unexpired lease whose tenant scope, mission/task, lease ID, owner, and fencing token all match; bounded duration is 5–300 seconds.
+- `happy_claim_dispatch_outbox`: verifies the current lease, then transitions a matching outbox row from PENDING to DISPATCHED exactly once and returns the immutable dispatch payload. Repeated claims are rejected for reconciliation rather than automatically replayed.
+- Lock ordering is explicitly lease → outbox for enqueue and outbox claim (the claim first performs a non-locking lookup to discover the task binding), avoiding lease/outbox lock inversion.
+
+The disposable PostgreSQL integration harness covers heartbeat extension, stale heartbeat rejection, one-time outbox claim, duplicate claim rejection, and the no-replay rule after a dispatch intent exists. A crash after PENDING → DISPATCHED is intentionally treated as ambiguous; a future worker must reconcile the external provider outcome and use provider-side idempotency. There is no automatic retry or worker loop.
