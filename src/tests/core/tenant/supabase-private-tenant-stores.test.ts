@@ -123,12 +123,10 @@ async function main(): Promise<void> {
     "2026-11-19T12:00:01.000Z",
   )), "A zero-row conditional update must deny consumption.");
 
-  let rpcName = "";
-  let rpcArgs: Record<string, unknown> | null = null;
+  const rpcCalls: Array<{ functionName: string; args: Record<string, unknown> }> = [];
   const memberships = new SupabaseCanonicalTenantMembershipStore({
     async rpc(functionName, args) {
-      rpcName = functionName;
-      rpcArgs = args;
+      rpcCalls.push({ functionName, args });
       return {
         data: [{
           user_id: "executor-1",
@@ -146,10 +144,11 @@ async function main(): Promise<void> {
     "Active organization membership was not mapped from the trusted RPC.");
   assert(pair?.workspace.workspaceId === "workspace-1" && pair.workspace.role === "OWNER",
     "Active workspace membership was not mapped from the trusted RPC.");
-  assert(rpcName === "resolve_authenticated_tenant_context", "Unexpected tenant membership RPC.");
-  assert(rpcArgs?.p_organization_id === "org-1" && rpcArgs?.p_workspace_id === "workspace-1",
+  const capturedRpc = rpcCalls[0];
+  assert(capturedRpc?.functionName === "resolve_authenticated_tenant_context", "Unexpected tenant membership RPC.");
+  assert(capturedRpc.args.p_organization_id === "org-1" && capturedRpc.args.p_workspace_id === "workspace-1",
     "Tenant membership RPC was not bound to the exact requested scope.");
-  assert(!("user_id" in (rpcArgs ?? {})), "Caller-supplied user ID must not be sent to auth.uid()-bound RPC.");
+  assert(!("user_id" in capturedRpc.args), "Caller-supplied user ID must not be sent to auth.uid()-bound RPC.");
 
   const mismatchedMemberships = new SupabaseCanonicalTenantMembershipStore({
     async rpc() {
