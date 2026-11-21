@@ -121,12 +121,12 @@ export async function POST(request: NextRequest) {
       return response(403, { status: "TENANT_ACCESS_DENIED" });
     }
 
-    const requestId = crypto.randomUUID();
+    const proposedRequestId = crypto.randomUUID();
     const creator = new SupabaseDurableExecutionRequestCreator(
       supabase as unknown as SupabaseExecutionRequestCreateRpcClient,
     );
-    const created = await creator.create({
-      requestId,
+    const persistedRequestId = await creator.create({
+      requestId: proposedRequestId,
       taskId,
       missionId,
       organizationId,
@@ -137,14 +137,14 @@ export async function POST(request: NextRequest) {
       targetReference: targetReference as unknown as ResolvedReference | undefined,
       idempotencyKey,
     });
-    if (!created) {
+    if (!persistedRequestId) {
       return response(503, { status: "PERSISTENCE_UNVERIFIED" });
     }
 
     const durableStore = new SupabaseDurableExecutionRequestStore(
       supabase as unknown as SupabaseExecutionRequestRpcClient,
     );
-    const persistedRecord = await durableStore.getByRequestId(requestId);
+    const persistedRecord = await durableStore.getByRequestId(persistedRequestId);
     if (!persistedRecord) {
       return response(503, { status: "PERSISTENCE_UNVERIFIED" });
     }
