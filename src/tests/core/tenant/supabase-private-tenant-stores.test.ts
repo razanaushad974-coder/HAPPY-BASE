@@ -123,29 +123,56 @@ async function main(): Promise<void> {
     "2026-11-19T12:00:01.000Z",
   )), "A zero-row conditional update must deny consumption.");
 
-  const membershipQuery = new FakeQuery();
-  membershipQuery.result = {
-    data: {
-      user_id: "executor-1",
-      organization_id: "org-1",
-      status: "ACTIVE",
-      role: "MEMBER",
+  let rpcName = "";
+  let rpcArgs: Record<string, unknown> | null = null;
+  const memberships = new SupabaseCanonicalTenantMembershipStore({
+    async rpc(functionName, args) {
+      rpcName = functionName;
+      rpcArgs = args;
+      return {
+        data: [{
+          user_id: "executor-1",
+          organization_id: "org-1",
+          workspace_id: "workspace-1",
+          organization_role: "MEMBER",
+          workspace_role: "OWNER",
+        }],
+        error: null,
+      };
     },
-    error: null,
-  };
-  const membershipClient = {
-    schema() {
-      return { from: () => membershipQuery };
+  });
+  const pair = await memberships.getTenantMembershipPair("executor-1", "org-1", "workspace-1");
+  assert(pair?.organization.userId === "executor-1" && pair.organization.status === "ACTIVE",
+    "Active organization membership was not mapped from the trusted RPC.");
+  assert(pair?.workspace.workspaceId === "workspace-1" && pair.workspace.role === "OWNER",
+    "Active workspace membership was not mapped from the trusted RPC.");
+  assert(rpcName === "resolve_authenticated_tenant_context", "Unexpected tenant membership RPC.");
+  assert(rpcArgs?.p_organization_id === "org-1" && rpcArgs?.p_workspace_id === "workspace-1",
+    "Tenant membership RPC was not bound to the exact requested scope.");
+  assert(!("user_id" in (rpcArgs ?? {})), "Caller-supplied user ID must not be sent to auth.uid()-bound RPC.");
+
+  const mismatchedMemberships = new SupabaseCanonicalTenantMembershipStore({
+    async rpc() {
+      return {
+        data: [{
+          user_id: "other-user",
+          organization_id: "org-1",
+          workspace_id: "workspace-1",
+          organization_role: "MEMBER",
+          workspace_role: "OWNER",
+        }],
+        error: null,
+      };
     },
-  } as unknown as SupabasePrivateSchemaClient;
-  const memberships = new SupabaseCanonicalTenantMembershipStore(membershipClient);
-  const member = await memberships.getOrganizationMembership("executor-1", "org-1");
-  assert(member?.userId === "executor-1" && member.status === "ACTIVE",
-    "Active membership row was not mapped.");
-  assert(membershipQuery.calls.some((call) => call[0] === "eq" && call[1] === "user_id" && call[2] === "executor-1"),
-    "Membership query did not constrain the verified user.");
-  assert(membershipQuery.calls.some((call) => call[0] === "eq" && call[1] === "organization_id" && call[2] === "org-1"),
-    "Membership query did not constrain the requested organization.");
+  });
+  assert(await mismatchedMemberships.getTenantMembershipPair("executor-1", "org-1", "workspace-1") === null,
+    "Membership RPC result for a different authenticated user was accepted.");
+
+  const failedMemberships = new SupabaseCanonicalTenantMembershipStore({
+    async rpc() { return { data: null, error: { message: "private schema unavailable" } }; },
+  });
+  assert(await failedMemberships.getTenantMembershipPair("executor-1", "org-1", "workspace-1") === null,
+    "Membership RPC error did not fail closed.");
 
   console.log("Supabase private tenant/grant adapter contract: PASS");
 }
