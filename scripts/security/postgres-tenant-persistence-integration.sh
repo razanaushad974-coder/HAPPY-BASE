@@ -536,7 +536,7 @@ begin
   v_ambiguous := public.happy_record_dispatch_outcome(
     '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
     v_reclaim_outbox.outbox_id,v_reclaimed.lease_id,'worker-b',v_reclaimed.fencing_token,
-    'AMBIGUOUS','{"reason":"provider_timeout_after_send","retryAllowed":false}'::jsonb
+    'AMBIGUOUS','{"provider":"test-provider","reason":"provider_timeout_after_send","retryAllowed":false}'::jsonb
   );
   if v_ambiguous.status <> 'AMBIGUOUS' then
     raise exception 'ambiguous provider outcome was not preserved for reconciliation';
