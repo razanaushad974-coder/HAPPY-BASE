@@ -65,6 +65,17 @@ export interface SupabaseTenantContextRpcClient {
   ): Promise<DatabaseResult>;
 }
 
+/**
+ * User-scoped RPC for loading the immutable execution request assigned to
+ * auth.uid(). It intentionally exposes no private-schema table query surface.
+ */
+export interface SupabaseExecutionRequestRpcClient {
+  rpc(
+    functionName: "resolve_authenticated_execution_request",
+    args: { p_request_id: string },
+  ): Promise<DatabaseResult>;
+}
+
 export class SupabaseCanonicalTenantMembershipStore
 implements CanonicalTenantMembershipStore {
   constructor(private readonly client: SupabaseTenantContextRpcClient) {}
