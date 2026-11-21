@@ -185,14 +185,13 @@ begin
     raise exception 'RUNNING_TASK_REQUIRES_RECONCILIATION' using errcode = '55000';
   end if;
 
-  if v_task ? 'dependencyIds' then
-    if jsonb_typeof(v_task->'dependencyIds') <> 'array' then
-      raise exception 'INVALID_TASK_DEPENDENCIES' using errcode = '22023';
-    end if;
-    for v_dependency in
-      select jsonb_array_elements_text(v_task->'dependencyIds')
-    loop
-      if not exists (
+  if jsonb_typeof(v_task->'dependencyIds') is distinct from 'array' then
+    raise exception 'INVALID_TASK_DEPENDENCIES' using errcode = '22023';
+  end if;
+  for v_dependency in
+    select jsonb_array_elements_text(v_task->'dependencyIds')
+  loop
+    if not exists (
         select 1
           from public.happy_tenant_records dependency
          where dependency.organization_id = p_organization_id
@@ -202,11 +201,10 @@ begin
            and dependency.record_id = v_dependency
            and dependency.data->>'missionId' = p_mission_id
            and dependency.data->>'status' = 'COMPLETED'
-      ) then
-        raise exception 'TASK_DEPENDENCY_NOT_COMPLETED' using errcode = '55000';
-      end if;
-    end loop;
-  end if;
+    ) then
+      raise exception 'TASK_DEPENDENCY_NOT_COMPLETED' using errcode = '55000';
+    end if;
+  end loop;
 
   update public.happy_tenant_records
      set data = jsonb_set(data, '{status}', '"RUNNING"'::jsonb, false),
