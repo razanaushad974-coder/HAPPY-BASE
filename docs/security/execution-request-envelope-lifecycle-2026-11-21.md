@@ -3,12 +3,12 @@
 ## Implemented on the development branch
 
 - `SupabaseDurableExecutionRequestCreator` creates a server-side immutable envelope through `create_authenticated_execution_request`.
-- The server computes a canonical SHA-256 envelope digest. The digest excludes the proposed request ID so an idempotent retry with a fresh candidate ID can resolve to the original durable request.
+- PostgreSQL computes the SHA-256 digest of the JSONB input payload. Idempotency is bound to the full envelope (task, mission, capability, action, input, target reference, risk/approval policy) so a retry with a fresh proposed request ID resolves to the original durable request.
 - PostgreSQL derives requester and executor from `auth.uid()`; this path supports self-execution only. Delegated execution is not enabled.
 - The database fixes the request to `risk=HIGH`, `requires_approval=true`, and `required_approval_role=FOUNDER`. The caller cannot choose these fields or the requester/executor identity.
 - Creation checks the exact active organization/workspace and membership rows while holding share locks, and enforces a scope-bound idempotency key. Reuse with a different envelope is rejected.
 - `resolve_authenticated_execution_request` returns the full persisted envelope only to the assigned executor. The TypeScript store validates every required field and fails closed on malformed rows or RPC errors.
-- `decide_authenticated_execution_request` permits only a different active FOUNDER with an allowed active workspace role to decide a pending request. Decision, approver identity, timestamp, reason, status transition, and append-only decision evidence are committed atomically.
+- `decide_authenticated_execution_request` permits only a different active FOUNDER with active workspace membership to decide a pending request. Decision, approver identity, timestamp, reason, status transition, and append-only approval evidence are committed atomically.
 - The API routes persist intent and approve/reject intent only. The response explicitly reports `dispatch: NOT_DISPATCHED`.
 
 ## Deliberately not implemented / production gates
