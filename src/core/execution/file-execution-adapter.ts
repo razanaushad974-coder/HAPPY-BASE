@@ -5,9 +5,9 @@ import type {
   ExecutionResult,
 } from "./types";
 
-import {
-  WorkspaceCodeExecutor,
-  type WorkspaceFileOperationRequest,
+import type {
+  WorkspaceFileExecutor,
+  WorkspaceFileOperationRequest,
 } from "./workspace-code-executor";
 
 function baseResult(
@@ -161,7 +161,7 @@ export class FileExecutionAdapter
      * Never default to process.cwd(): that would make the application/repository
      * directory an implicit user workspace.
      */
-    private readonly executor?: WorkspaceCodeExecutor,
+    private readonly executor?: WorkspaceFileExecutor,
     private readonly mutationAuthorizer?: FileMutationAuthorizer,
     private readonly readAuthorizer?: FileReadAuthorizer,
   ) {}
@@ -261,10 +261,7 @@ export class FileExecutionAdapter
       };
     }
 
-    const result =
-      this.executor.executeOperation(
-        operation,
-      );
+    const result = await this.executor.executeOperation(operation);
 
     if (result.status !== "COMPLETED") {
       return {
