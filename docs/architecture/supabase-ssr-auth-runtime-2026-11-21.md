@@ -117,3 +117,9 @@ Configure the Supabase Auth Site URL and redirect allowlist to include the exact
 - The only supported application consume path is `SupabaseTransactionalNamedExecutorGrantStore` with a request-scoped, user-JWT RPC client calling `consume_file_mutation_approval_grant`. The database derives executor identity from `auth.uid()` and performs the atomic exact-binding transition.
 - Updated the store contract test to assert no private-table UPDATE or table access occurs through the legacy method. Existing transactional RPC tests continue to verify exact arguments and fail-closed responses.
 - This is source-level hardening only. The RPC SQL remains a design candidate; the runtime composition is not wired, no hosted migration was applied, and no live grant was read or changed.
+
+### Grant lookup contract type correction — 2026-11-21
+- CI run `44901543307` caught a TypeScript contract mismatch in the new read-only lookup store: its intentionally disabled `consumeApprovedGrant` implementation declared zero parameters while the shared store interface requires four.
+- Corrected the method to accept the full interface arguments (unused and explicitly underscore-prefixed) while continuing to return `false` without any table write or RPC call.
+- Fix commit: `046e8999933586d653f835d65dbcce45e5bd5ccd`.
+- The failed run stopped at TypeScript, so its security, PostgreSQL, lint, audit, and build steps were skipped. A fresh validation for the fix is required; no pass is claimed.
