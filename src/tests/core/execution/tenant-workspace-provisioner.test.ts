@@ -6,7 +6,10 @@ import {
   resolveTenantWorkspaceExecutor,
   type TenantWorkspaceProvisioner,
 } from "../../../core/execution/tenant-workspace-provisioner";
-import { WorkspaceCodeExecutor } from "../../../core/execution/workspace-code-executor";
+import {
+  WorkspaceCodeExecutor,
+  type WorkspaceFileExecutor,
+} from "../../../core/execution/workspace-code-executor";
 import type { CanonicalTenantContext } from "../../../core/tenant/canonical-tenant-context";
 
 function assert(condition: boolean, message: string): asserts condition {
@@ -103,6 +106,32 @@ async function main(): Promise<void> {
     if (available.status === "AVAILABLE") {
       assert(available.executor === executor, "Resolved executor differs from the provider's tenant-bound executor.");
     }
+
+    const remoteExecutor: WorkspaceFileExecutor = {
+      async executeOperation(operation) {
+        return {
+          action: operation.action,
+          status: "COMPLETED",
+          path: operation.path,
+          content: "remote-worker-result",
+          changedFiles: [],
+          errors: [],
+        };
+      },
+    };
+    const remoteProvider: TenantWorkspaceProvisioner = {
+      async provision() {
+        return {
+          status: "PROVISIONED",
+          binding: { userId: "user-1", organizationId: "org-1", workspaceId: "workspace-1" },
+          executor: remoteExecutor,
+          storage: "ISOLATED_PERSISTENT_VOLUME",
+        };
+      },
+    };
+    const remoteAvailable = await resolveTenantWorkspaceExecutor(context, remoteProvider);
+    assert(remoteAvailable.status === "AVAILABLE" && remoteAvailable.executor === remoteExecutor,
+      "A trusted remote persistent-worker executor implementing the operation contract must be accepted.");
 
     const failed = await resolveTenantWorkspaceExecutor(context, {
       async provision() { throw new Error("storage unavailable"); },
