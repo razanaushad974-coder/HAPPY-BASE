@@ -115,6 +115,7 @@ export class SupabaseDurableExecutionRequestStore implements DurableExecutionReq
           !EXECUTION_CAPABILITIES.includes(capability as ExecutionCapability) ||
           !EXECUTION_RISKS.includes(risk as ExecutionRisk) ||
           !APPROVAL_STATUSES.includes(approvalStatus as DurableExecutionApprovalStatus) ||
+          approvalStatus === "NOT_REQUIRED" ||
           !["FOUNDER", "ADMIN"].includes(requiredApprovalRole) ||
           !EXECUTION_STATUSES.includes(status as ExecutionStatus) ||
           row.requires_approval !== true ||
