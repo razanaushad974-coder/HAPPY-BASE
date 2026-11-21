@@ -60,7 +60,7 @@ export async function POST(request: NextRequest) {
       return response(403, { status: "ORIGIN_NOT_ALLOWED" });
     }
 
-    if (!request.headers.get("content-type")?.toLowerCase().includes("application/json")) {
+    if (request.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== "application/json") {
       return response(415, { status: "UNSUPPORTED_MEDIA_TYPE" });
     }
 
