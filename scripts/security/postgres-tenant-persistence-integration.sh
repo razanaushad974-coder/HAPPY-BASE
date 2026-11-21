@@ -591,6 +591,16 @@ begin
    where evidence_id = v_evidence_id;
   if v_count <> 1 then raise exception 'idempotent retry created duplicate evidence'; end if;
 
+  -- A distinct observation ID appends a new event instead of rewriting the first.
+  perform public.happy_append_dispatch_reconciliation_evidence(
+    '10000000-0000-4000-8000-000000000001',
+    '20000000-0000-4000-8000-000000000002',
+    v_outbox.outbox_id, '90000000-0000-4000-8000-000000000010',
+    v_outbox.idempotency_key, 'test-provider', 'SUCCEEDED',
+    v_observed_at + interval '1 second',
+    '{"status":"SUCCEEDED","providerRequestId":"provider-req-2"}'::jsonb
+  );
+
   begin
     perform public.happy_append_dispatch_reconciliation_evidence(
       '10000000-0000-4000-8000-000000000001',
@@ -680,7 +690,7 @@ begin
   select count(*) into v_count
     from public.happy_dispatch_reconciliation_evidence
    where outbox_id = v_outbox.outbox_id;
-  if v_count <> 1 then raise exception 'unexpected reconciliation evidence count'; end if;
+  if v_count <> 2 then raise exception 'distinct provider observations were not appended independently'; end if;
 end
 $reconciliation$;
 
@@ -712,6 +722,18 @@ begin
      or has_table_privilege('authenticated','public.happy_execution_dispatch_outbox','SELECT')
      or has_table_privilege('authenticated','public.happy_execution_dispatch_outbox','INSERT') then
     raise exception 'authenticated can access scheduler internals directly';
+  end if;
+  if not has_function_privilege('authenticated','public.happy_append_dispatch_reconciliation_evidence(uuid,uuid,uuid,uuid,text,text,text,timestamptz,jsonb)','EXECUTE') then
+    raise exception 'authenticated cannot invoke reconciliation append RPC';
+  end if;
+  if has_table_privilege('authenticated','public.happy_dispatch_reconciliation_evidence','SELECT')
+     or has_table_privilege('authenticated','public.happy_dispatch_reconciliation_evidence','INSERT')
+     or has_table_privilege('authenticated','public.happy_dispatch_reconciliation_evidence','UPDATE')
+     or has_table_privilege('authenticated','public.happy_dispatch_reconciliation_evidence','DELETE') then
+    raise exception 'authenticated has direct access to reconciliation evidence table';
+  end if;
+  if has_function_privilege('service_role','public.happy_append_dispatch_reconciliation_evidence(uuid,uuid,uuid,uuid,text,text,text,timestamptz,jsonb)','EXECUTE') then
+    raise exception 'service_role can invoke reconciliation append RPC';
   end if;
   if has_function_privilege('service_role','public.happy_claim_mission_task(uuid,uuid,text,text,text,integer)','EXECUTE')
      or has_function_privilege('service_role','public.happy_enqueue_mission_dispatch(uuid,uuid,text,text,uuid,text,bigint,text,text,text,text,text,jsonb)','EXECUTE')
