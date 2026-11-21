@@ -23,6 +23,7 @@ alter table private.execution_requests drop constraint if exists execution_reque
 alter table private.execution_requests add constraint execution_requests_status_check
   check (status in ('RECEIVED','WAITING_APPROVAL','READY','RUNNING','COMPLETED','FAILED','BLOCKED','NOT_YET_CONNECTED','CANCELLED'));
 
+alter table private.execution_requests drop constraint if exists execution_requests_envelope_check;
 alter table private.execution_requests add constraint execution_requests_envelope_check
   check (
     (capability is null and action is null and input is null and requires_approval is null and risk is null and approval_status is null and required_approval_role is null and input_digest is null and idempotency_key is null)
