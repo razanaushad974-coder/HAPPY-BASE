@@ -39,9 +39,20 @@ alter table private.execution_requests add constraint execution_requests_envelop
      and idempotency_key is not null and length(btrim(idempotency_key)) > 0)
   );
 
-create unique index if not exists execution_requests_idempotency_idx
-  on private.execution_requests(requester_user_id, organization_id, workspace_id, idempotency_key)
-  where idempotency_key is not null;
+drop index if exists private.execution_requests_idempotency_idx;
+do $idempotency_constraint$
+begin
+  if not exists (
+    select 1 from pg_constraint
+     where conrelid = 'private.execution_requests'::regclass
+       and conname = 'execution_requests_idempotency_unique'
+  ) then
+    alter table private.execution_requests
+      add constraint execution_requests_idempotency_unique
+      unique (requester_user_id, organization_id, workspace_id, idempotency_key);
+  end if;
+end
+$idempotency_constraint$;
 
 create or replace function private.guard_execution_request_update()
 returns trigger language plpgsql security definer set search_path = pg_catalog
@@ -178,20 +189,19 @@ begin
     'WAITING_APPROVAL', p_capability,p_action,p_input,p_target_reference,true,'HIGH',
     'PENDING','FOUNDER',v_digest,p_idempotency_key
   )
-  on conflict (requester_user_id,organization_id,workspace_id,idempotency_key)
-    where idempotency_key is not null do nothing;
+  on conflict on constraint execution_requests_idempotency_unique do nothing;
 
   select r.* into v_existing from private.execution_requests r
    where r.requester_user_id=v_uid and r.organization_id=p_organization_id
      and r.workspace_id=p_workspace_id and r.idempotency_key=p_idempotency_key
    for update;
   if not found then raise exception 'EXECUTION_REQUEST_PERSISTENCE_FAILED'; end if;
-  if v_existing.request_id <> p_request_id or v_existing.task_id <> p_task_id
+  if v_existing.executor_user_id <> v_uid or v_existing.task_id <> p_task_id
      or v_existing.mission_id <> p_mission_id or v_existing.capability <> p_capability
      or v_existing.action <> p_action or v_existing.input <> p_input
      or v_existing.target_reference is distinct from p_target_reference
      or v_existing.requires_approval is distinct from true or v_existing.risk <> 'HIGH'
-     or v_existing.approval_status <> 'PENDING' or v_existing.required_approval_role <> 'FOUNDER'
+     or v_existing.required_approval_role <> 'FOUNDER'
      or v_existing.input_digest <> v_digest then
     raise exception 'IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_EXECUTION';
   end if;
