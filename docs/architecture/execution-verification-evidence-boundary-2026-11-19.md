@@ -113,3 +113,9 @@ The domain boundary now exposes a pure contract in `src/core/mission/durable-sch
 - Regression tests cover stale fencing tokens, owner/tenant mismatch, expiry, and dispatch-binding mismatch. The test is included in `test:security`.
 
 This is a validation contract, not a scheduler implementation. The pure validator cannot close a read/write race. A production adapter must lock/CAS the current lease row, enforce fencing at the write boundary, insert the dispatch intent, and update task state in one authenticated tenant transaction. It must enforce unique `(tenant scope, idempotency key)` and immutable intent binding, then pass that key to an adapter that actually deduplicates side effects. No durable worker, automatic replay, or production persistence activation is introduced by this change.
+
+### Dispatch request integrity hardening (2026-11-21)
+
+The pure dispatch validator now binds an outbox intent to the exact execution request ID, a deterministic tenant/mission/task/logical-attempt/capability/action idempotency key, and a canonical SHA-256 digest of the complete immutable request fields. Canonical JSON sorts object keys, preserves array order, and rejects non-JSON values, non-plain objects, and cycles. Regression tests cover request-ID substitution, idempotency-key reuse, payload-digest substitution, malformed digest values, and equivalent object-key ordering.
+
+This is still a validation primitive, not an outbox implementation. A durable adapter must persist the intent and task/lease transition atomically, enforce a unique constraint on the tenant-scoped idempotency key, make the stored binding immutable, and require downstream adapters to deduplicate side effects. A caller that can replace both the request and its digest is not constrained by this helper alone; trusted request construction and storage-boundary enforcement remain mandatory. No worker, DB schema, or production integration is activated by this change.
