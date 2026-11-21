@@ -66,6 +66,13 @@ async function main(): Promise<void> {
     !("p_risk" in createCalls[0].args) &&
     !("p_approval_status" in createCalls[0].args),
     "Caller must not select principals, risk, or approval state.");
+  const retryCommand = { ...command, requestId: "new-proposed-request-id" };
+  const retryRequestId = await new SupabaseDurableExecutionRequestCreator(createClient).create(retryCommand);
+  assert(retryRequestId === command.requestId &&
+    createCalls.length === 2 &&
+    createCalls[0].args.p_input_digest === createCalls[1].args.p_input_digest,
+    "An identical idempotent retry must resolve to the original persisted ID and stable envelope digest.");
+
   const deniedCreate = new SupabaseDurableExecutionRequestCreator({
     async rpc() { return { error: { message: "tenant denied" }, data: null }; },
   });
