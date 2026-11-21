@@ -166,7 +166,7 @@ begin
     or p_task_id is null or length(btrim(p_task_id)) not between 1 and 160
     or p_mission_id is null or length(btrim(p_mission_id)) not between 1 and 160
     or p_organization_id is null or p_workspace_id is null
-    or p_capability not in ('CODE','FILE','API','BROWSER','SHELL','DATABASE','AI','DEPLOYMENT','PUBLISH','AUTOMATION')
+    or p_capability is null or p_capability not in ('CODE','FILE','API','BROWSER','SHELL','DATABASE','AI','DEPLOYMENT','PUBLISH','AUTOMATION')
     or p_action is null or length(btrim(p_action)) not between 1 and 200
     or p_input is null or jsonb_typeof(p_input)<>'object'
     or(p_target_reference is not null and jsonb_typeof(p_target_reference)<>'object')
@@ -175,10 +175,13 @@ begin
     raise exception 'INVALID_EXECUTION_ENVELOPE' using errcode='22023';
   end if;
   if p_target_reference is not null and (
-    jsonb_typeof(p_target_reference->'token')<>'string'
+    jsonb_typeof(p_target_reference->'token') is distinct from 'string'
+    or p_target_reference->>'entityType' is null
     or p_target_reference->>'entityType' not in ('PROJECT','MISSION','TASK','FILE','DATABASE')
-    or jsonb_typeof(p_target_reference->'entityId')<>'string'
+    or jsonb_typeof(p_target_reference->'entityId') is distinct from 'string'
+    or p_target_reference->>'confidence' is null
     or p_target_reference->>'confidence' not in ('HIGH','MEDIUM','LOW','UNKNOWN')
+    or p_target_reference->>'source' is null
     or p_target_reference->>'source' not in ('ACTIVE_CONTEXT','PERSISTED_MEMORY')
   ) then raise exception 'INVALID_TARGET_REFERENCE' using errcode='22023'; end if;
 
@@ -271,10 +274,21 @@ create or replace function public.claim_authenticated_execution_request(p_reques
 returns table(request_id text,lease_token uuid,lease_expires_at timestamptz,capability text,
  action text,input jsonb,target_reference jsonb,risk text)
 language plpgsql security definer set search_path=pg_catalog as $claim$
-declare v_actor uuid:=auth.uid(); v_row private.execution_requests%rowtype; v_now timestamptz:=clock_timestamp();
+declare v_actor uuid:=auth.uid(); v_row private.execution_requests%rowtype; v_scope record; v_now timestamptz:=clock_timestamp();
 begin
  if v_actor is null then raise exception 'AUTHENTICATION_REQUIRED' using errcode='42501'; end if;
  if p_lease_seconds is null or p_lease_seconds not between 5 and 300 then raise exception 'INVALID_EXECUTION_LEASE' using errcode='22023'; end if;
+ select organization_id,workspace_id into v_scope from private.execution_requests
+  where request_id=p_request_id and executor_user_id=v_actor;
+ if not found then raise exception 'EXECUTION_REQUEST_NOT_FOUND' using errcode='P0002'; end if;
+ perform 1 from private.organizations where organization_id=v_scope.organization_id and status='ACTIVE' for share;
+ if not found then raise exception 'TENANT_SCOPE_DENIED' using errcode='42501'; end if;
+ perform 1 from private.workspaces where organization_id=v_scope.organization_id and workspace_id=v_scope.workspace_id and status='ACTIVE' for share;
+ if not found then raise exception 'TENANT_SCOPE_DENIED' using errcode='42501'; end if;
+ perform 1 from private.organization_memberships where organization_id=v_scope.organization_id and user_id=v_actor and status='ACTIVE' for share;
+ if not found then raise exception 'TENANT_SCOPE_DENIED' using errcode='42501'; end if;
+ perform 1 from private.workspace_memberships where organization_id=v_scope.organization_id and workspace_id=v_scope.workspace_id and user_id=v_actor and status='ACTIVE' for share;
+ if not found then raise exception 'TENANT_SCOPE_DENIED' using errcode='42501'; end if;
  select r.* into v_row from private.execution_requests r where r.request_id=p_request_id and r.executor_user_id=v_actor for update;
  if not found then raise exception 'EXECUTION_REQUEST_NOT_FOUND' using errcode='P0002'; end if;
  if v_row.status<>'READY' or v_row.approval_status<>'APPROVED' or v_row.attempt_count<>0 then
@@ -290,11 +304,22 @@ $claim$;
 create or replace function public.finish_authenticated_execution_request(
  p_request_id text,p_lease_token uuid,p_terminal_status text,p_result jsonb
 ) returns boolean language plpgsql security definer set search_path=pg_catalog as $finish$
-declare v_actor uuid:=auth.uid(); v_now timestamptz:=clock_timestamp();
+declare v_actor uuid:=auth.uid(); v_scope record; v_now timestamptz:=clock_timestamp();
 begin
  if v_actor is null then return false; end if;
  if p_terminal_status not in ('COMPLETED','FAILED','BLOCKED') or p_result is null or jsonb_typeof(p_result)<>'object' then
   raise exception 'INVALID_EXECUTION_RESULT' using errcode='22023'; end if;
+ select organization_id,workspace_id into v_scope from private.execution_requests
+  where request_id=p_request_id and executor_user_id=v_actor;
+ if not found then return false; end if;
+ perform 1 from private.organizations where organization_id=v_scope.organization_id and status='ACTIVE' for share;
+ if not found then return false; end if;
+ perform 1 from private.workspaces where organization_id=v_scope.organization_id and workspace_id=v_scope.workspace_id and status='ACTIVE' for share;
+ if not found then return false; end if;
+ perform 1 from private.organization_memberships where organization_id=v_scope.organization_id and user_id=v_actor and status='ACTIVE' for share;
+ if not found then return false; end if;
+ perform 1 from private.workspace_memberships where organization_id=v_scope.organization_id and workspace_id=v_scope.workspace_id and user_id=v_actor and status='ACTIVE' for share;
+ if not found then return false; end if;
  update private.execution_requests r set status=p_terminal_status,result=p_result,completed_at=v_now,
   lease_token=null,lease_expires_at=null where r.request_id=p_request_id and r.executor_user_id=v_actor
   and r.status='RUNNING' and r.lease_token=p_lease_token and r.lease_expires_at>v_now;
