@@ -25,12 +25,12 @@ async function main(): Promise<void> {
     status: "ACTIVE", role: "MEMBER",
   };
   const memberships: CanonicalTenantMembershipStore = {
-    async getOrganizationMembership(userId, organizationId) {
-      return userId === org.userId && organizationId === org.organizationId ? org : null;
-    },
-    async getWorkspaceMembership(userId, organizationId, workspaceId) {
-      return userId === workspace.userId && organizationId === workspace.organizationId &&
-        workspaceId === workspace.workspaceId ? workspace : null;
+    async getTenantMembershipPair(userId, organizationId, workspaceId) {
+      return userId === org.userId &&
+        organizationId === org.organizationId &&
+        workspaceId === workspace.workspaceId
+        ? { organization: org, workspace }
+        : null;
     },
   };
   const identity: VerifiedServerIdentityProvider = {
@@ -67,15 +67,13 @@ async function main(): Promise<void> {
   assert(denied === null, "Session identity different from named executor must be denied.");
 
   const approverMemberships: CanonicalTenantMembershipStore = {
-    async getOrganizationMembership(userId, organizationId) {
-      return userId === "approver-1" && organizationId === "org-1"
-        ? { userId, organizationId, status: "ACTIVE", role: "FOUNDER" }
-        : null;
-    },
-    async getWorkspaceMembership(userId, organizationId, workspaceId) {
+    async getTenantMembershipPair(userId, organizationId, workspaceId) {
       return userId === "approver-1" && organizationId === "org-1" &&
         workspaceId === "workspace-1"
-        ? { userId, organizationId, workspaceId, status: "ACTIVE", role: "ADMIN" }
+        ? {
+            organization: { userId, organizationId, status: "ACTIVE", role: "FOUNDER" },
+            workspace: { userId, organizationId, workspaceId, status: "ACTIVE", role: "ADMIN" },
+          }
         : null;
     },
   };
