@@ -31,7 +31,7 @@ A production provider must prove all of the following before returning `PROVISIO
 
 - `NotConnectedTenantWorkspaceProvisioner` is the safe default and always returns `NOT_YET_CONNECTED`.
 - `resolveTenantWorkspaceExecutor` validates canonical context and exact provider binding before returning a `WorkspaceFileExecutor`.
-- `FileExecutionAdapter` awaits the executor operation, so a future remote worker can return asynchronous results without changing the authorization boundary.
+- `FileExecutionAdapter` awaits the executor operation, validates the returned action/path/destination and result shape, requires content for READ, and sanitizes executor exceptions. A future remote worker can return asynchronous results without changing the authorization boundary.
 - The contract is not wired into `ExecutionEngine` or an API route.
 - FILE execution therefore remains unavailable unless a separately trusted runtime explicitly injects a tenant-bound executor and its read/mutation authorizers.
 - No local or remote provider is connected or presented as production-ready; no database migration, storage provisioning, deployment, or production write was performed.
