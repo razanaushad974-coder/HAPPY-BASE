@@ -159,3 +159,20 @@ The scheduler candidate now stores a JSON object outcome on each outbox row and 
 An ACKNOWLEDGED provider response is deliberately not a task completion. The task remains RUNNING pending the separate semantic verification/evidence lifecycle. AMBIGUOUS is persisted as an explicit no-blind-retry state. The disposable PostgreSQL integration harness tests acknowledged outcome persistence, duplicate outcome rejection, and ambiguous outcome retention.
 
 This still does not implement a real provider worker, authenticated provider credential boundary, provider-side idempotency, payload/result redaction or encryption, outcome schema validation per capability, or automatic reconciliation. The outcome JSON is currently an opaque object and must be normalized/validated by a trusted provider adapter before production use.
+
+
+### Provider dispatch worker contract boundary (2026-11-21)
+
+Added `src/core/mission/durable-dispatch-worker-contract.ts` and its regression test. This is a provider-neutral coordinator for an already-claimed outbox item, not a polling worker or production adapter.
+
+- It validates the immutable request ID, outbox identity, lease ID, owner, and positive fencing token before any provider call.
+- It refuses providers that do not explicitly guarantee idempotency-key deduplication. The stable outbox idempotency key is passed to the provider.
+- A provider acknowledgement is persisted as ACKNOWLEDGED only when provider identity and provider request ID are present.
+- A definitive provider rejection is persisted as FAILED.
+- A thrown transport error is treated as AMBIGUOUS because the remote side effect may already have occurred; it is never interpreted as proof of non-execution.
+- Outcome persistence is attempted once. If it fails, the coordinator returns OUTCOME_PERSISTENCE_FAILED and does not call the provider again from that invocation; the DISPATCHED outbox item requires reconciliation.
+- ACKNOWLEDGED still does not complete a mission task; verification and evidence remain separate gates.
+
+Regression tests cover idempotency-key forwarding, refusal of non-idempotent providers before invocation, transport ambiguity, mismatched request rejection, and no provider replay when outcome persistence fails. The test is included in `test:security`.
+
+Remaining limitations: no durable outbox poller/worker lifecycle, provider credential vault, concrete provider implementation, provider status-query reconciliation, hosted Supabase integration, or task completion/verification composition is activated. The SQL candidate remains design-only and no production database, merge, or deployment changes were made.
