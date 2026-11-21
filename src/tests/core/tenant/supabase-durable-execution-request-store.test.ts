@@ -11,8 +11,8 @@ async function main(): Promise<void> {
     requester_user_id: "requester-1", executor_user_id: "executor-1",
     organization_id: "org-1", workspace_id: "workspace-1",
     capability: "FILE", action: "READ", input: { path: "README.md" },
-    target_reference: null, requires_approval: false, risk: "LOW",
-    approval_status: "NOT_REQUIRED", status: "READY",
+    target_reference: null, requires_approval: true, risk: "HIGH",
+    approval_status: "PENDING", required_approval_role: "FOUNDER", status: "WAITING_APPROVAL",
     input_digest: "a".repeat(64), created_at: "2026-11-21T12:00:00.000Z",
   };
   const calls: Array<{ name: string; args: { p_request_id: string } }> = [];
@@ -29,9 +29,10 @@ async function main(): Promise<void> {
       record.executionRequest.capability !== "FILE" ||
       record.executionRequest.action !== "READ" ||
       (record.executionRequest.input as { path?: string }).path !== "README.md" ||
-      record.executionRequest.requiresApproval !== false ||
-      record.approvalStatus !== "NOT_REQUIRED" ||
-      record.status !== "READY" ||
+      record.executionRequest.requiresApproval !== true ||
+      record.approvalStatus !== "PENDING" ||
+      record.requiredApprovalRole !== "FOUNDER" ||
+      record.status !== "WAITING_APPROVAL" ||
       record.inputDigest !== "a".repeat(64) ||
       calls.length !== 1 ||
       calls[0].name !== "resolve_authenticated_execution_request" ||
