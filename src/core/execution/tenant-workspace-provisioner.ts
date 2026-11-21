@@ -59,8 +59,12 @@ export async function resolveTenantWorkspaceExecutor(
   const organizationId = context.organizationId?.trim();
   const workspaceId = context.workspaceId?.trim();
 
+  const actorOrganizationIds = context.actor?.organizationIds;
+  const actorWorkspaceIds = context.actor?.workspaceIds;
   if (!userId || !organizationId || !workspaceId ||
-      !context.organizationRole?.trim() || !context.workspaceRole?.trim()) {
+      !context.organizationRole?.trim() || !context.workspaceRole?.trim() ||
+      !Array.isArray(actorOrganizationIds) || !actorOrganizationIds.includes(organizationId) ||
+      !Array.isArray(actorWorkspaceIds) || !actorWorkspaceIds.includes(workspaceId)) {
     return {
       status: "NOT_YET_CONNECTED",
       reason: "A verified canonical tenant context is required before workspace provisioning.",
