@@ -130,7 +130,7 @@ export function createExecutionIdempotencyKey(lease: MissionTaskLease, request: 
     lease.scope.organizationId, lease.scope.workspaceId, lease.scope.userId,
     lease.missionId, lease.taskId, String(lease.attempt),
     request.id, request.capability, request.action,
-  ].join("\\u001f");
+  ].join("\u001f");
   return "happy-dispatch:v1:" + createHash("sha256").update(binding).digest("hex");
 }
 
