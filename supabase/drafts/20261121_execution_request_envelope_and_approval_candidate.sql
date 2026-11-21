@@ -268,7 +268,7 @@ begin
  if not found then return false; end if;
  perform 1 from private.organization_memberships where organization_id=v_scope.organization_id and user_id=v_actor and status='ACTIVE' and role='FOUNDER' for share;
  if not found then return false; end if;
- perform 1 from private.workspace_memberships where organization_id=v_scope.organization_id and workspace_id=v_scope.workspace_id and user_id=v_actor and status='ACTIVE' for share;
+ perform 1 from private.workspace_memberships where organization_id=v_scope.organization_id and workspace_id=v_scope.workspace_id and user_id=v_actor and status='ACTIVE' and role in ('FOUNDER','ADMIN','OWNER') for share;
  if not found then return false; end if;
  select r.* into v_request from private.execution_requests r where r.request_id=p_request_id for update;
  if not found or v_request.status<>'WAITING_APPROVAL' or v_request.approval_status<>'PENDING'
