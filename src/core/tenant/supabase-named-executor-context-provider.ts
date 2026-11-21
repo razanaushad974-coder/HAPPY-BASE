@@ -7,7 +7,8 @@ import type {
   ApprovalRoleAuthorizer,
   AuthenticatedApprovalActor,
 } from "../approval/pipeline-approval-verifier";
-import type { ExecutionRequest } from "../execution/types";
+import type { ExecutionCapability, ExecutionRequest, ExecutionRisk, ExecutionStatus } from "../execution/types";
+import type { ResolvedReference } from "../context/types";
 import {
   resolveCanonicalTenantContext,
   type CanonicalTenantMembershipStore,
@@ -22,6 +23,8 @@ export interface VerifiedServerIdentityProvider {
   getVerifiedIdentity(): Promise<{ userId: string } | null>;
 }
 
+export type DurableExecutionApprovalStatus = "NOT_REQUIRED" | "PENDING" | "APPROVED" | "REJECTED";
+
 export interface DurableExecutionRequestRecord {
   requestId: string;
   taskId: string;
@@ -30,6 +33,10 @@ export interface DurableExecutionRequestRecord {
   executorUserId: string;
   organizationId: string;
   workspaceId: string;
+  executionRequest: ExecutionRequest;
+  status: ExecutionStatus;
+  approvalStatus: DurableExecutionApprovalStatus;
+  inputDigest: string;
 }
 
 export interface DurableExecutionRequestStore {
@@ -43,6 +50,30 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function requiredString(row: Record<string, unknown>, key: string): string | null {
   const value = row[key];
   return typeof value === "string" && value.trim() ? value : null;
+}
+
+const EXECUTION_CAPABILITIES: readonly ExecutionCapability[] = [
+  "CODE", "FILE", "API", "BROWSER", "SHELL", "DATABASE", "AI",
+  "DEPLOYMENT", "PUBLISH", "AUTOMATION",
+];
+const EXECUTION_RISKS: readonly ExecutionRisk[] = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
+const EXECUTION_STATUSES: readonly ExecutionStatus[] = [
+  "RECEIVED", "WAITING_APPROVAL", "READY", "RUNNING", "COMPLETED",
+  "FAILED", "BLOCKED", "NOT_YET_CONNECTED",
+];
+const APPROVAL_STATUSES: readonly DurableExecutionApprovalStatus[] = [
+  "NOT_REQUIRED", "PENDING", "APPROVED", "REJECTED",
+];
+
+function parseResolvedReference(value: unknown): ResolvedReference | undefined | null {
+  if (value === null || value === undefined) return undefined;
+  if (!isRecord(value) ||
+      typeof value.token !== "string" ||
+      !["PROJECT", "MISSION", "TASK", "FILE", "DATABASE"].includes(String(value.entityType)) ||
+      typeof value.entityId !== "string" ||
+      !["HIGH", "MEDIUM", "LOW", "UNKNOWN"].includes(String(value.confidence)) ||
+      !["ACTIVE_CONTEXT", "PERSISTED_MEMORY"].includes(String(value.source))) return null;
+  return value as unknown as ResolvedReference;
 }
 
 /** Reads immutable request principals only through the executor-bound auth.uid() RPC. */
@@ -68,9 +99,25 @@ export class SupabaseDurableExecutionRequestStore implements DurableExecutionReq
       const executor = requiredString(row, "executor_user_id");
       const organization = requiredString(row, "organization_id");
       const workspace = requiredString(row, "workspace_id");
-      if (!request || !task || !mission || !requester || !executor || !organization || !workspace) {
-        return null;
-      }
+      const capability = requiredString(row, "capability");
+      const action = requiredString(row, "action");
+      const risk = requiredString(row, "risk");
+      const approvalStatus = requiredString(row, "approval_status");
+      const status = requiredString(row, "status");
+      const inputDigest = requiredString(row, "input_digest");
+      const createdAt = requiredString(row, "created_at");
+      const targetReference = parseResolvedReference(row.target_reference);
+      if (!request || !task || !mission || !requester || !executor ||
+          !organization || !workspace || !capability || !action || !risk ||
+          !approvalStatus || !status || !inputDigest || !createdAt ||
+          !EXECUTION_CAPABILITIES.includes(capability as ExecutionCapability) ||
+          !EXECUTION_RISKS.includes(risk as ExecutionRisk) ||
+          !APPROVAL_STATUSES.includes(approvalStatus as DurableExecutionApprovalStatus) ||
+          !EXECUTION_STATUSES.includes(status as ExecutionStatus) ||
+          !/^[0-9a-f]{64}$/.test(inputDigest) ||
+          typeof row.requires_approval !== "boolean" ||
+          !isRecord(row.input) || targetReference === null) return null;
+
       return {
         requestId: request,
         taskId: task,
@@ -79,6 +126,22 @@ export class SupabaseDurableExecutionRequestStore implements DurableExecutionReq
         executorUserId: executor,
         organizationId: organization,
         workspaceId: workspace,
+        executionRequest: {
+          id: request,
+          taskId: task,
+          missionId: mission,
+          capability: capability as ExecutionCapability,
+          action,
+          input: row.input,
+          ...(targetReference ? { targetReference } : {}),
+          requiresApproval: row.requires_approval,
+          approved: approvalStatus === "APPROVED" || approvalStatus === "NOT_REQUIRED",
+          risk: risk as ExecutionRisk,
+          createdAt,
+        },
+        status: status as ExecutionStatus,
+        approvalStatus: approvalStatus as DurableExecutionApprovalStatus,
+        inputDigest,
       };
     } catch {
       return null;
