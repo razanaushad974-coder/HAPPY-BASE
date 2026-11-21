@@ -46,10 +46,10 @@ async function main(): Promise<void> {
         executionRequest: {
           id: requestId, taskId: "task-1", missionId: "mission-1",
           capability: "FILE", action: "MODIFY", input: {},
-          requiresApproval: true, approved: false, risk: "HIGH",
+          requiresApproval: true, approved: true, risk: "HIGH",
           createdAt: "2026-11-19T00:00:00.000Z",
         },
-        status: "WAITING_APPROVAL", approvalStatus: "PENDING",
+        status: "READY", approvalStatus: "APPROVED",
         requiredApprovalRole: "FOUNDER", inputDigest: "a".repeat(64),
       } : null;
     },
@@ -57,7 +57,7 @@ async function main(): Promise<void> {
   const request = {
     id: "request-1", taskId: "task-1", missionId: "mission-1",
     capability: "FILE", action: "MODIFY", input: {}, requiresApproval: true,
-    approved: false, risk: "HIGH", createdAt: "2026-11-19T00:00:00.000Z",
+    approved: true, risk: "HIGH", createdAt: "2026-11-19T00:00:00.000Z",
   } as ExecutionRequest;
 
   const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
