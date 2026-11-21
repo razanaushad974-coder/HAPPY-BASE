@@ -194,8 +194,7 @@ begin
 
   select r.* into v_existing from private.execution_requests r
    where r.requester_user_id=v_uid and r.organization_id=p_organization_id
-     and r.workspace_id=p_workspace_id and r.idempotency_key=p_idempotency_key
-   for update;
+     and r.workspace_id=p_workspace_id and r.idempotency_key=p_idempotency_key;
   if not found then raise exception 'EXECUTION_REQUEST_PERSISTENCE_FAILED'; end if;
   if v_existing.executor_user_id <> v_uid or v_existing.task_id <> p_task_id
      or v_existing.mission_id <> p_mission_id or v_existing.capability <> p_capability
