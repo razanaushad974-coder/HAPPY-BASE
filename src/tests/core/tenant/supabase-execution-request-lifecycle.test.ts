@@ -71,7 +71,7 @@ async function main(): Promise<void> {
   assert(!(await deniedCreate.create(command)), "Create RPC failure must fail closed.");
   const malformedCreate = new SupabaseDurableExecutionRequestCreator({
     async rpc() {
-      return { error: null, data: [{ ...((createCalls[0] as any).unused ?? {}), status: "READY" }] };
+      return { error: null, data: [{ status: "READY" }] };
     },
   });
   assert(!(await malformedCreate.create(command)), "A response that is not pending founder approval must be rejected.");
