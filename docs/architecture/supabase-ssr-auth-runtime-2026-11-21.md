@@ -89,3 +89,8 @@ Configure the Supabase Auth Site URL and redirect allowlist to include the exact
 - The RPC checks active organization, active workspace, active organization membership, active workspace membership, and nonblank roles. It returns no row for missing/revoked/inactive membership.
 - Added PostgreSQL harness assertions for successful active membership, revoked-member denial, authenticated-only RPC execution, and continued denial of direct private-schema/table access.
 - This RPC is still a design-only candidate. The harness uses a local claim stub, and the SQL must be reviewed and explicitly approved before any hosted Supabase migration.
+### Tenant context RPC function-owner hardening — 2026-11-21
+- Review confirmed that the disposable PostgreSQL harness previously executed the SECURITY DEFINER tenant context RPC under the migration/test superuser owner. That proved the query and grants but did not prove the intended least-privilege function-owner boundary.
+- The harness now transfers the RPC to a dedicated NOLOGIN BYPASSRLS role with USAGE only on private and auth, SELECT only on the four organization/workspace/membership tables, and EXECUTE on auth.uid(). It asserts the role has no membership-table write privileges and that only authenticated can execute the public RPC.
+- The SQL candidate now documents this owner model as a deployment gate. Do not use service_role as the function owner. The target Supabase project must be checked for role-creation/ownership permissions and the actual table/RLS ownership model before any migration.
+- This remains a local PostgreSQL role simulation with a stubbed auth.uid() claim, not hosted Supabase JWT/RLS proof. No migration was applied and no production data was changed.
