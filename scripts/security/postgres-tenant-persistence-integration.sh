@@ -543,7 +543,137 @@ begin
   end if;
 end
 $fencing_reclaim$;
+
+-- Append-only provider reconciliation evidence: tenant/outbox binding,
+-- idempotent event identity, collision rejection, and immutable original result.
+do $reconciliation$
+declare
+  v_outbox public.happy_execution_dispatch_outbox%rowtype;
+  v_evidence_id uuid := '90000000-0000-4000-8000-000000000009';
+  v_result uuid;
+  v_count bigint;
+begin
+  select * into v_outbox
+    from public.happy_execution_dispatch_outbox
+   where execution_request_id = 'request-scheduler-2';
+  if not found or v_outbox.status <> 'AMBIGUOUS' then
+    raise exception 'expected ambiguous outbox row for reconciliation tests';
+  end if;
+
+  v_result := public.happy_append_dispatch_reconciliation_evidence(
+    '10000000-0000-4000-8000-000000000001',
+    '20000000-0000-4000-8000-000000000002',
+    v_outbox.outbox_id, v_evidence_id, v_outbox.idempotency_key,
+    'test-provider', 'PROCESSING', clock_timestamp(),
+    '{"status":"PROCESSING","providerRequestId":"provider-req-2"}'::jsonb
+  );
+  if v_result <> v_evidence_id then raise exception 'append RPC returned wrong evidence ID'; end if;
+
+  -- Identical event retry is idempotent.
+  v_result := public.happy_append_dispatch_reconciliation_evidence(
+    '10000000-0000-4000-8000-000000000001',
+    '20000000-0000-4000-8000-000000000002',
+    v_outbox.outbox_id, v_evidence_id, v_outbox.idempotency_key,
+    'test-provider', 'PROCESSING',
+    (select observed_at from public.happy_dispatch_reconciliation_evidence
+      where evidence_id = v_evidence_id),
+    '{"status":"PROCESSING","providerRequestId":"provider-req-2"}'::jsonb
+  );
+  if v_result <> v_evidence_id then raise exception 'identical evidence retry was not idempotent'; end if;
+
+  select count(*) into v_count
+    from public.happy_dispatch_reconciliation_evidence
+   where evidence_id = v_evidence_id;
+  if v_count <> 1 then raise exception 'idempotent retry created duplicate evidence'; end if;
+
+  begin
+    perform public.happy_append_dispatch_reconciliation_evidence(
+      '10000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000002',
+      v_outbox.outbox_id, v_evidence_id, v_outbox.idempotency_key,
+      'test-provider', 'SUCCEEDED', clock_timestamp(),
+      '{"status":"SUCCEEDED","providerRequestId":"different"}'::jsonb
+    );
+    raise exception 'evidence ID payload collision unexpectedly succeeded';
+  exception when unique_violation then null;
+  end;
+
+  begin
+    perform public.happy_append_dispatch_reconciliation_evidence(
+      '10000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000002',
+      v_outbox.outbox_id, gen_random_uuid(), v_outbox.idempotency_key,
+      'other-provider', 'PROCESSING', clock_timestamp(),
+      '{"status":"PROCESSING"}'::jsonb
+    );
+    raise exception 'provider identity mismatch unexpectedly succeeded';
+  exception when sqlstate '55000' then
+    if sqlerrm <> 'RECONCILIATION_TARGET_BINDING_MISMATCH' then raise; end if;
+  end;
+
+  begin
+    perform public.happy_append_dispatch_reconciliation_evidence(
+      '10000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000002',
+      v_outbox.outbox_id, gen_random_uuid(), 'wrong-idempotency-key',
+      'test-provider', 'PROCESSING', clock_timestamp(),
+      '{"status":"PROCESSING"}'::jsonb
+    );
+    raise exception 'idempotency key mismatch unexpectedly succeeded';
+  exception when sqlstate '55000' then
+    if sqlerrm <> 'RECONCILIATION_TARGET_BINDING_MISMATCH' then raise; end if;
+  end;
+
+  begin
+    perform public.happy_append_dispatch_reconciliation_evidence(
+      '10000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000002',
+      v_outbox.outbox_id, gen_random_uuid(), v_outbox.idempotency_key,
+      'test-provider', 'PROCESSING', clock_timestamp(),
+      '{"status":"SUCCEEDED"}'::jsonb
+    );
+    raise exception 'observation status/payload mismatch unexpectedly succeeded';
+  exception when invalid_parameter_value then null;
+  end;
+
+  select * into v_outbox
+    from public.happy_execution_dispatch_outbox
+   where outbox_id = v_outbox.outbox_id;
+  if v_outbox.status <> 'AMBIGUOUS'
+     or v_outbox.outcome->>'reason' <> 'provider_timeout_after_send' then
+    raise exception 'reconciliation mutated original immutable dispatch outcome';
+  end if;
+
+  select count(*) into v_count
+    from public.happy_dispatch_reconciliation_evidence
+   where outbox_id = v_outbox.outbox_id;
+  if v_count <> 1 then raise exception 'unexpected reconciliation evidence count'; end if;
+end
+$reconciliation$;
+
 reset role;
+
+-- Even the table owner cannot accidentally mutate evidence through ordinary DML.
+do $append_only$
+begin
+  begin
+    update public.happy_dispatch_reconciliation_evidence
+       set observation = '{"status":"SUCCEEDED"}'::jsonb
+     where evidence_id = '90000000-0000-4000-8000-000000000009';
+    raise exception 'append-only evidence UPDATE unexpectedly succeeded';
+  exception when sqlstate '55000' then
+    if sqlerrm <> 'RECONCILIATION_EVIDENCE_APPEND_ONLY' then raise; end if;
+  end;
+  begin
+    delete from public.happy_dispatch_reconciliation_evidence
+     where evidence_id = '90000000-0000-4000-8000-000000000009';
+    raise exception 'append-only evidence DELETE unexpectedly succeeded';
+  exception when sqlstate '55000' then
+    if sqlerrm <> 'RECONCILIATION_EVIDENCE_APPEND_ONLY' then raise; end if;
+  end;
+end
+$append_only$;
+
 do $scheduler_privileges$
 begin
   if has_table_privilege('authenticated','public.happy_mission_task_leases','SELECT')
