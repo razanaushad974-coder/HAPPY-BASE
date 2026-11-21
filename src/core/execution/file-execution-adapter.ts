@@ -156,14 +156,18 @@ export class FileExecutionAdapter
   public readonly capability = "FILE" as const;
 
   constructor(
-    private readonly executor: WorkspaceCodeExecutor =
-      new WorkspaceCodeExecutor(),
+    /**
+     * Must be an explicitly provisioned, tenant-bound workspace executor.
+     * Never default to process.cwd(): that would make the application/repository
+     * directory an implicit user workspace.
+     */
+    private readonly executor?: WorkspaceCodeExecutor,
     private readonly mutationAuthorizer?: FileMutationAuthorizer,
     private readonly readAuthorizer?: FileReadAuthorizer,
   ) {}
 
   status(): AdapterStatus {
-    return "AVAILABLE";
+    return this.executor ? "AVAILABLE" : "NOT_YET_CONNECTED";
   }
 
   canExecute(
@@ -219,6 +223,16 @@ export class FileExecutionAdapter
         ),
         error:
           "No valid file operation was supplied.",
+      };
+    }
+
+    // Do not consume a one-time approval grant when there is no explicitly
+    // provisioned workspace root to execute against. The adapter remains
+    // disconnected until trusted runtime composition supplies one.
+    if (!this.executor) {
+      return {
+        ...baseResult(request, "NOT_YET_CONNECTED", startedAt),
+        error: "FILE execution requires an explicitly provisioned tenant workspace executor.",
       };
     }
 
