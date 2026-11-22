@@ -12,6 +12,14 @@ The following code-level pieces now exist:
 - `src/tests/core/mission/postgres-worker-database-broker.test.ts`: fake-session contract coverage for all seven adapter operations and bound parameter counts.
 - `scripts/security/worker-scheduler-draft-contract.sh`: static fail-closed checks that every worker RPC resolves tenant scope, avoids human JWT identity, is SECURITY DEFINER, and has no EXECUTE grant.
 
+## Runtime composition boundary
+
+- `src/core/mission/worker-runtime-composition.ts` is a fail-closed composition seam for the trusted identity resolver, live worker-principal registry, and fixed-operation database broker.
+- It re-resolves workload identity and checks the authoritative principal registry for each requested broker operation; missing dependencies return `NOT_CONNECTED`, while invalid identity, registry outage, disabled/revoked principal, or capability mismatch return `DENIED`.
+- `COMPOSITION_AVAILABLE` is deliberately not a connected/live status. It exposes `liveDatabaseSession: "NOT_VERIFIED"`; the actual dedicated PostgreSQL LOGIN session must still be proven by the broker's session provider.
+- `src/tests/core/mission/worker-runtime-composition.test.ts` covers missing dependencies, successful composition without claiming a live DB session, disabled principal, capability denial, registry outage, forged identity rejection, and expiry.
+- The composition seam is not yet wired into `MissionOrchestrator` or a deployed worker process. Existing in-memory orchestration is not silently replaced.
+
 ## Critical authorization properties
 
 - The worker principal UUID and user UUID passed by the adapter are selectors, not credentials. PostgreSQL derives the real worker from `session_user`.
