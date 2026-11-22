@@ -130,7 +130,11 @@ export class SupabaseDurableExecutionRequestStore implements DurableExecutionReq
       const status = requiredString(row, "status");
       const inputDigest = requiredString(row, "input_digest");
       const envelopeDigest = requiredString(row, "envelope_digest");
-      const createdAt = requiredString(row, "created_at");
+      const createdAtRaw = requiredString(row, "created_at");
+      const createdAtEpoch = createdAtRaw ? Date.parse(createdAtRaw) : Number.NaN;
+      const createdAt = Number.isFinite(createdAtEpoch)
+        ? new Date(createdAtEpoch).toISOString()
+        : null;
       const targetReference = parseResolvedReference(row.target_reference);
       if (!request || !task || !mission || !requester || !executor ||
           !organization || !workspace || !capability || !action || !risk ||
@@ -227,7 +231,7 @@ export class SupabaseDurableExecutionRequestCreator {
         p_capability: command.capability,
         p_action: command.action,
         p_input: command.input,
-        p_target_reference: command.targetReference as unknown as Record<string, unknown> | null,
+        p_target_reference: (command.targetReference ?? null) as unknown as Record<string, unknown> | null,
         p_idempotency_key: command.idempotencyKey,
       });
       if (result.error) return null;
