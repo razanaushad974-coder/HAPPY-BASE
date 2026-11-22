@@ -99,6 +99,20 @@ async function main(): Promise<void> {
   }, store);
   assert(unknownStatus.status === "RECONCILIATION_REQUIRED", "unrecognized provider status must not be persisted as success");
 
+  const nullTarget = await reconcileProviderDispatch(null as never, succeeded, store);
+  assert(nullTarget.status === "RECONCILIATION_REQUIRED", "null target must fail closed");
+
+  const malformedFailure = await reconcileProviderDispatch(target, {
+    ...succeeded,
+    async lookupByIdempotencyKey() {
+      return { status: "FAILED", providerRequestId: "remote-bad", code: 9, message: "bad" } as unknown as Awaited<ReturnType<ProviderStatusReader["lookupByIdempotencyKey"]>>;
+    },
+  }, store);
+  assert(malformedFailure.status === "RECONCILIATION_REQUIRED", "malformed failure fields must not be normalized into trusted evidence");
+
+  const nullProvider = await reconcileProviderDispatch(target, null as never, store);
+  assert(nullProvider.status === "RECONCILIATION_REQUIRED", "null provider must fail closed");
+
   console.log("Provider dispatch reconciliation contract tests: PASS");
 }
 void main();
