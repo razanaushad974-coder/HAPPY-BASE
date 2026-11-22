@@ -60,6 +60,49 @@ async function main(): Promise<void> {
   assert((await resolve(null)).status === "DENIED", "unverified credential was accepted");
   assert((await resolve(valid, { throws: true })).status === "DENIED", "verifier outage did not fail closed");
 
+  const malformedPolicies: unknown[] = [
+    null,
+    {},
+    { ...policy, issuer: null },
+    { ...policy, allowedSubjects: [null] },
+    { ...policy, allowedCapabilities: [null] },
+    { ...policy, allowedCapabilities: ["ROOT"] },
+    { ...policy, maxCredentialLifetimeSeconds: 0 },
+    { ...policy, clockSkewSeconds: 121 },
+  ];
+  for (const malformedPolicy of malformedPolicies) {
+    const result = await new TrustedWorkerIdentityProvider(
+      { async getCredential() { return "opaque-platform-credential"; } },
+      { async verifyCredential() { return valid; } },
+      malformedPolicy as typeof policy,
+      () => now * 1000,
+    ).getVerifiedWorkerIdentity();
+    assert(result.status === "DENIED", "malformed worker policy did not fail closed");
+  }
+
+  const malformedClaims: unknown[] = [
+    { ...valid, audience: [null] },
+    { ...valid, capabilities: [null] },
+    { ...valid, issuer: null },
+  ];
+  for (const claims of malformedClaims) {
+    const result = await new TrustedWorkerIdentityProvider(
+      { async getCredential() { return "opaque-platform-credential"; } },
+      { async verifyCredential() { return claims as VerifiedWorkerCredentialClaims; } },
+      policy,
+      () => now * 1000,
+    ).getVerifiedWorkerIdentity();
+    assert(result.status === "DENIED", "malformed verified claims did not fail closed");
+  }
+
+  const invalidClock = await new TrustedWorkerIdentityProvider(
+    { async getCredential() { return "opaque-platform-credential"; } },
+    { async verifyCredential() { return valid; } },
+    policy,
+    () => Number.NaN,
+  ).getVerifiedWorkerIdentity();
+  assert(invalidClock.status === "DENIED", "invalid clock value did not fail closed");
+
   const cases: Array<[string, Partial<VerifiedWorkerCredentialClaims>]> = [
     ["wrong issuer", { issuer: "https://attacker.invalid" }],
     ["wrong audience", { audience: "other-service" }],
