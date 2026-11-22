@@ -273,6 +273,11 @@ as $enqueue$
 declare
   v_actor uuid;
   v_lease public.happy_mission_task_leases%rowtype;
+  v_request private.execution_requests%rowtype;
+  v_request_envelope jsonb;
+  v_request_digest text;
+  v_expected_payload jsonb;
+  v_computed_payload_digest text;
   v_outbox public.happy_execution_dispatch_outbox%rowtype;
 begin
   v_actor := auth.uid();
@@ -307,11 +312,92 @@ begin
     raise exception 'STALE_OR_EXPIRED_LEASE' using errcode = '55000';
   end if;
 
-  if p_payload->>'id' is distinct from p_execution_request_id
-     or p_payload->>'missionId' is distinct from p_mission_id
-     or p_payload->>'taskId' is distinct from p_task_id
-     or p_payload->>'capability' is distinct from p_capability
-     or p_payload->>'action' is distinct from p_action then
+  -- The execution request is the canonical authority. Lock the exact
+  -- tenant/request/task/mission row and require a persisted founder decision.
+  -- Caller-supplied IDs, payload and digest are comparison inputs only.
+  select r.* into v_request
+    from private.execution_requests r
+   where r.request_id = p_execution_request_id
+     and r.organization_id = p_organization_id
+     and r.workspace_id = p_workspace_id
+     and r.requester_user_id = v_actor
+     and r.executor_user_id = v_actor
+     and r.mission_id = p_mission_id
+     and r.task_id = p_task_id
+   for update;
+
+  if not found
+     or v_request.status <> 'READY'
+     or v_request.approval_status <> 'APPROVED'
+     or v_request.requires_approval is distinct from true
+     or v_request.approver_user_id is null
+     or v_request.approver_user_id in (v_request.requester_user_id,v_request.executor_user_id)
+     or v_request.decided_at is null
+     or v_request.capability is null
+     or v_request.action is null
+     or v_request.input is null
+     or v_request.request_digest is null
+     or v_request.risk is null
+     or v_request.created_at_iso is null then
+    raise exception 'PERSISTED_APPROVED_EXECUTION_REQUEST_REQUIRED' using errcode = '42501';
+  end if;
+
+  v_request_envelope := jsonb_build_object(
+    'requestId',v_request.request_id,
+    'taskId',v_request.task_id,
+    'missionId',v_request.mission_id,
+    'organizationId',v_request.organization_id,
+    'workspaceId',v_request.workspace_id,
+    'requesterUserId',v_request.requester_user_id,
+    'executorUserId',v_request.executor_user_id,
+    'capability',v_request.capability,
+    'action',v_request.action,
+    'input',v_request.input,
+    'targetReference',v_request.target_reference,
+    'idempotencyKey',v_request.idempotency_key,
+    'risk',v_request.risk,
+    'requiresApproval',v_request.requires_approval,
+    'createdAt',v_request.created_at_iso
+  );
+  v_request_digest := 'sha256:' || encode(
+    extensions.digest(
+      convert_to(private.happy_canonical_jsonb(v_request_envelope),'UTF8'),
+      'sha256'
+    ),
+    'hex'
+  );
+
+  if v_request_digest <> v_request.request_digest then
+    raise exception 'PERSISTED_EXECUTION_REQUEST_DIGEST_MISMATCH' using errcode = '22000';
+  end if;
+
+  v_expected_payload := jsonb_build_object(
+    'id',v_request.request_id,
+    'taskId',v_request.task_id,
+    'missionId',v_request.mission_id,
+    'capability',v_request.capability,
+    'action',v_request.action,
+    'input',v_request.input,
+    'targetReference',v_request.target_reference,
+    'requiresApproval',true,
+    'approved',true,
+    'risk',v_request.risk,
+    'createdAt',v_request.created_at_iso
+  );
+
+  v_computed_payload_digest := 'sha256:' || encode(
+    extensions.digest(
+      convert_to(private.happy_canonical_jsonb(v_expected_payload),'UTF8'),
+      'sha256'
+    ),
+    'hex'
+  );
+
+  if p_payload is distinct from v_expected_payload
+     or p_execution_request_id is distinct from v_request.request_id
+     or p_capability is distinct from v_request.capability
+     or p_action is distinct from v_request.action
+     or p_payload_digest is distinct from v_computed_payload_digest then
     raise exception 'DISPATCH_PAYLOAD_BINDING_MISMATCH' using errcode = '22023';
   end if;
 
@@ -324,7 +410,7 @@ begin
     gen_random_uuid(), p_organization_id, p_workspace_id, v_actor,
     p_mission_id, p_task_id, v_lease.lease_id, v_lease.fencing_token, v_lease.attempt,
     p_execution_request_id, p_idempotency_key, p_capability, p_action,
-    p_payload_digest, p_payload
+    v_computed_payload_digest, v_expected_payload
   )
   on conflict (organization_id, workspace_id, user_id, idempotency_key)
   do nothing
@@ -349,8 +435,8 @@ begin
      or v_outbox.attempt <> v_lease.attempt
      or v_outbox.capability <> p_capability
      or v_outbox.action <> p_action
-     or v_outbox.payload_digest <> p_payload_digest
-     or v_outbox.payload <> p_payload then
+     or v_outbox.payload_digest <> v_computed_payload_digest
+     or v_outbox.payload <> v_expected_payload then
     raise exception 'IDEMPOTENCY_KEY_REUSE_MISMATCH' using errcode = '23505';
   end if;
 
