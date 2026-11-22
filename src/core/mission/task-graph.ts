@@ -70,6 +70,9 @@ export class TaskGraphEngine {
     }
 
     for (const task of tasks) {
+      if (!Array.isArray(task.dependencyIds)) {
+        continue;
+      }
       const dependencyIds = new Set<string>();
       for (const dependencyId of task.dependencyIds) {
         if (dependencyIds.has(dependencyId)) {
