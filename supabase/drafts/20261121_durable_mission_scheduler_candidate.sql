@@ -318,6 +318,7 @@ declare
   v_envelope_digest text;
   v_expected_payload jsonb;
   v_computed_payload_digest text;
+  v_expected_idempotency_key text;
   v_created_at_iso text;
   v_outbox public.happy_execution_dispatch_outbox%rowtype;
 begin
@@ -425,6 +426,24 @@ begin
     v_request.created_at at time zone 'UTC',
     'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
   );
+  v_expected_idempotency_key := 'happy-dispatch:v1:' || encode(
+    extensions.digest(
+      convert_to(
+        p_organization_id::text || chr(31) ||
+        p_workspace_id::text || chr(31) ||
+        v_actor::text || chr(31) ||
+        p_mission_id || chr(31) ||
+        p_task_id || chr(31) ||
+        v_lease.attempt::text || chr(31) ||
+        v_request.request_id || chr(31) ||
+        v_request.capability || chr(31) ||
+        v_request.action,
+        'UTF8'
+      ),
+      'sha256'
+    ),
+    'hex'
+  );
   v_expected_payload := jsonb_build_object(
     'id',v_request.request_id,
     'taskId',v_request.task_id,
@@ -449,7 +468,7 @@ begin
 
   if p_payload is distinct from v_expected_payload
      or p_execution_request_id is distinct from v_request.request_id
-     or p_idempotency_key is distinct from v_request.idempotency_key
+     or p_idempotency_key is distinct from v_expected_idempotency_key
      or p_capability is distinct from v_request.capability
      or p_action is distinct from v_request.action
      or p_payload_digest is distinct from v_computed_payload_digest then
