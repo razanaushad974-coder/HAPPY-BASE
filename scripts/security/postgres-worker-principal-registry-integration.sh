@@ -204,6 +204,20 @@ select 'registry-precheck' as check_name, db_login_role, enabled,
   from private.happy_worker_principal_registry
  where db_login_role = 'happy_worker_dispatch';
 
+set role happy_worker_registry_owner;
+select 'organization-membership-lock' as check_name, status
+  from private.organization_memberships
+ where organization_id = '10000000-0000-4000-8000-000000000001'
+   and user_id = '30000000-0000-4000-8000-000000000003'
+ for share;
+select 'workspace-membership-lock' as check_name, status
+  from private.workspace_memberships
+ where organization_id = '10000000-0000-4000-8000-000000000001'
+   and workspace_id = '20000000-0000-4000-8000-000000000002'
+   and user_id = '30000000-0000-4000-8000-000000000003'
+ for share;
+reset role;
+
 set session authorization happy_worker_dispatch;
 select 'worker-session-diagnostic' as check_name,
        session_user::text as session_user,
