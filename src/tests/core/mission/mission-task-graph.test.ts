@@ -794,3 +794,44 @@ try {
 if (!foreignRecoveryExecutionDenied) {
   throw new Error("Recovery assessment accepted an execution from another mission.");
 }
+
+const malformedRecoveryInputs: Array<() => unknown> = [
+  () => assessMissionRecovery(
+    recoveryMission,
+    activeRecoveryTasks.map((task, index) =>
+      index === 0 ? { ...task, status: "UNKNOWN" as MissionTask["status"] } : task,
+    ),
+    [],
+  ),
+  () => assessMissionRecovery(
+    recoveryMission,
+    activeRecoveryTasks,
+    [{
+      id: "unknown-status-execution",
+      missionId: recoveryMission.id,
+      taskId: recoveryTask.id,
+      status: "UNKNOWN" as never,
+    }],
+  ),
+  () => assessMissionRecovery(
+    recoveryMission,
+    activeRecoveryTasks,
+    [{
+      id: " ",
+      missionId: recoveryMission.id,
+      taskId: recoveryTask.id,
+      status: "RUNNING",
+    }],
+  ),
+];
+for (const malformedInput of malformedRecoveryInputs) {
+  let malformedRecoveryDenied = false;
+  try {
+    malformedInput();
+  } catch {
+    malformedRecoveryDenied = true;
+  }
+  if (!malformedRecoveryDenied) {
+    throw new Error("Recovery assessment accepted malformed or unknown persisted state.");
+  }
+}
