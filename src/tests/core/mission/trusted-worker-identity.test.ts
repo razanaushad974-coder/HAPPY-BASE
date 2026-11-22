@@ -112,7 +112,7 @@ async function main(): Promise<void> {
     ["wrong issuer", { issuer: "https://attacker.invalid" }],
     ["wrong audience", { audience: "other-service" }],
     ["human subject", { subject: "user:123" }],
-    ["unapproved subject", { subject: "workload:unknown" }],
+    ["unapproved subject", { subject: "owner:other-team:project:unknown:environment:staging" }],
     ["wrong environment", { environment: "production" }],
     ["expired", { expiresAt: now - 100 }],
     ["not yet valid", { notBefore: now + 100 }],
