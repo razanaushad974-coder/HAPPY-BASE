@@ -39,7 +39,7 @@ async function makeIdentity() {
     () => now * 1000,
   );
   const result = await provider.getVerifiedWorkerIdentity();
-  assert(result.status === "VERIFIED", "test identity must be cryptographically attested by the fake verifier");
+  assert(result.status === "VERIFIED", "test identity must be accepted by the injected test verifier");
   return result.identity;
 }
 
