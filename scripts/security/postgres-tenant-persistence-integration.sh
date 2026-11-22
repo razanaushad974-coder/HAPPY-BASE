@@ -514,6 +514,11 @@ select * from public.happy_create_tenant_record(
   'TASK', 'task-scheduler-reclaim',
   '{"missionId":"mission-scheduler","status":"READY","dependencyIds":[]}'
 );
+-- Scheduler RPC EXECUTE is intentionally revoked from every application
+-- role until a server-verified workload identity exists. Run the SQL state
+-- machine assertions as the isolated disposable database owner, retaining
+-- the simulated auth.uid() claim so tenant membership checks still execute.
+reset role;
 do $scheduler$
 declare
   v_claim record;
@@ -627,8 +632,6 @@ update public.happy_mission_task_leases
    and workspace_id = '20000000-0000-4000-8000-000000000002'
    and user_id = '30000000-0000-4000-8000-000000000003'
    and mission_id = 'mission-scheduler' and task_id = 'task-scheduler-root';
-set role authenticated;
-select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000003',false);
 do $fencing$
 declare
   v_first record;
@@ -658,8 +661,6 @@ update public.happy_mission_task_leases
    and workspace_id = '20000000-0000-4000-8000-000000000002'
    and user_id = '30000000-0000-4000-8000-000000000003'
    and mission_id = 'mission-scheduler' and task_id = 'task-scheduler-reclaim';
-set role authenticated;
-select set_config('request.jwt.claim.sub','30000000-0000-4000-8000-000000000003',false);
 do $fencing_reclaim$
 declare
   v_reclaimed record;
@@ -895,8 +896,43 @@ begin
      or has_table_privilege('authenticated','public.happy_execution_dispatch_outbox','INSERT') then
     raise exception 'authenticated can access scheduler internals directly';
   end if;
-  if not has_function_privilege('authenticated','public.happy_append_dispatch_reconciliation_evidence(uuid,uuid,uuid,uuid,text,text,text,timestamptz,jsonb)','EXECUTE') then
-    raise exception 'authenticated cannot invoke reconciliation append RPC';
+  -- All seven worker-facing RPCs remain unavailable to app identities.
+  -- SQL state-machine behavior is exercised above as the disposable DB owner;
+  -- that is not evidence of a connected/authorized production worker.
+  if has_function_privilege('authenticated','public.happy_claim_mission_task(uuid,uuid,text,text,text,integer)','EXECUTE')
+     or has_function_privilege('anon','public.happy_claim_mission_task(uuid,uuid,text,text,text,integer)','EXECUTE')
+     or has_function_privilege('service_role','public.happy_claim_mission_task(uuid,uuid,text,text,text,integer)','EXECUTE') then
+    raise exception 'application role can invoke worker-gated RPC: public.happy_claim_mission_task';
+  end if;
+  if has_function_privilege('authenticated','public.happy_heartbeat_mission_task_lease(uuid,uuid,text,text,uuid,text,bigint,integer)','EXECUTE')
+     or has_function_privilege('anon','public.happy_heartbeat_mission_task_lease(uuid,uuid,text,text,uuid,text,bigint,integer)','EXECUTE')
+     or has_function_privilege('service_role','public.happy_heartbeat_mission_task_lease(uuid,uuid,text,text,uuid,text,bigint,integer)','EXECUTE') then
+    raise exception 'application role can invoke worker-gated RPC: public.happy_heartbeat_mission_task_lease';
+  end if;
+  if has_function_privilege('authenticated','public.happy_claim_dispatch_outbox(uuid,uuid,uuid,uuid,text,bigint)','EXECUTE')
+     or has_function_privilege('anon','public.happy_claim_dispatch_outbox(uuid,uuid,uuid,uuid,text,bigint)','EXECUTE')
+     or has_function_privilege('service_role','public.happy_claim_dispatch_outbox(uuid,uuid,uuid,uuid,text,bigint)','EXECUTE') then
+    raise exception 'application role can invoke worker-gated RPC: public.happy_claim_dispatch_outbox';
+  end if;
+  if has_function_privilege('authenticated','public.happy_record_dispatch_outcome(uuid,uuid,uuid,uuid,text,bigint,text,jsonb)','EXECUTE')
+     or has_function_privilege('anon','public.happy_record_dispatch_outcome(uuid,uuid,uuid,uuid,text,bigint,text,jsonb)','EXECUTE')
+     or has_function_privilege('service_role','public.happy_record_dispatch_outcome(uuid,uuid,uuid,uuid,text,bigint,text,jsonb)','EXECUTE') then
+    raise exception 'application role can invoke worker-gated RPC: public.happy_record_dispatch_outcome';
+  end if;
+  if has_function_privilege('authenticated','public.happy_enqueue_mission_dispatch(uuid,uuid,text,text,uuid,text,bigint,text,text,text,text,text,jsonb)','EXECUTE')
+     or has_function_privilege('anon','public.happy_enqueue_mission_dispatch(uuid,uuid,text,text,uuid,text,bigint,text,text,text,text,text,jsonb)','EXECUTE')
+     or has_function_privilege('service_role','public.happy_enqueue_mission_dispatch(uuid,uuid,text,text,uuid,text,bigint,text,text,text,text,text,jsonb)','EXECUTE') then
+    raise exception 'application role can invoke worker-gated RPC: public.happy_enqueue_mission_dispatch';
+  end if;
+  if has_function_privilege('authenticated','public.happy_append_dispatch_reconciliation_evidence(uuid,uuid,uuid,uuid,text,text,text,timestamptz,jsonb)','EXECUTE')
+     or has_function_privilege('anon','public.happy_append_dispatch_reconciliation_evidence(uuid,uuid,uuid,uuid,text,text,text,timestamptz,jsonb)','EXECUTE')
+     or has_function_privilege('service_role','public.happy_append_dispatch_reconciliation_evidence(uuid,uuid,uuid,uuid,text,text,text,timestamptz,jsonb)','EXECUTE') then
+    raise exception 'application role can invoke worker-gated RPC: public.happy_append_dispatch_reconciliation_evidence';
+  end if;
+  if has_function_privilege('authenticated','public.happy_list_dispatch_reconciliation_evidence(uuid,uuid,uuid,text,text,text)','EXECUTE')
+     or has_function_privilege('anon','public.happy_list_dispatch_reconciliation_evidence(uuid,uuid,uuid,text,text,text)','EXECUTE')
+     or has_function_privilege('service_role','public.happy_list_dispatch_reconciliation_evidence(uuid,uuid,uuid,text,text,text)','EXECUTE') then
+    raise exception 'application role can invoke worker-gated RPC: public.happy_list_dispatch_reconciliation_evidence';
   end if;
   if has_table_privilege('authenticated','public.happy_dispatch_reconciliation_evidence','SELECT')
      or has_table_privilege('authenticated','public.happy_dispatch_reconciliation_evidence','INSERT')
@@ -904,16 +940,7 @@ begin
      or has_table_privilege('authenticated','public.happy_dispatch_reconciliation_evidence','DELETE') then
     raise exception 'authenticated has direct access to reconciliation evidence table';
   end if;
-  if has_function_privilege('service_role','public.happy_append_dispatch_reconciliation_evidence(uuid,uuid,uuid,uuid,text,text,text,timestamptz,jsonb)','EXECUTE') then
-    raise exception 'service_role can invoke reconciliation append RPC';
-  end if;
-  if has_function_privilege('service_role','public.happy_claim_mission_task(uuid,uuid,text,text,text,integer)','EXECUTE')
-     or has_function_privilege('service_role','public.happy_enqueue_mission_dispatch(uuid,uuid,text,text,uuid,text,bigint,text,text,text,text,text,jsonb)','EXECUTE')
-     or has_function_privilege('service_role','public.happy_heartbeat_mission_task_lease(uuid,uuid,text,text,uuid,text,bigint,integer)','EXECUTE')
-     or has_function_privilege('service_role','public.happy_claim_dispatch_outbox(uuid,uuid,uuid,uuid,text,bigint)','EXECUTE')
-     or has_function_privilege('service_role','public.happy_record_dispatch_outcome(uuid,uuid,uuid,uuid,text,bigint,text,jsonb)','EXECUTE') then
-    raise exception 'service_role can invoke authenticated scheduler RPCs';
-  end if;
+
 end
 $scheduler_privileges$;
 select 'PostgreSQL durable mission lease/outbox integration: PASS' as result;
