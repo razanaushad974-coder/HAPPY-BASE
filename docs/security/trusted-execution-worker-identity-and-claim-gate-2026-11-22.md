@@ -110,3 +110,8 @@ The core workload identity contract has been hardened further:
 - Contract tests cover malformed runtime policies/claims, invalid clock, wrong worker principal, missing capability, and NOT_CONNECTED worker identity.
 
 This is a **core contract hardening**, not a cryptographic proof at the call site: TypeScript objects are structurally constructible, so only the server-only composition layer may pass the result returned by the real verifier. There is still no concrete Vercel/SPIFFE credential source, JWKS verifier, worker registry, replay store, authenticated claim route, or database worker-principal binding. A caller must never be able to submit a fabricated `WorkerIdentityResolution` through an HTTP request. Scheduler RPC grants remain revoked. CI for the latest commit must pass before this change is marked verified.
+
+
+### Dispatch-time identity freshness
+
+The dispatch contract now also validates the verified identity shape and checks its expiry against an injected clock immediately before the provider call. Expired credentials and invalid/unavailable clocks are rejected before side effects. Contract tests cover expired identity and invalid clock. This reduces stale-result reuse but does not replace a server-only verifier composition or database-side worker assertion; a token can still expire during a long provider call, so lease/fencing and outcome recording must remain authoritative.
