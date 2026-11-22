@@ -28,6 +28,8 @@ export interface JwksOidcVerifierConfig {
   /** Server-owned grants for this exact worker deployment, never read from the token. */
   capabilities: readonly WorkerCapability[];
   cacheTtlMs?: number;
+  /** Hard timeout for fetching and parsing the remote JWKS document. */
+  jwksFetchTimeoutMs?: number;
   now?: () => number;
 }
 
@@ -61,6 +63,8 @@ export class JwksOidcWorkerCredentialVerifier implements WorkerCredentialVerifie
         !this.config.expectedWorkloadClaims?.environment.trim() ||
         !Number.isSafeInteger(this.config.maxTokenLifetimeSeconds) ||
         this.config.maxTokenLifetimeSeconds < 1 || this.config.maxTokenLifetimeSeconds > 3600 ||
+        (this.config.jwksFetchTimeoutMs !== undefined &&
+          (!Number.isSafeInteger(this.config.jwksFetchTimeoutMs) || this.config.jwksFetchTimeoutMs < 1 || this.config.jwksFetchTimeoutMs > 30_000)) ||
         !Array.isArray(this.config.capabilities) || this.config.capabilities.length === 0 ||
         this.config.capabilities.some((capability) =>
           !["API", "BROWSER", "FILE", "DATABASE", "DEPLOY", "PUBLISH", "CONTROL", "VERIFY"].includes(capability)
@@ -142,15 +146,21 @@ export class JwksOidcWorkerCredentialVerifier implements WorkerCredentialVerifie
     if (!forceRefresh && this.cachedKeys && now < this.cacheExpiresAt) return this.cachedKeys;
     if (this.refreshInFlight) return this.refreshInFlight;
 
-    this.refreshInFlight = (async () => {
-      const response = await this.fetcher(this.config.jwksUri);
+    const controller = new AbortController();
+    const timeoutMs = this.config.jwksFetchTimeoutMs ?? 5_000;
+    this.refreshInFlight = withTimeout((async () => {
+      const response = await this.fetcher(this.config.jwksUri, controller.signal);
       if (!response.ok) throw new Error("Worker JWKS fetch failed: " + response.status);
       const body = await response.json();
       if (!body || typeof body !== "object" || !Array.isArray((body as { keys?: unknown }).keys)) {
         throw new Error("Worker JWKS response is malformed");
       }
+      const rawKeys = (body as { keys: unknown[] }).keys;
+      if (rawKeys.length === 0 || rawKeys.length > 64) {
+        throw new Error("Worker JWKS key count is outside the accepted bound");
+      }
       const next = new Map<string, JsonWebKey>();
-      for (const item of (body as { keys: unknown[] }).keys) {
+      for (const item of rawKeys) {
         if (!item || typeof item !== "object") continue;
         const key = item as JsonWebKey & { kid?: unknown; kty?: unknown; use?: unknown; alg?: unknown };
         if (
@@ -168,9 +178,9 @@ export class JwksOidcWorkerCredentialVerifier implements WorkerCredentialVerifie
       }
       if (next.size === 0) throw new Error("Worker JWKS contains no supported signing keys");
       this.cachedKeys = next;
-      this.cacheExpiresAt = now + Math.max(1_000, this.config.cacheTtlMs ?? 300_000);
+      this.cacheExpiresAt = now + Math.min(300_000, Math.max(1_000, this.config.cacheTtlMs ?? 300_000));
       return next;
-    })();
+    })(), timeoutMs, () => controller.abort());
 
     try {
       return await this.refreshInFlight;
@@ -194,4 +204,21 @@ function decodeJson(value: string): Record<string, unknown> | null {
 
 function isTimestamp(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout: () => void): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => {
+          onTimeout();
+          reject(new Error("Worker JWKS request timed out"));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
