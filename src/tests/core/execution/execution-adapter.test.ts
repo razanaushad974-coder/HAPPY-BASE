@@ -21,7 +21,7 @@ async function main(): Promise<void> {
     input: {
       specification: "HAPPY API",
     },
-    risk: "HIGH" as const,
+    risk: "LOW" as const,
     createdAt: new Date().toISOString(),
   };
 
