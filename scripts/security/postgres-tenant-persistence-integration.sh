@@ -577,7 +577,7 @@ begin
 end
 $request_idempotency$;
 -- A pending request is deliberately left unapproved for the enqueue denial test.
-perform public.create_authenticated_execution_request(
+select * from public.create_authenticated_execution_request(
   'request-scheduler-pending','task-scheduler-root','mission-scheduler',
   '10000000-0000-4000-8000-000000000001',
   '20000000-0000-4000-8000-000000000002',
@@ -711,6 +711,30 @@ begin
     raise exception 'already claimed outbox was returned twice';
   exception when sqlstate '55000' then
     if sqlerrm <> 'OUTBOX_ALREADY_CLAIMED_OR_REQUIRES_RECONCILIATION' then raise; end if;
+  end;
+  begin
+    perform public.happy_enqueue_mission_dispatch(
+      '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
+      'mission-scheduler','task-scheduler-root',v_claim.lease_id,'worker-a',v_claim.fencing_token,
+      'request-scheduler-pending','tenant-attempt-key-pending','API','POST',
+      'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      jsonb_set(v_payload,'{id}','"request-scheduler-pending"'::jsonb)
+    );
+    raise exception 'pending/unapproved request unexpectedly entered the outbox';
+  exception when insufficient_privilege then
+    if sqlerrm <> 'PERSISTED_APPROVED_EXECUTION_REQUEST_REQUIRED' then raise; end if;
+  end;
+  begin
+    perform public.happy_enqueue_mission_dispatch(
+      '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
+      'mission-scheduler','task-scheduler-root',v_claim.lease_id,'worker-a',v_claim.fencing_token,
+      'fabricated-request-id','fabricated-key','API','POST',
+      'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      jsonb_set(v_payload,'{id}','"fabricated-request-id"'::jsonb)
+    );
+    raise exception 'fabricated request ID unexpectedly entered the outbox';
+  exception when insufficient_privilege then
+    if sqlerrm <> 'PERSISTED_APPROVED_EXECUTION_REQUEST_REQUIRED' then raise; end if;
   end;
   begin
     perform public.happy_enqueue_mission_dispatch(
