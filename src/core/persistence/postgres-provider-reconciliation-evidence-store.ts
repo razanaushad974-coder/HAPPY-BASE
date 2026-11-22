@@ -11,6 +11,16 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 const MAX_OBSERVATION_BYTES = 16 * 1024;
 const MAX_IDENTIFIER_LENGTH = 512;
 
+export interface PersistedProviderReconciliationEvidence {
+  evidenceId: string;
+  outboxId: string;
+  idempotencyKey: string;
+  providerId: string;
+  observationStatus: "SUCCEEDED" | "FAILED" | "PROCESSING" | "NOT_FOUND" | "UNKNOWN";
+  observedAt: string;
+  observation: Record<string, string>;
+}
+
 /**
  * Authenticated PostgreSQL implementation of the append-only reconciliation
  * evidence port. It persists a bounded allow-listed summary, never arbitrary
@@ -25,6 +35,68 @@ export class PostgresProviderReconciliationEvidenceStore implements ProviderReco
     private readonly scope: CompleteScope,
     private readonly createEvidenceId: () => string = randomUUID,
   ) {}
+
+  /**
+   * Reads append-only observations only after the database re-binds the
+   * outbox to this authenticated tenant, mission, task, and execution request.
+   * No direct table SELECT privilege is required or granted.
+   */
+  async listForExecution(binding: {
+    outboxId: string;
+    missionId: string;
+    taskId: string;
+    executionRequestId: string;
+  }): Promise<PersistedProviderReconciliationEvidence[]> {
+    if (!binding || typeof binding !== "object" ||
+        typeof binding.outboxId !== "string" || !UUID_PATTERN.test(binding.outboxId) ||
+        typeof binding.missionId !== "string" || !binding.missionId.trim() || binding.missionId.length > MAX_IDENTIFIER_LENGTH ||
+        typeof binding.taskId !== "string" || !binding.taskId.trim() || binding.taskId.length > MAX_IDENTIFIER_LENGTH ||
+        typeof binding.executionRequestId !== "string" || !binding.executionRequestId.trim() || binding.executionRequestId.length > MAX_IDENTIFIER_LENGTH) {
+      throw new Error("RECONCILIATION_READ_BINDING_INVALID");
+    }
+    const { organizationId, workspaceId, userId } = this.scope;
+    if (typeof organizationId !== "string" || !UUID_PATTERN.test(organizationId) ||
+        typeof workspaceId !== "string" || !UUID_PATTERN.test(workspaceId) ||
+        typeof userId !== "string" || !UUID_PATTERN.test(userId)) {
+      throw new Error("RECONCILIATION_TENANT_SCOPE_INVALID");
+    }
+    return this.sessions.withSession(this.scope, async (client: PgQueryable) => {
+      const result = await client.query<{
+        evidence_id: string; outbox_id: string; idempotency_key: string;
+        provider_id: string; observation_status: string; observed_at: string | Date;
+        observation: unknown;
+      }>(
+        "select * from public.happy_list_dispatch_reconciliation_evidence($1::uuid,$2::uuid,$3::uuid,$4::text,$5::text,$6::text)",
+        [organizationId, workspaceId, binding.outboxId, binding.missionId, binding.taskId, binding.executionRequestId],
+      );
+      return result.rows.map((row) => {
+        const observation = typeof row.observation === "string"
+          ? JSON.parse(row.observation) as unknown
+          : row.observation;
+        if (!row || typeof row.evidence_id !== "string" || !UUID_PATTERN.test(row.evidence_id) ||
+            row.outbox_id !== binding.outboxId ||
+            typeof row.idempotency_key !== "string" || !row.idempotency_key.trim() ||
+            typeof row.provider_id !== "string" || !row.provider_id.trim() ||
+            !["SUCCEEDED", "FAILED", "PROCESSING", "NOT_FOUND", "UNKNOWN"].includes(row.observation_status) ||
+            !observation || typeof observation !== "object" || Array.isArray(observation)) {
+          throw new Error("RECONCILIATION_PERSISTED_EVIDENCE_INVALID");
+        }
+        const observedAt = row.observed_at instanceof Date ? row.observed_at.toISOString() : new Date(row.observed_at).toISOString();
+        if (!Number.isFinite(Date.parse(observedAt))) throw new Error("RECONCILIATION_PERSISTED_EVIDENCE_INVALID");
+        const safeObservation = toSafeObservation({ observation } as ProviderReconciliationEvidence);
+        if (safeObservation.status !== row.observation_status) throw new Error("RECONCILIATION_PERSISTED_EVIDENCE_INVALID");
+        return {
+          evidenceId: row.evidence_id,
+          outboxId: row.outbox_id,
+          idempotencyKey: row.idempotency_key,
+          providerId: row.provider_id,
+          observationStatus: row.observation_status as PersistedProviderReconciliationEvidence["observationStatus"],
+          observedAt,
+          observation: safeObservation,
+        };
+      });
+    });
+  }
 
   async append(evidence: ProviderReconciliationEvidence): Promise<void> {
     if (!evidence || typeof evidence !== "object") {
