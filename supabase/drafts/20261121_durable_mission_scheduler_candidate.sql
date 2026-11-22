@@ -275,9 +275,11 @@ declare
   v_lease public.happy_mission_task_leases%rowtype;
   v_request private.execution_requests%rowtype;
   v_request_envelope jsonb;
-  v_request_digest text;
+  v_input_digest text;
+  v_envelope_digest text;
   v_expected_payload jsonb;
   v_computed_payload_digest text;
+  v_created_at_iso text;
   v_outbox public.happy_execution_dispatch_outbox%rowtype;
 begin
   v_actor := auth.uid();
@@ -330,47 +332,60 @@ begin
      or v_request.status <> 'READY'
      or v_request.approval_status <> 'APPROVED'
      or v_request.requires_approval is distinct from true
-     or v_request.approver_user_id is null
-     or v_request.approver_user_id in (v_request.requester_user_id,v_request.executor_user_id)
+     or v_request.required_approval_role <> 'FOUNDER'
+     or v_request.decided_by is null
+     or v_request.decided_by in (v_request.requester_user_id,v_request.executor_user_id)
      or v_request.decided_at is null
      or v_request.capability is null
      or v_request.action is null
      or v_request.input is null
-     or v_request.request_digest is null
-     or v_request.risk is null
-     or v_request.created_at_iso is null then
+     or v_request.input_digest is null
+     or v_request.envelope_digest is null
+     or v_request.risk <> 'HIGH'
+     or v_request.idempotency_key is null
+     or v_request.created_at is null then
     raise exception 'PERSISTED_APPROVED_EXECUTION_REQUEST_REQUIRED' using errcode = '42501';
   end if;
 
+  -- Recompute both persisted digests from the immutable columns. The
+  -- envelope digest intentionally records PENDING approval as immutable intent;
+  -- approval itself is separately evidenced by decided_by/decided_at/status.
+  v_input_digest := encode(
+    extensions.digest(convert_to(v_request.input::text,'UTF8'),'sha256'),
+    'hex'
+  );
   v_request_envelope := jsonb_build_object(
     'requestId',v_request.request_id,
     'taskId',v_request.task_id,
     'missionId',v_request.mission_id,
-    'organizationId',v_request.organization_id,
-    'workspaceId',v_request.workspace_id,
     'requesterUserId',v_request.requester_user_id,
     'executorUserId',v_request.executor_user_id,
+    'organizationId',v_request.organization_id,
+    'workspaceId',v_request.workspace_id,
     'capability',v_request.capability,
     'action',v_request.action,
     'input',v_request.input,
     'targetReference',v_request.target_reference,
-    'idempotencyKey',v_request.idempotency_key,
-    'risk',v_request.risk,
     'requiresApproval',v_request.requires_approval,
-    'createdAt',v_request.created_at_iso
+    'risk',v_request.risk,
+    'approvalStatus','PENDING',
+    'requiredApprovalRole',v_request.required_approval_role,
+    'idempotencyKey',v_request.idempotency_key
   );
-  v_request_digest := 'sha256:' || encode(
-    extensions.digest(
-      convert_to(private.happy_canonical_jsonb(v_request_envelope),'UTF8'),
-      'sha256'
-    ),
+  v_envelope_digest := encode(
+    extensions.digest(convert_to(v_request_envelope::text,'UTF8'),'sha256'),
     'hex'
   );
 
-  if v_request_digest <> v_request.request_digest then
+  if v_input_digest <> v_request.input_digest
+     or v_envelope_digest <> v_request.envelope_digest then
     raise exception 'PERSISTED_EXECUTION_REQUEST_DIGEST_MISMATCH' using errcode = '22000';
   end if;
 
+  v_created_at_iso := to_char(
+    v_request.created_at at time zone 'UTC',
+    'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+  );
   v_expected_payload := jsonb_build_object(
     'id',v_request.request_id,
     'taskId',v_request.task_id,
@@ -382,7 +397,7 @@ begin
     'requiresApproval',true,
     'approved',true,
     'risk',v_request.risk,
-    'createdAt',v_request.created_at_iso
+    'createdAt',v_created_at_iso
   );
 
   v_computed_payload_digest := 'sha256:' || encode(
