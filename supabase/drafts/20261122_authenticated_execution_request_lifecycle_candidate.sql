@@ -282,6 +282,35 @@ begin
     raise exception 'TENANT_MEMBERSHIP_REQUIRED' using errcode = '42501';
   end if;
 
+  -- Idempotent retries return the original persisted row and timestamp.
+  -- Never recompute a new createdAt/digest for an already accepted key.
+  select r.* into v_existing
+    from private.execution_requests r
+   where r.organization_id = p_organization_id
+     and r.workspace_id = p_workspace_id
+     and r.requester_user_id = v_actor
+     and r.idempotency_key = p_idempotency_key
+   for update;
+  if found then
+    if v_existing.request_id <> p_request_id
+       or v_existing.task_id <> p_task_id
+       or v_existing.mission_id <> p_mission_id
+       or v_existing.capability <> p_capability
+       or v_existing.action <> p_action
+       or v_existing.input <> p_input
+       or v_existing.target_reference is distinct from p_target_reference then
+      raise exception 'EXECUTION_REQUEST_IDEMPOTENCY_MISMATCH' using errcode = '23505';
+    end if;
+    return query
+    select r.request_id,r.task_id,r.mission_id,r.requester_user_id,r.executor_user_id,
+      r.organization_id,r.workspace_id,r.capability,r.action,r.input,r.target_reference,
+      r.idempotency_key,r.request_digest,r.risk,r.requires_approval,r.approval_status,
+      r.status,r.created_at_iso
+    from private.execution_requests r
+    where r.request_id = v_existing.request_id;
+    return;
+  end if;
+
   select r.data into v_mission
     from public.happy_tenant_records r
    where r.organization_id = p_organization_id
