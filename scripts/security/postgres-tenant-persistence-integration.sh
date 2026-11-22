@@ -825,6 +825,10 @@ declare
   v_reclaimed record;
   v_reclaim_outbox public.happy_execution_dispatch_outbox%rowtype;
   v_ambiguous public.happy_execution_dispatch_outbox%rowtype;
+  v_payload jsonb;
+  v_payload_digest text;
+  v_dispatch_idempotency_key text;
+  v_request_created_at text;
 begin
   select * into v_reclaimed from public.happy_claim_mission_task(
     '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
