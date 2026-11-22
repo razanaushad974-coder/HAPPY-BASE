@@ -624,6 +624,7 @@ declare
   v_heartbeat timestamptz;
   v_payload jsonb;
   v_payload_digest text;
+  v_dispatch_idempotency_key text;
   v_request_created_at text;
 begin
   begin
@@ -654,10 +655,19 @@ begin
   v_payload_digest := 'sha256:' || encode(
     extensions.digest(convert_to(private.happy_canonical_jsonb(v_payload),'UTF8'),'sha256'),'hex'
   );
+  v_dispatch_idempotency_key := 'happy-dispatch:v1:' || encode(
+    extensions.digest(convert_to(concat_ws(chr(31),
+      '10000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000002',
+      '30000000-0000-4000-8000-000000000003',
+      'mission-scheduler','task-scheduler-root','1',
+      'request-scheduler-1','API','POST'
+    ),'UTF8'),'sha256'),'hex'
+  );
   v_outbox := public.happy_enqueue_mission_dispatch(
     '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
     'mission-scheduler','task-scheduler-root',v_claim.lease_id,'worker-a',v_claim.fencing_token,
-    'request-scheduler-1','tenant-attempt-key-1','API','POST',
+    'request-scheduler-1',v_dispatch_idempotency_key,'API','POST',
     v_payload_digest,v_payload
   );
   v_duplicate := public.happy_enqueue_mission_dispatch(
@@ -840,10 +850,19 @@ begin
   v_payload_digest := 'sha256:' || encode(
     extensions.digest(convert_to(private.happy_canonical_jsonb(v_payload),'UTF8'),'sha256'),'hex'
   );
+  v_dispatch_idempotency_key := 'happy-dispatch:v1:' || encode(
+    extensions.digest(convert_to(concat_ws(chr(31),
+      '10000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000002',
+      '30000000-0000-4000-8000-000000000003',
+      'mission-scheduler','task-scheduler-reclaim','2',
+      'request-scheduler-2','API','POST'
+    ),'UTF8'),'sha256'),'hex'
+  );
   v_reclaim_outbox := public.happy_enqueue_mission_dispatch(
     '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
     'mission-scheduler','task-scheduler-reclaim',v_reclaimed.lease_id,'worker-b',v_reclaimed.fencing_token,
-    'request-scheduler-2','tenant-attempt-key-2','API','POST',
+    'request-scheduler-2',v_dispatch_idempotency_key,'API','POST',
     v_payload_digest,v_payload
   );
   perform public.happy_claim_dispatch_outbox(
