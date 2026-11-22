@@ -156,3 +156,11 @@ Added `src/core/mission/jwks-oidc-worker-credential-verifier.ts` and a dedicated
 ### Remaining integration boundary
 
 This is now a concrete cryptographic verifier, but it is not yet a deployed Vercel worker identity. No platform-controlled credential source has been wired, no Vercel request-context header trust assumption has been made, no dedicated worker project has been provisioned, and no runtime route invokes this verifier. A server-only composition must supply the real platform credential and exact issuer/audience/JWKS/subject/environment/capability configuration. Until that exists and is tested against the hosting platform, worker identity remains NOT_CONNECTED and all worker RPC grants stay revoked.
+
+
+### Verifier hardening follow-up
+
+- Rejects JOSE critical extensions and token-supplied remote key URLs (`jku`/`x5u`); only the server-configured JWKS URI is consulted.
+- Rejects non-RS256 algorithms, weak RSA moduli below 2048 bits, malformed key operations, duplicate JWKS key IDs, wrong OIDC authorized party, and unsupported signing keys.
+- Uses server-owned environment/capability grants; signed subject is still checked against the exact allowlist in the outer identity provider.
+- These changes are included in the security harness. GitHub's commit-workflow lookup currently reports no workflow run for the latest commits; Vercel Preview status is failing because the connected Hobby team's daily build-rate limit was reached. Therefore this verifier addition is **not yet CI/Preview verified**.
