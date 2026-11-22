@@ -15,10 +15,11 @@ The following code-level pieces now exist:
 ## Runtime composition boundary
 
 - `src/core/mission/worker-runtime-composition.ts` is a fail-closed composition seam for the trusted identity resolver, live worker-principal registry, and fixed-operation database broker.
-- It re-resolves workload identity and checks the authoritative principal registry for each requested broker operation; missing dependencies return `NOT_CONNECTED`, while invalid identity, registry outage, disabled/revoked principal, or capability mismatch return `DENIED`.
+- `MissionOrchestrator.prepareWorkerRuntimeOperation` exposes the explicit seam; the default orchestrator remains `NOT_CONNECTED`, and existing in-memory mission/task creation is preserved.
+- Composition returns a guarded broker facade, never the raw broker. Each of the seven fixed broker methods re-resolves workload identity and checks the authoritative principal registry immediately before invoking the underlying method. Disabled/revoked principals, registry outages, identity failures, and capability downgrades fail closed.
 - `COMPOSITION_AVAILABLE` is deliberately not a connected/live status. It exposes `liveDatabaseSession: "NOT_VERIFIED"`; the actual dedicated PostgreSQL LOGIN session must still be proven by the broker's session provider.
-- `src/tests/core/mission/worker-runtime-composition.test.ts` covers missing dependencies, successful composition without claiming a live DB session, disabled principal, capability denial, registry outage, forged identity rejection, and expiry.
-- The composition seam is not yet wired into `MissionOrchestrator` or a deployed worker process. Existing in-memory orchestration is not silently replaced.
+- `src/tests/core/mission/worker-runtime-composition.test.ts` covers missing dependencies, successful composition without claiming a live DB session, disabled principal, capability denial, registry outage, forged identity rejection, expiry, and revocation between composition and a later broker call.
+- This is a guarded authorization seam, not yet durable worker dispatch or a deployed worker process. Existing in-memory orchestration is not silently replaced.
 
 ## Critical authorization properties
 
