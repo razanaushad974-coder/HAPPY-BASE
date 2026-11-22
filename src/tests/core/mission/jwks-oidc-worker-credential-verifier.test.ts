@@ -52,6 +52,8 @@ async function main() {
     "wrong issuer accepted");
   assert(await verifier.verifyCredential(token({ ...validClaims, aud: "other" })) === null,
     "wrong audience accepted");
+  assert(await verifier.verifyCredential(token({ ...validClaims, azp: "other-client" })) === null,
+    "wrong authorized party accepted");
   assert(await verifier.verifyCredential(token({ ...validClaims, exp: now - 100 })) === null,
     "expired credential accepted");
   assert(await verifier.verifyCredential(token({ ...validClaims, nbf: now + 100 })) === null,
@@ -70,6 +72,12 @@ async function main() {
   assert(await rotated.verifyCredential(token(validClaims, { alg: "RS256", kid: "rotated" })) !== null,
     "rotated JWKS key was not loaded");
   assert(rotationFetches === 1, "unknown kid should trigger JWKS refresh");
+
+  const malformedKeyOps = new JwksOidcWorkerCredentialVerifier(config, async () => ({
+    ok: true, status: 200, async json() { return { keys: [{ ...jwk, kid: "key-1", use: "sig", alg: "RS256", key_ops: "verify" }] }; },
+  }));
+  assert(await malformedKeyOps.verifyCredential(token(validClaims)) === null,
+    "malformed JWKS key_ops was accepted");
 
   const unavailable = new JwksOidcWorkerCredentialVerifier(config, async () => ({
     ok: false, status: 503, async json() { return {}; },
