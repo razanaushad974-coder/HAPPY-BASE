@@ -58,6 +58,9 @@ export class MissionEngine {
   private readonly graphEngine = new TaskGraphEngine();
 
   createMission(plan: ExecutionPlan): Mission {
+    if (!plan || typeof plan !== "object" || !Array.isArray(plan.steps)) {
+      throw new Error("Execution plan must be a valid object with a steps array.");
+    }
     if (
       plan.status !== "READY" &&
       plan.status !== "WAITING_APPROVAL"
@@ -67,19 +70,26 @@ export class MissionEngine {
       );
     }
 
-    if (!plan.goal.trim() || plan.steps.length === 0) {
+    if (typeof plan.goal !== "string" || !plan.goal.trim() || plan.steps.length === 0) {
       throw new Error("Execution plan must have a non-empty goal and at least one step.");
     }
 
+    const stepIds = new Set<string>();
     const stepOrders = new Set<number>();
     const approvalRequiredActions = new Set([
       "POST", "PUT", "PATCH", "DELETE", "DEPLOY", "PUBLISH", "CONTROL",
       "DB_INSERT", "DB_UPDATE", "DB_DELETE", "DB_TRANSACTION",
     ]);
     for (const step of plan.steps) {
-      if (!step.id.trim() || !step.title.trim()) {
+      if (!step || typeof step !== "object" ||
+          typeof step.id !== "string" || !step.id.trim() ||
+          typeof step.title !== "string" || !step.title.trim()) {
         throw new Error("Every mission plan step must have a non-empty ID and title.");
       }
+      if (stepIds.has(step.id)) {
+        throw new Error(`Mission plan contains duplicate step ID: ${step.id}.`);
+      }
+      stepIds.add(step.id);
       if (!Number.isInteger(step.order) || step.order < 1 || stepOrders.has(step.order)) {
         throw new Error("Mission plan step order must contain unique positive integers.");
       }
