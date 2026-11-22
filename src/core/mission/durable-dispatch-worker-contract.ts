@@ -41,6 +41,32 @@ export type DispatchWorkerResult =
   | { status: "RECONCILIATION_REQUIRED"; reason: string }
   | { status: "OUTCOME_PERSISTENCE_FAILED"; reason: string };
 
+export interface TrustedWorkerIdentityResolver {
+  /** Must perform a fresh server-side credential read and cryptographic verification. */
+  getVerifiedWorkerIdentity(): Promise<WorkerIdentityResolution>;
+}
+
+/**
+ * Server-side composition entry point. It resolves workload identity afresh
+ * for this claimed item and never accepts identity claims from the dispatch
+ * payload or a human-session request.
+ */
+export async function dispatchWithTrustedWorkerIdentity(
+  identityProvider: TrustedWorkerIdentityResolver,
+  dispatch: ClaimedDispatch,
+  provider: IdempotentDispatchProvider,
+  recorder: DispatchOutcomeRecorder,
+  now: () => number = () => Date.now(),
+): Promise<DispatchWorkerResult> {
+  let identity: WorkerIdentityResolution;
+  try {
+    identity = await identityProvider.getVerifiedWorkerIdentity();
+  } catch {
+    return { status: "RECONCILIATION_REQUIRED", reason: "TRUSTED_WORKER_IDENTITY_UNAVAILABLE" };
+  }
+  return dispatchClaimedOutboxItem(dispatch, identity, provider, recorder, now);
+}
+
 /**
  * Processes an already-claimed outbox item exactly once from this worker's
  * perspective. The durable claim and outcome recorder must be backed by the
