@@ -791,6 +791,8 @@ as $read_evidence$
 declare
   v_actor uuid;
   v_outbox public.happy_execution_dispatch_outbox%rowtype;
+  v_mission jsonb;
+  v_task jsonb;
 begin
   v_actor := auth.uid();
   if v_actor is null or p_outbox_id is null
@@ -803,6 +805,32 @@ begin
     raise exception 'TENANT_SCOPE_DENIED' using errcode = '42501';
   end if;
 
+  -- Re-bind the requested mission/task to the authenticated tenant's current
+  -- persisted snapshot; do not trust caller-supplied IDs or outbox metadata alone.
+  select r.data into v_mission
+    from public.happy_tenant_records r
+   where r.organization_id = p_organization_id
+     and r.workspace_id = p_workspace_id
+     and r.user_id = v_actor
+     and r.entity_type = 'MISSION'
+     and r.record_id = p_mission_id;
+  if not found
+     or jsonb_typeof(v_mission->'taskIds') is distinct from 'array'
+     or not ((v_mission->'taskIds') ? p_task_id) then
+    raise exception 'RECONCILIATION_MISSION_TASK_BINDING_MISMATCH' using errcode = '55000';
+  end if;
+
+  select r.data into v_task
+    from public.happy_tenant_records r
+   where r.organization_id = p_organization_id
+     and r.workspace_id = p_workspace_id
+     and r.user_id = v_actor
+     and r.entity_type = 'TASK'
+     and r.record_id = p_task_id;
+  if not found or v_task->>'missionId' is distinct from p_mission_id then
+    raise exception 'RECONCILIATION_MISSION_TASK_BINDING_MISMATCH' using errcode = '55000';
+  end if;
+
   select * into v_outbox
     from public.happy_execution_dispatch_outbox o
    where o.organization_id = p_organization_id
@@ -813,6 +841,9 @@ begin
      or v_outbox.mission_id <> p_mission_id
      or v_outbox.task_id <> p_task_id
      or v_outbox.execution_request_id <> p_execution_request_id
+     or v_outbox.payload->>'id' is distinct from p_execution_request_id
+     or v_outbox.payload->>'missionId' is distinct from p_mission_id
+     or v_outbox.payload->>'taskId' is distinct from p_task_id
      or v_outbox.status not in ('AMBIGUOUS','RECONCILIATION_REQUIRED') then
     raise exception 'RECONCILIATION_READ_TARGET_BINDING_MISMATCH' using errcode = '55000';
   end if;
