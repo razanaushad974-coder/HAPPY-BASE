@@ -12,9 +12,10 @@ SCHEMA_FILE="$ROOT_DIR/supabase/drafts/20261119_async_tenant_persistence_schema_
 SCHEDULER_SCHEMA_FILE="$ROOT_DIR/supabase/drafts/20261121_durable_mission_scheduler_candidate.sql"
 TENANT_CONTEXT_RPC_FILE="$ROOT_DIR/supabase/drafts/20261121_authenticated_tenant_context_rpc_candidate.sql"
 EXECUTION_REQUEST_RPC_FILE="$ROOT_DIR/supabase/drafts/20261121_authenticated_execution_request_rpc_candidate.sql"
+EXECUTION_REQUEST_LIFECYCLE_FILE="$ROOT_DIR/supabase/drafts/20261122_authenticated_execution_request_lifecycle_candidate.sql"
 RACE_SCRIPT="$ROOT_DIR/scripts/security/postgres-tenant-cas-concurrency.sh"
 RECONCILIATION_RACE_SCRIPT="$ROOT_DIR/scripts/security/postgres-reconciliation-evidence-concurrency.sh"
-for required_file in "$SCHEMA_FILE" "$SCHEDULER_SCHEMA_FILE" "$TENANT_CONTEXT_RPC_FILE" "$EXECUTION_REQUEST_RPC_FILE" "$RACE_SCRIPT" "$RECONCILIATION_RACE_SCRIPT"; do
+for required_file in "$SCHEMA_FILE" "$SCHEDULER_SCHEMA_FILE" "$TENANT_CONTEXT_RPC_FILE" "$EXECUTION_REQUEST_RPC_FILE" "$EXECUTION_REQUEST_LIFECYCLE_FILE" "$RACE_SCRIPT" "$RECONCILIATION_RACE_SCRIPT"; do
   if [[ ! -f "$required_file" ]]; then
     echo "Required tenant persistence test file not found: $required_file" >&2
     exit 1
@@ -46,6 +47,8 @@ $roles$;
 
 create schema if not exists auth;
 create schema if not exists private;
+create schema if not exists extensions;
+create extension if not exists pgcrypto with schema extensions;
 grant usage on schema auth to authenticated, anon, service_role;
 
 create table auth.users (id uuid primary key);
@@ -111,7 +114,7 @@ insert into private.organization_memberships values
   ('10000000-0000-4000-8000-000000000001',
    '30000000-0000-4000-8000-000000000003', 'ACTIVE', 'MEMBER'),
   ('10000000-0000-4000-8000-000000000001',
-   '40000000-0000-4000-8000-000000000004', 'ACTIVE', 'MEMBER'),
+   '40000000-0000-4000-8000-000000000004', 'ACTIVE', 'FOUNDER'),
   ('10000000-0000-4000-8000-000000000001',
    '50000000-0000-4000-8000-000000000005', 'ACTIVE', 'MEMBER');
 insert into private.workspace_memberships values
@@ -157,6 +160,7 @@ SQL
 "${psql_base[@]}" -f "$SCHEDULER_SCHEMA_FILE"
 "${psql_base[@]}" -f "$TENANT_CONTEXT_RPC_FILE"
 "${psql_base[@]}" -f "$EXECUTION_REQUEST_RPC_FILE"
+"${psql_base[@]}" -f "$EXECUTION_REQUEST_LIFECYCLE_FILE"
 
 # Exercise the SECURITY DEFINER RPC under a deliberately narrow, non-login
 # function owner instead of silently relying on the migration/superuser owner.
@@ -514,6 +518,47 @@ select * from public.happy_create_tenant_record(
   'TASK', 'task-scheduler-reclaim',
   '{"missionId":"mission-scheduler","status":"READY","dependencyIds":[]}'
 );
+
+-- Create canonical execution requests as the authenticated requester, then
+-- approve them as a distinct persisted FOUNDER. The worker scheduler RPCs
+-- remain revoked; the state-machine tests below run only as the DB owner.
+create temp table happy_test_scheduler_requests (
+  request_id text primary key,
+  created_at_iso text not null
+) on commit preserve rows;
+
+insert into happy_test_scheduler_requests
+select request_id, created_at_iso
+  from public.create_authenticated_execution_request(
+    'request-scheduler-1','task-scheduler-root','mission-scheduler',
+    '10000000-0000-4000-8000-000000000001',
+    '20000000-0000-4000-8000-000000000002',
+    'API','POST','{"value":1}'::jsonb,null,
+    'tenant-attempt-key-1'
+  );
+insert into happy_test_scheduler_requests
+select request_id, created_at_iso
+  from public.create_authenticated_execution_request(
+    'request-scheduler-2','task-scheduler-reclaim','mission-scheduler',
+    '10000000-0000-4000-8000-000000000001',
+    '20000000-0000-4000-8000-000000000002',
+    'API','POST','{"value":2}'::jsonb,null,
+    'tenant-attempt-key-2'
+  );
+reset role;
+set role authenticated;
+select set_config('request.jwt.claim.sub',
+  '40000000-0000-4000-8000-000000000004', false);
+select public.decide_authenticated_execution_request(
+  'request-scheduler-1','APPROVED','test founder approval'
+);
+select public.decide_authenticated_execution_request(
+  'request-scheduler-2','APPROVED','test founder approval'
+);
+reset role;
+select set_config('request.jwt.claim.sub',
+  '30000000-0000-4000-8000-000000000003', false);
+
 -- Scheduler RPC EXECUTE is intentionally revoked from every application
 -- role until a server-verified workload identity exists. Run the SQL state
 -- machine assertions as the isolated disposable database owner, retaining
