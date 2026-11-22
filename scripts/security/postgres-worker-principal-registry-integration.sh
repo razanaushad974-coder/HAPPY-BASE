@@ -249,6 +249,30 @@ $worker_identity$;
 
 reset session authorization;
 
+update private.workspace_memberships
+   set status = 'REVOKED'
+ where organization_id = '10000000-0000-4000-8000-000000000001'
+   and workspace_id = '20000000-0000-4000-8000-000000000002'
+   and user_id = '30000000-0000-4000-8000-000000000003';
+
+set session authorization happy_worker_dispatch;
+do $revoked_membership$
+begin
+  begin
+    perform private.happy_require_worker_tenant_scope(
+      '60000000-0000-4000-8000-000000000006',
+      '10000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000002',
+      '30000000-0000-4000-8000-000000000003',
+      'CONTROL'
+    );
+    raise exception 'revoked workspace membership unexpectedly authorized worker scope';
+  exception when insufficient_privilege then null;
+  end;
+end
+$revoked_membership$;
+reset session authorization;
+
 -- A human/application DB role cannot resolve the worker principal, even if it
 -- attempts to use the same function. The session_user is the authority.
 set role authenticated;
