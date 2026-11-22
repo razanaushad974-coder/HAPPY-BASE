@@ -82,24 +82,30 @@ values
 on conflict do nothing;
 insert into private.organizations(organization_id,status)
 values ('10000000-0000-4000-8000-000000000001','ACTIVE')
-on conflict do nothing;
+on conflict (organization_id) do update set status = excluded.status;
 insert into private.workspaces(workspace_id,organization_id,status)
 values (
   '20000000-0000-4000-8000-000000000002',
   '10000000-0000-4000-8000-000000000001',
   'ACTIVE'
 )
-on conflict do nothing;
+on conflict (workspace_id) do update set
+  organization_id = excluded.organization_id,
+  status = excluded.status;
 insert into private.organization_memberships(organization_id,user_id,status,role)
 values
   ('10000000-0000-4000-8000-000000000001','30000000-0000-4000-8000-000000000003','ACTIVE','MEMBER'),
   ('10000000-0000-4000-8000-000000000001','40000000-0000-4000-8000-000000000004','ACTIVE','MEMBER')
-on conflict do nothing;
+on conflict (organization_id, user_id) do update set
+  status = excluded.status,
+  role = excluded.role;
 insert into private.workspace_memberships(organization_id,workspace_id,user_id,status,role)
 values
   ('10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002','30000000-0000-4000-8000-000000000003','ACTIVE','MEMBER'),
   ('10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002','40000000-0000-4000-8000-000000000004','ACTIVE','MEMBER')
-on conflict do nothing;
+on conflict (organization_id, workspace_id, user_id) do update set
+  status = excluded.status,
+  role = excluded.role;
 SQL
 
 "${psql[@]}" -f "$REGISTRY_SQL"
