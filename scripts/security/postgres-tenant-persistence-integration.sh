@@ -545,10 +545,61 @@ select request_id, created_at_iso
     'API','POST','{"value":2}'::jsonb,null,
     'tenant-attempt-key-2'
   );
+-- Exact idempotency retry must return the original timestamp/digest.
+do $request_idempotency$
+declare
+  v_first record;
+  v_second record;
+begin
+  select * into v_first from happy_test_scheduler_requests
+   where request_id = 'request-scheduler-1';
+  select * into v_second from public.create_authenticated_execution_request(
+    'request-scheduler-1','task-scheduler-root','mission-scheduler',
+    '10000000-0000-4000-8000-000000000001',
+    '20000000-0000-4000-8000-000000000002',
+    'API','POST','{"value":1}'::jsonb,null,
+    'tenant-attempt-key-1'
+  );
+  if v_second.created_at_iso <> v_first.created_at_iso then
+    raise exception 'idempotent request retry replaced original createdAt';
+  end if;
+  begin
+    perform * from public.create_authenticated_execution_request(
+      'request-scheduler-1','task-scheduler-root','mission-scheduler',
+      '10000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000002',
+      'API','DELETE','{"value":1}'::jsonb,null,
+      'tenant-attempt-key-1'
+    );
+    raise exception 'idempotency key reuse with changed action unexpectedly succeeded';
+  exception when unique_violation then null;
+  end;
+end
+$request_idempotency$;
+-- A pending request is deliberately left unapproved for the enqueue denial test.
+perform public.create_authenticated_execution_request(
+  'request-scheduler-pending','task-scheduler-root','mission-scheduler',
+  '10000000-0000-4000-8000-000000000001',
+  '20000000-0000-4000-8000-000000000002',
+  'API','POST','{"value":9}'::jsonb,null,
+  'tenant-attempt-key-pending'
+);
 reset role;
 set role authenticated;
 select set_config('request.jwt.claim.sub',
   '40000000-0000-4000-8000-000000000004', false);
+do $self_approval$
+begin
+  begin
+    perform public.decide_authenticated_execution_request(
+      'request-scheduler-1','APPROVED','requester cannot approve own request'
+    );
+    raise exception 'requester self-approval unexpectedly succeeded';
+  exception when insufficient_privilege then
+    if sqlerrm <> 'SELF_APPROVAL_FORBIDDEN' then raise; end if;
+  end;
+end
+$self_approval$;
 select public.decide_authenticated_execution_request(
   'request-scheduler-1','APPROVED','test founder approval'
 );
