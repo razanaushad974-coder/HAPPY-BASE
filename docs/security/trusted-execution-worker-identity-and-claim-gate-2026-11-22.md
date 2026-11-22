@@ -97,3 +97,16 @@ The new `TrustedWorkerIdentityProvider` is intentionally an injected boundary, n
 ### What this does not do
 
 No concrete Vercel/SPIFFE/OIDC credential source, cryptographic JWT verifier, worker registry, token revocation store, request route, database claim binding, or workload-to-tenant authorization is wired. The new contract is not production worker authentication. A platform integration must be selected and independently verified before any claim/dispatch grants are restored. The scheduler RPCs remain fully revoked for authenticated users and the SQL remains design-only.
+
+
+## Fail-closed worker identity and dispatch binding hardening — 2026-11-22
+
+The core workload identity contract has been hardened further:
+
+- Runtime policy access is inside the fail-closed boundary. Null/malformed policy objects, non-string issuer/audience/environment, malformed subject/capability allowlists, unsupported capabilities, invalid lifetime/skew, and invalid clock values return DENIED rather than throwing.
+- Verified claim shape is checked before use. Malformed audience/capability arrays, non-string issuer/environment, malformed subject/token ID, invalid timestamps, duplicate capabilities, and unapproved capabilities return DENIED.
+- The dispatch contract now requires a `WorkerIdentityResolution` alongside the claimed dispatch. Before any provider call it requires status VERIFIED, exact identity principal = claimed ownerId, and an explicit capability grant matching the request.
+- Missing identity, wrong principal, missing capability, malformed claimed dispatch, and invalid request bindings return RECONCILIATION_REQUIRED without calling the external provider.
+- Contract tests cover malformed runtime policies/claims, invalid clock, wrong worker principal, missing capability, and NOT_CONNECTED worker identity.
+
+This is a **core contract hardening**, not a cryptographic proof at the call site: TypeScript objects are structurally constructible, so only the server-only composition layer may pass the result returned by the real verifier. There is still no concrete Vercel/SPIFFE credential source, JWKS verifier, worker registry, replay store, authenticated claim route, or database worker-principal binding. A caller must never be able to submit a fabricated `WorkerIdentityResolution` through an HTTP request. Scheduler RPC grants remain revoked. CI for the latest commit must pass before this change is marked verified.
