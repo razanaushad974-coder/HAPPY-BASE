@@ -43,6 +43,10 @@ export type ReconciliationResult =
   | { status: "EVIDENCE_PERSISTENCE_FAILED"; decision: ProviderReconciliationDecision }
   | { status: "RECONCILIATION_REQUIRED"; reason: string };
 
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
 /**
  * Performs a read-only provider status lookup and appends its observation.
  * It never dispatches, retries, changes task state, or overwrites the first
@@ -56,11 +60,17 @@ export async function reconcileProviderDispatch(
   observedAt = new Date().toISOString(),
 ): Promise<ReconciliationResult> {
   if (
-    !target.outboxId.trim() ||
-    !target.idempotencyKey.trim() ||
-    !target.providerId.trim() ||
-    !provider.providerId?.trim() ||
+    !target || typeof target !== "object" ||
+    !isNonEmptyString(target.outboxId) ||
+    !isNonEmptyString(target.idempotencyKey) ||
+    !isNonEmptyString(target.providerId) ||
+    !provider || typeof provider !== "object" ||
+    !isNonEmptyString(provider.providerId) ||
     target.providerId !== provider.providerId ||
+    typeof provider.lookupByIdempotencyKey !== "function" ||
+    !evidenceStore || typeof evidenceStore !== "object" ||
+    typeof evidenceStore.append !== "function" ||
+    !isNonEmptyString(observedAt) ||
     !Number.isFinite(Date.parse(observedAt)) ||
     (target.originalOutcome !== "AMBIGUOUS" &&
       target.originalOutcome !== "RECONCILIATION_REQUIRED")
@@ -85,13 +95,15 @@ export async function reconcileProviderDispatch(
   let decision: ProviderReconciliationDecision;
   switch (observation.status) {
     case "SUCCEEDED":
-      if (typeof observation.providerRequestId !== "string" || !observation.providerRequestId.trim()) {
+      if (!isNonEmptyString(observation.providerRequestId)) {
         return { status: "RECONCILIATION_REQUIRED", reason: "PROVIDER_SUCCESS_MISSING_REQUEST_ID" };
       }
       decision = { status: "VERIFICATION_REQUIRED", providerRequestId: observation.providerRequestId, result: observation.result };
       break;
     case "FAILED":
-      if (typeof observation.providerRequestId !== "string" || !observation.providerRequestId.trim()) {
+      if (!isNonEmptyString(observation.providerRequestId) ||
+          (observation.code !== undefined && typeof observation.code !== "string") ||
+          (observation.message !== undefined && typeof observation.message !== "string")) {
         return { status: "RECONCILIATION_REQUIRED", reason: "PROVIDER_FAILURE_MISSING_REQUEST_ID" };
       }
       decision = {
@@ -102,7 +114,7 @@ export async function reconcileProviderDispatch(
       };
       break;
     case "PROCESSING":
-      if (typeof observation.providerRequestId !== "string" || !observation.providerRequestId.trim()) {
+      if (!isNonEmptyString(observation.providerRequestId)) {
         return { status: "RECONCILIATION_REQUIRED", reason: "PROVIDER_PROCESSING_MISSING_REQUEST_ID" };
       }
       decision = { status: "PROVIDER_STILL_PROCESSING", providerRequestId: observation.providerRequestId };
@@ -111,7 +123,10 @@ export async function reconcileProviderDispatch(
       decision = { status: "NO_PROVIDER_RECORD_REVIEW_REQUIRED" };
       break;
     case "UNKNOWN":
-      decision = { status: "RECONCILIATION_REQUIRED", reason: typeof observation.reason === "string" && observation.reason.trim() ? observation.reason : "PROVIDER_STATUS_UNKNOWN" };
+      if (observation.reason !== undefined && typeof observation.reason !== "string") {
+        return { status: "RECONCILIATION_REQUIRED", reason: "PROVIDER_UNKNOWN_REASON_INVALID" };
+      }
+      decision = { status: "RECONCILIATION_REQUIRED", reason: isNonEmptyString(observation.reason) ? observation.reason : "PROVIDER_STATUS_UNKNOWN" };
       break;
     default:
       return { status: "RECONCILIATION_REQUIRED", reason: "PROVIDER_STATUS_RESPONSE_UNRECOGNIZED" };
