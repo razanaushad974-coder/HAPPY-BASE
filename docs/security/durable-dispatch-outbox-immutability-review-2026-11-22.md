@@ -7,6 +7,9 @@ No repository code or database was modified by this review. No migration is appr
 
 ## Confirmed findings
 
+### Late provider response policy clarified
+The current outcome RPC deliberately does not require `lease.expires_at > clock_timestamp()`. This permits a provider response arriving after nominal lease expiry to be recorded only while the persisted lease row still has the exact lease ID, owner ID, and fencing token bound into the immutable outbox row. A reclaim/replacement changes that lease identity or fencing token, so the late response is rejected as stale. This is the selected policy: preserve valid late evidence for the same dispatch, but never accept it after lease replacement. Provider timeout/ambiguous outcomes still require reconciliation; no automatic replay is authorized.
+
 ### P0 — Outbox immutability is not enforced at the table boundary
 The candidate creates `public.happy_execution_dispatch_outbox` with tenant-scoped uniqueness and revokes table privileges from `PUBLIC`, `anon`, `authenticated`, and `service_role`. However, the inspected scheduler SQL defines no trigger that rejects changes to immutable dispatch bindings.
 
@@ -46,3 +49,10 @@ The outcome RPC binds lease ID, owner ID and fencing token, but the inspected co
 - Worker identity / least-privilege DB bridge: BLOCKED / NOT_YET_CONNECTED.
 - Hosted Supabase: NOT MODIFIED.
 - Main branch: NOT MODIFIED.
+
+
+## Draft guard implementation — 2026-11-22
+
+The design-only scheduler SQL candidate now includes a `BEFORE UPDATE OR DELETE` outbox trigger. It rejects mutation of every tenant/dispatch binding field and deletion; permits only `PENDING -> DISPATCHED` without an outcome and exactly one `DISPATCHED -> {ACKNOWLEDGED, AMBIGUOUS, FAILED, RECONCILIATION_REQUIRED}` transition with a non-empty outcome; rejects terminal rewrites and all other transitions; and requires `updated_at` to advance. The late-provider-response policy is explicitly tied to unchanged lease ID/owner/fencing token, not the wall-clock expiry alone.
+
+This is still an unapplied SQL draft. A disposable PostgreSQL 17 adversarial test must exercise each immutable field, both legal transitions, every illegal/terminal transition, deletion, and late-response acceptance/rejection before this protection is considered verified. No hosted database changes or worker grants are authorized.
