@@ -81,7 +81,7 @@ export class JwksOidcWorkerCredentialVerifier implements WorkerCredentialVerifie
         const refreshed = await this.getKeys(true);
         jwk = refreshed.get(header.kid);
       }
-      if (!jwk || jwk.kty !== "RSA" || jwk.use !== "sig" || (jwk.alg && jwk.alg !== "RS256")) return null;
+      if (!jwk || jwk.kty !== "RSA" || (jwk.use !== undefined && jwk.use !== "sig") || (jwk.alg && jwk.alg !== "RS256")) return null;
 
       const signingInput = Buffer.from(parts[0] + "." + parts[1], "utf8");
       const signature = decodeBase64Url(parts[2]);
