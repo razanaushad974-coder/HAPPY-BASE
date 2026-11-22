@@ -12,7 +12,7 @@ function assert(condition: unknown, message: string): asserts condition {
 const now = 1_800_000_000;
 const valid: VerifiedWorkerCredentialClaims = {
   issuer: "https://identity.example.test",
-  subject: "workload:happy-dispatcher",
+  subject: "owner:team:project:happy-worker:environment:staging",
   audience: "happy-execution",
   issuedAt: now - 30,
   notBefore: now - 30,
@@ -26,7 +26,7 @@ const policy = {
   issuer: "https://identity.example.test",
   audience: "happy-execution",
   environment: "staging",
-  allowedSubjects: ["workload:happy-dispatcher"],
+  allowedSubjects: ["owner:team:project:happy-worker:environment:staging"],
   allowedCapabilities: ["API", "VERIFY"] as WorkerCapability[],
   maxCredentialLifetimeSeconds: 300,
   clockSkewSeconds: 15,
