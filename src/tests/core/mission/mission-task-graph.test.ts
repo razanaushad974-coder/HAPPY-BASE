@@ -166,7 +166,16 @@ const readySnapshot = missions.create(readyPlan);
 
 // MissionEngine is a second boundary: callers must not bypass PlanningEngine
 // validation by constructing malformed plans directly.
+const duplicateStepIdPlan = {
+  ...readyPlan,
+  steps: readyPlan.steps.map((step, index) =>
+    index === 1 ? { ...step, id: readyPlan.steps[0].id } : step,
+  ),
+};
 const malformedMissionPlans = [
+  duplicateStepIdPlan,
+  { ...readyPlan, steps: [null] as never },
+  undefined as never,
   { ...readyPlan, goal: "   " },
   { ...readyPlan, steps: [] },
   {
