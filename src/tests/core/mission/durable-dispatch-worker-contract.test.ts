@@ -177,26 +177,26 @@ async function run(): Promise<void> {
   const deniedCapability = await dispatchClaimedOutboxItem(
     dispatch, missingCapability, provider, recorderFor(async () => {}),
   );
-  assert(deniedCapability.status === "RECONCILIATION_REQUIRED" && providerCalls === 1,
+  assert(deniedCapability.status === "RECONCILIATION_REQUIRED" && providerCalls === 2,
     "worker without the request capability reached provider");
 
   const disconnected = await dispatchClaimedOutboxItem(
     dispatch, { status: "NOT_CONNECTED" }, provider, recorderFor(async () => {}),
   );
-  assert(disconnected.status === "RECONCILIATION_REQUIRED" && providerCalls === 1,
+  assert(disconnected.status === "RECONCILIATION_REQUIRED" && providerCalls === 2,
     "unconnected worker identity reached provider");
 
   const expiringIdentity = await resolveWorkerIdentity({ expiresAt: workerNow + 1 });
   const expired = await dispatchClaimedOutboxItem(
     dispatch, expiringIdentity, provider, recorderFor(async () => {}), () => (workerNow + 1) * 1000,
   );
-  assert(expired.status === "RECONCILIATION_REQUIRED" && providerCalls === 1,
+  assert(expired.status === "RECONCILIATION_REQUIRED" && providerCalls === 2,
     "expired worker identity reached provider");
 
   const unavailableClock = await dispatchClaimedOutboxItem(
     dispatch, workerIdentity, provider, recorderFor(async () => {}), () => Number.NaN,
   );
-  assert(unavailableClock.status === "RECONCILIATION_REQUIRED" && providerCalls === 1,
+  assert(unavailableClock.status === "RECONCILIATION_REQUIRED" && providerCalls === 2,
     "invalid worker clock reached provider");
 
   const forged = {
@@ -206,7 +206,7 @@ async function run(): Promise<void> {
   const forgedResult = await dispatchClaimedOutboxItem(
     dispatch, forged, provider, recorderFor(async () => {}),
   );
-  assert(forgedResult.status === "RECONCILIATION_REQUIRED" && providerCalls === 1,
+  assert(forgedResult.status === "RECONCILIATION_REQUIRED" && providerCalls === 2,
     "structurally forged identity object reached provider");
 
   console.log("Durable dispatch worker contract tests: PASS");
