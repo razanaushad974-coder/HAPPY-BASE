@@ -1,30 +1,27 @@
 -- HAPPY worker-specific durable scheduler RPCs (DESIGN DRAFT ONLY)
 -- Date: 2026-11-22
+-- Depends on the durable scheduler and worker principal registry candidate SQL.
+-- Never apply to hosted Supabase until dedicated LOGIN role, session_user
+-- preservation, function ownership, RLS and grants have been reviewed.
 --
--- Depends on:
---   1. 20261121_durable_mission_scheduler_candidate.sql
---   2. 20261122_worker_principal_registry_candidate.sql
--- Apply neither file to hosted Supabase until the role/session_user, schema
--- ownership, RLS, grants, task approval model and hosted pooler are reviewed.
+-- Each RPC takes a worker ID and user ID only as selectors. The worker is
+-- independently derived from PostgreSQL session_user and matched to the
+-- supplied worker ID. The user is checked against the operator-managed tenant
+-- grant and active canonical organization/workspace memberships in the same
+-- transaction. The original human RPCs remain separate and continue using
+-- auth.uid(); these worker RPCs never use auth.uid() or JWT claim GUCs.
 --
--- These are dedicated-login RPC twins of the human-authenticated scheduler
--- functions. They never call auth.uid() and never trust caller-provided worker
--- identity. Each operation derives the worker from PostgreSQL session_user and
--- locks the worker registry, tenant grant, organization/workspace and both
--- canonical memberships before the protected state transition.
---
--- Function EXECUTE grants are intentionally withheld. No table grants,
--- database roles, credentials, migrations, or hosted resources are changed.
+-- All EXECUTE grants are intentionally withheld.
 
 begin;
 
--- Worker-only twin of happy_claim_mission_task. Identity and tenant membership
--- are derived/locked through happy_require_worker_tenant_scope in this transaction.
+-- Worker-only twin of happy_claim_mission_task; uses DB-derived identity and a
+-- transactionally locked worker-to-user tenant scope.
 create or replace function private.happy_worker_claim_mission_task(
   p_worker_principal_id uuid,
-  p_user_id uuid,
-p_organization_id uuid,
+  p_organization_id uuid,
   p_workspace_id uuid,
+  p_user_id uuid,
   p_mission_id text,
   p_task_id text,
   p_owner_id text,
@@ -196,13 +193,13 @@ $claim$;
 revoke all on function private.happy_worker_claim_mission_task(uuid,uuid,uuid,uuid,text,text,text,integer)
   from public, anon, authenticated, service_role;
 
--- Worker-only twin of happy_enqueue_mission_dispatch. Identity and tenant membership
--- are derived/locked through happy_require_worker_tenant_scope in this transaction.
+-- Worker-only twin of happy_enqueue_mission_dispatch; uses DB-derived identity and a
+-- transactionally locked worker-to-user tenant scope.
 create or replace function private.happy_worker_enqueue_mission_dispatch(
   p_worker_principal_id uuid,
-  p_user_id uuid,
-p_organization_id uuid,
+  p_organization_id uuid,
   p_workspace_id uuid,
+  p_user_id uuid,
   p_mission_id text,
   p_task_id text,
   p_lease_id uuid,
@@ -431,13 +428,13 @@ $enqueue$;
 revoke all on function private.happy_worker_enqueue_mission_dispatch(uuid,uuid,uuid,uuid,text,text,uuid,text,bigint,text,text,text,text,text,jsonb)
   from public, anon, authenticated, service_role;
 
--- Worker-only twin of happy_heartbeat_mission_task_lease. Identity and tenant membership
--- are derived/locked through happy_require_worker_tenant_scope in this transaction.
+-- Worker-only twin of happy_heartbeat_mission_task_lease; uses DB-derived identity and a
+-- transactionally locked worker-to-user tenant scope.
 create or replace function private.happy_worker_heartbeat_mission_task_lease(
   p_worker_principal_id uuid,
-  p_user_id uuid,
-p_organization_id uuid,
+  p_organization_id uuid,
   p_workspace_id uuid,
+  p_user_id uuid,
   p_mission_id text,
   p_task_id text,
   p_lease_id uuid,
@@ -485,13 +482,13 @@ $heartbeat$;
 revoke all on function private.happy_worker_heartbeat_mission_task_lease(uuid,uuid,uuid,uuid,text,text,uuid,text,bigint,integer)
   from public, anon, authenticated, service_role;
 
--- Worker-only twin of happy_claim_dispatch_outbox. Identity and tenant membership
--- are derived/locked through happy_require_worker_tenant_scope in this transaction.
+-- Worker-only twin of happy_claim_dispatch_outbox; uses DB-derived identity and a
+-- transactionally locked worker-to-user tenant scope.
 create or replace function private.happy_worker_claim_dispatch_outbox(
   p_worker_principal_id uuid,
-  p_user_id uuid,
-p_organization_id uuid,
+  p_organization_id uuid,
   p_workspace_id uuid,
+  p_user_id uuid,
   p_outbox_id uuid,
   p_lease_id uuid,
   p_owner_id text,
@@ -577,13 +574,13 @@ $dispatch$;
 revoke all on function private.happy_worker_claim_dispatch_outbox(uuid,uuid,uuid,uuid,uuid,uuid,text,bigint)
   from public, anon, authenticated, service_role;
 
--- Worker-only twin of happy_record_dispatch_outcome. Identity and tenant membership
--- are derived/locked through happy_require_worker_tenant_scope in this transaction.
+-- Worker-only twin of happy_record_dispatch_outcome; uses DB-derived identity and a
+-- transactionally locked worker-to-user tenant scope.
 create or replace function private.happy_worker_record_dispatch_outcome(
   p_worker_principal_id uuid,
-  p_user_id uuid,
-p_organization_id uuid,
+  p_organization_id uuid,
   p_workspace_id uuid,
+  p_user_id uuid,
   p_outbox_id uuid,
   p_lease_id uuid,
   p_owner_id text,
@@ -671,7 +668,7 @@ revoke all on function public.happy_heartbeat_mission_task_lease(uuid,uuid,text,
   from public, anon, authenticated, service_role;
 revoke all on function public.happy_claim_dispatch_outbox(uuid,uuid,uuid,uuid,text,bigint)
   from public, anon, authenticated, service_role;
-revoke all on function public.happy_record_dispatch_outcome(uuid,uuid,uuid,uuid,text,bigint,text,jsonb)
+revoke all on function private.happy_worker_record_dispatch_outcome(uuid,uuid,uuid,uuid,text,bigint,text,jsonb)
   from public, anon, authenticated, service_role;
 revoke all on function public.happy_enqueue_mission_dispatch(uuid,uuid,text,text,uuid,text,bigint,text,text,text,text,text,jsonb)
   from public, anon, authenticated, service_role;
@@ -746,13 +743,13 @@ comment on table public.happy_dispatch_reconciliation_evidence is
 revoke all on function private.happy_worker_record_dispatch_outcome(uuid,uuid,uuid,uuid,uuid,uuid,text,bigint,text,jsonb)
   from public, anon, authenticated, service_role;
 
--- Worker-only twin of happy_append_dispatch_reconciliation_evidence. Identity and tenant membership
--- are derived/locked through happy_require_worker_tenant_scope in this transaction.
+-- Worker-only twin of happy_append_dispatch_reconciliation_evidence; uses DB-derived identity and a
+-- transactionally locked worker-to-user tenant scope.
 create or replace function private.happy_worker_append_dispatch_reconciliation_evidence(
   p_worker_principal_id uuid,
-  p_user_id uuid,
-p_organization_id uuid,
+  p_organization_id uuid,
   p_workspace_id uuid,
+  p_user_id uuid,
   p_outbox_id uuid,
   p_evidence_id uuid,
   p_idempotency_key text,
@@ -841,7 +838,7 @@ $append$;
 
 revoke all on function public.happy_reject_reconciliation_evidence_mutation()
   from public, anon, authenticated, service_role;
-revoke all on function public.happy_append_dispatch_reconciliation_evidence(uuid,uuid,uuid,uuid,text,text,text,timestamptz,jsonb)
+revoke all on function private.happy_worker_append_dispatch_reconciliation_evidence(uuid,uuid,uuid,uuid,text,text,text,timestamptz,jsonb)
   from public, anon, authenticated, service_role;
 
 -- Read-only recovery evidence lookup. The caller must present the complete
@@ -852,13 +849,13 @@ revoke all on function public.happy_append_dispatch_reconciliation_evidence(uuid
 revoke all on function private.happy_worker_append_dispatch_reconciliation_evidence(uuid,uuid,uuid,uuid,uuid,uuid,text,text,text,timestamptz,jsonb)
   from public, anon, authenticated, service_role;
 
--- Worker-only twin of happy_list_dispatch_reconciliation_evidence. Identity and tenant membership
--- are derived/locked through happy_require_worker_tenant_scope in this transaction.
+-- Worker-only twin of happy_list_dispatch_reconciliation_evidence; uses DB-derived identity and a
+-- transactionally locked worker-to-user tenant scope.
 create or replace function private.happy_worker_list_dispatch_reconciliation_evidence(
   p_worker_principal_id uuid,
-  p_user_id uuid,
-p_organization_id uuid,
+  p_organization_id uuid,
   p_workspace_id uuid,
+  p_user_id uuid,
   p_outbox_id uuid,
   p_mission_id text,
   p_task_id text,
@@ -949,7 +946,7 @@ begin
 end;
 $read_evidence$;
 
-revoke all on function public.happy_list_dispatch_reconciliation_evidence(uuid,uuid,uuid,text,text,text)
+revoke all on function private.happy_worker_list_dispatch_reconciliation_evidence(uuid,uuid,uuid,text,text,text)
   from public, anon, authenticated, service_role;
 
 -- Reconciliation limitations / gates:
