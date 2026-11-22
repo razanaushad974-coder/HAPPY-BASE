@@ -573,6 +573,8 @@ declare
   v_recorded public.happy_execution_dispatch_outbox%rowtype;
   v_heartbeat timestamptz;
   v_payload jsonb;
+  v_payload_digest text;
+  v_request_created_at text;
 begin
   begin
     perform * from public.happy_claim_mission_task(
@@ -590,18 +592,29 @@ begin
   if v_claim.attempt <> 1 or v_claim.fencing_token <> 1 then
     raise exception 'initial lease must start at attempt/fencing token 1';
   end if;
-  v_payload := '{"id":"request-scheduler-1","missionId":"mission-scheduler","taskId":"task-scheduler-root","capability":"API","action":"POST","input":{"value":1},"requiresApproval":false,"approved":false,"risk":"LOW","createdAt":"2026-11-21T12:00:00.000Z"}'::jsonb;
+  select created_at_iso into v_request_created_at
+    from happy_test_scheduler_requests where request_id = 'request-scheduler-1';
+  v_payload := jsonb_build_object(
+    'id','request-scheduler-1','missionId','mission-scheduler',
+    'taskId','task-scheduler-root','capability','API','action','POST',
+    'input','{"value":1}'::jsonb,'targetReference',null,
+    'requiresApproval',true,'approved',true,'risk','HIGH',
+    'createdAt',v_request_created_at
+  );
+  v_payload_digest := 'sha256:' || encode(
+    extensions.digest(convert_to(private.happy_canonical_jsonb(v_payload),'UTF8'),'sha256'),'hex'
+  );
   v_outbox := public.happy_enqueue_mission_dispatch(
     '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
     'mission-scheduler','task-scheduler-root',v_claim.lease_id,'worker-a',v_claim.fencing_token,
     'request-scheduler-1','tenant-attempt-key-1','API','POST',
-    'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',v_payload
+    v_payload_digest,v_payload
   );
   v_duplicate := public.happy_enqueue_mission_dispatch(
     '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
     'mission-scheduler','task-scheduler-root',v_claim.lease_id,'worker-a',v_claim.fencing_token,
     'request-scheduler-1','tenant-attempt-key-1','API','POST',
-    'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',v_payload
+    v_payload_digest,v_payload
   );
   if v_duplicate.outbox_id <> v_outbox.outbox_id then
     raise exception 'identical idempotent dispatch did not return original outbox row';
@@ -656,8 +669,9 @@ begin
       'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
       jsonb_set(v_payload,'{input,value}','2'::jsonb)
     );
-    raise exception 'idempotency key reuse with changed payload unexpectedly succeeded';
-  exception when unique_violation then null;
+    raise exception 'altered payload was accepted for a persisted execution request';
+  exception when sqlstate '22023' then
+    if sqlerrm <> 'DISPATCH_PAYLOAD_BINDING_MISMATCH' then raise; end if;
   end;
   begin
     perform * from public.happy_claim_mission_task(
@@ -740,12 +754,23 @@ begin
   exception when sqlstate '55000' then
     if sqlerrm <> 'STALE_OR_EXPIRED_LEASE' then raise; end if;
   end;
+  select created_at_iso into v_request_created_at
+    from happy_test_scheduler_requests where request_id = 'request-scheduler-2';
+  v_payload := jsonb_build_object(
+    'id','request-scheduler-2','missionId','mission-scheduler',
+    'taskId','task-scheduler-reclaim','capability','API','action','POST',
+    'input','{"value":2}'::jsonb,'targetReference',null,
+    'requiresApproval',true,'approved',true,'risk','HIGH',
+    'createdAt',v_request_created_at
+  );
+  v_payload_digest := 'sha256:' || encode(
+    extensions.digest(convert_to(private.happy_canonical_jsonb(v_payload),'UTF8'),'sha256'),'hex'
+  );
   v_reclaim_outbox := public.happy_enqueue_mission_dispatch(
     '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
     'mission-scheduler','task-scheduler-reclaim',v_reclaimed.lease_id,'worker-b',v_reclaimed.fencing_token,
     'request-scheduler-2','tenant-attempt-key-2','API','POST',
-    'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
-    '{"id":"request-scheduler-2","missionId":"mission-scheduler","taskId":"task-scheduler-reclaim","capability":"API","action":"POST"}'
+    v_payload_digest,v_payload
   );
   perform public.happy_claim_dispatch_outbox(
     '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
