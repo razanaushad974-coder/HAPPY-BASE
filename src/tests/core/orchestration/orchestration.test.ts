@@ -180,6 +180,26 @@ async function main(): Promise<void> {
         "Execution happened before approval.",
     );
 
+    const mediumRiskCase = await happy.run({
+        id: "pipeline-medium-risk",
+        command: "query the customer database and summarize user data",
+        organizationId: "org-a",
+        workspaceId: "workspace-a",
+        userId: "user-a",
+        source: "TEXT",
+        approved: false,
+        createdAt: new Date().toISOString(),
+    });
+
+    assert(
+        mediumRiskCase.status === "WAITING_APPROVAL",
+        "MEDIUM-risk database/data operation did not require approval.",
+    );
+    assert(
+        !mediumRiskCase.trace.stages.some((stage) => stage.stage === "EXECUTION"),
+        "MEDIUM-risk operation executed before persisted approval.",
+    );
+
     // ==============================================
     // APPROVED EXECUTION
     // ==============================================
