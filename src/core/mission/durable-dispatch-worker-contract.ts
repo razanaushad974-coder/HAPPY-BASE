@@ -1,4 +1,4 @@
-import type { WorkerIdentityResolution } from "./trusted-worker-identity";
+import type { WorkerCapability, WorkerIdentityResolution } from "./trusted-worker-identity";
 import type { ExecutionRequest } from "../execution/types";
 
 export type ProviderDispatchObservation =
@@ -63,7 +63,7 @@ export async function dispatchClaimedOutboxItem(
     !dispatch.request || typeof dispatch.request !== "object" ||
     typeof dispatch.request.capability !== "string" ||
     workerIdentity.identity.principal !== dispatch.ownerId ||
-    !workerIdentity.identity.capabilities.includes(dispatch.request.capability as never)
+    !workerIdentity.identity.capabilities.includes(dispatch.request.capability as WorkerCapability)
   ) {
     return { status: "RECONCILIATION_REQUIRED", reason: "TRUSTED_WORKER_IDENTITY_OR_CAPABILITY_MISMATCH" };
   }
