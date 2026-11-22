@@ -256,8 +256,8 @@ begin
 
   select count(*) into v_count
     from public.resolve_authenticated_execution_request('request-for-executor');
-  if v_count <> 1 then
-    raise exception 'named executor could not resolve its durable execution request';
+  if v_count <> 0 then
+    raise exception 'legacy request without a complete immutable envelope was exposed';
   end if;
   select count(*) into v_count
     from public.resolve_authenticated_execution_request('request-for-other-executor');
@@ -585,6 +585,22 @@ select * from public.create_authenticated_execution_request(
   'API','POST','{"value":9}'::jsonb,null,
   'tenant-attempt-key-pending'
 );
+do $resolved_envelope$
+declare
+  v_count bigint;
+begin
+  select count(*) into v_count
+    from public.resolve_authenticated_execution_request('request-scheduler-1');
+  if v_count <> 1 then
+    raise exception 'complete immutable request envelope was not resolved for its executor';
+  end if;
+  select count(*) into v_count
+    from public.resolve_authenticated_execution_request('request-scheduler-pending');
+  if v_count <> 1 then
+    raise exception 'pending immutable request envelope was not resolved for its executor';
+  end if;
+end
+$resolved_envelope$;
 do $self_approval$
 declare
   v_result boolean;
