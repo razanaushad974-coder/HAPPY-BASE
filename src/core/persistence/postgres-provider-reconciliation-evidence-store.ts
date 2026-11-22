@@ -27,22 +27,33 @@ export class PostgresProviderReconciliationEvidenceStore implements ProviderReco
   ) {}
 
   async append(evidence: ProviderReconciliationEvidence): Promise<void> {
+    if (!evidence || typeof evidence !== "object") {
+      throw new Error("RECONCILIATION_EVIDENCE_INVALID");
+    }
+    if (!this.scope || typeof this.scope !== "object") {
+      throw new Error("RECONCILIATION_TENANT_SCOPE_REQUIRED");
+    }
     const { organizationId, workspaceId, userId } = this.scope;
-    if (!organizationId?.trim() || !workspaceId?.trim() || !userId?.trim()) {
+    if (typeof organizationId !== "string" || !organizationId.trim() ||
+        typeof workspaceId !== "string" || !workspaceId.trim() ||
+        typeof userId !== "string" || !userId.trim()) {
       throw new Error("RECONCILIATION_TENANT_SCOPE_REQUIRED");
     }
     if (!UUID_PATTERN.test(organizationId) || !UUID_PATTERN.test(workspaceId) || !UUID_PATTERN.test(userId)) {
       throw new Error("RECONCILIATION_TENANT_SCOPE_INVALID");
     }
     if (
-      !evidence.outboxId?.trim() || evidence.outboxId.length > MAX_IDENTIFIER_LENGTH ||
-      !evidence.idempotencyKey?.trim() || evidence.idempotencyKey.length > MAX_IDENTIFIER_LENGTH ||
-      !evidence.providerId?.trim() || evidence.providerId.length > MAX_IDENTIFIER_LENGTH
+      typeof evidence.outboxId !== "string" || !evidence.outboxId.trim() || evidence.outboxId.length > MAX_IDENTIFIER_LENGTH ||
+      typeof evidence.idempotencyKey !== "string" || !evidence.idempotencyKey.trim() || evidence.idempotencyKey.length > MAX_IDENTIFIER_LENGTH ||
+      typeof evidence.providerId !== "string" || !evidence.providerId.trim() || evidence.providerId.length > MAX_IDENTIFIER_LENGTH
     ) {
       throw new Error("RECONCILIATION_EVIDENCE_BINDING_INVALID");
     }
     if (!UUID_PATTERN.test(evidence.outboxId)) {
       throw new Error("RECONCILIATION_OUTBOX_ID_INVALID");
+    }
+    if (typeof evidence.observedAt !== "string") {
+      throw new Error("RECONCILIATION_OBSERVATION_TIMESTAMP_INVALID");
     }
     const observedAtMs = Date.parse(evidence.observedAt);
     if (!Number.isFinite(observedAtMs)) {
@@ -86,7 +97,8 @@ function toSafeObservation(evidence: ProviderReconciliationEvidence): Record<str
   }
   const safe: Record<string, string> = { status: observation.status };
   if ("providerRequestId" in observation) {
-    if (!observation.providerRequestId.trim() || observation.providerRequestId.length > MAX_IDENTIFIER_LENGTH) {
+    if (typeof observation.providerRequestId !== "string" ||
+        !observation.providerRequestId.trim() || observation.providerRequestId.length > MAX_IDENTIFIER_LENGTH) {
       throw new Error("RECONCILIATION_PROVIDER_REQUEST_ID_INVALID");
     }
     safe.providerRequestId = observation.providerRequestId;
