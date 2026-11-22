@@ -173,7 +173,7 @@ async function run(): Promise<void> {
   const forged = {
     status: "VERIFIED" as const,
     identity: { ...workerIdentity.identity, principal: "workload:worker-1" },
-  } as WorkerIdentityResolution;
+  } as unknown as WorkerIdentityResolution;
   const forgedResult = await dispatchClaimedOutboxItem(
     dispatch, forged, provider, recorderFor(async () => {}),
   );
