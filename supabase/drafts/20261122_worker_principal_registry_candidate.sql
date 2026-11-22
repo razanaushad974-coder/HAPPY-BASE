@@ -24,6 +24,22 @@
 
 begin;
 
+create or replace function private.happy_worker_capabilities_valid(p_capabilities text[])
+returns boolean
+language sql
+immutable
+set search_path = pg_catalog
+as $capability_check$
+  select p_capabilities is not null
+     and cardinality(p_capabilities) > 0
+     and array_position(p_capabilities, null) is null
+     and p_capabilities <@ array['API','BROWSER','FILE','DATABASE','DEPLOY','PUBLISH','CONTROL','VERIFY']::text[]
+     and cardinality(p_capabilities) = (
+       select count(distinct capability)::integer
+         from unnest(p_capabilities) as capability
+     );
+$capability_check$;
+
 create table if not exists private.happy_worker_principal_registry (
   worker_principal_id uuid primary key,
   db_login_role text not null unique
@@ -33,23 +49,14 @@ create table if not exists private.happy_worker_principal_registry (
   audience text not null check (length(btrim(audience)) > 0),
   environment text not null check (length(btrim(environment)) > 0),
   capabilities text[] not null
-    check (
-      cardinality(capabilities) > 0
-      and capabilities <@ array['API','BROWSER','FILE','DATABASE','DEPLOY','PUBLISH','CONTROL','VERIFY']::text[]
-      and cardinality(capabilities) = (
-        select count(distinct capability) from unnest(capabilities) as capability
-      )
-    ),
+    check (private.happy_worker_capabilities_valid(capabilities)),
   enabled boolean not null default false,
   activated_at timestamptz,
   revoked_at timestamptz,
   created_at timestamptz not null default clock_timestamp(),
   updated_at timestamptz not null default clock_timestamp(),
   constraint happy_worker_registry_activation_consistency
-    check (
-      (enabled = false and activated_at is null)
-      or (enabled = true and activated_at is not null and revoked_at is null)
-    )
+    check (not enabled or (activated_at is not null and revoked_at is null))
 );
 
 create table if not exists private.happy_worker_tenant_grants (
@@ -60,13 +67,7 @@ create table if not exists private.happy_worker_tenant_grants (
   workspace_id uuid not null,
   user_id uuid not null references auth.users(id) on delete restrict,
   capabilities text[] not null
-    check (
-      cardinality(capabilities) > 0
-      and capabilities <@ array['API','BROWSER','FILE','DATABASE','DEPLOY','PUBLISH','CONTROL','VERIFY']::text[]
-      and cardinality(capabilities) = (
-        select count(distinct capability) from unnest(capabilities) as capability
-      )
-    ),
+    check (private.happy_worker_capabilities_valid(capabilities)),
   enabled boolean not null default false,
   created_at timestamptz not null default clock_timestamp(),
   updated_at timestamptz not null default clock_timestamp(),
