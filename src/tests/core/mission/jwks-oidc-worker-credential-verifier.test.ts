@@ -101,6 +101,29 @@ async function main() {
   assert(await malformedKeyOps.verifyCredential(token(validClaims)) === null,
     "malformed JWKS key_ops was accepted");
 
+  let timedOutSignalAborted = false;
+  const timedOut = new JwksOidcWorkerCredentialVerifier(
+    { ...config, jwksFetchTimeoutMs: 5 },
+    async (_url, signal) => await new Promise((_resolve, reject) => {
+      signal?.addEventListener("abort", () => {
+        timedOutSignalAborted = true;
+        reject(new Error("aborted"));
+      }, { once: true });
+    }),
+  );
+  assert(await timedOut.verifyCredential(token(validClaims)) === null,
+    "hung JWKS request did not fail closed on timeout");
+  assert(timedOutSignalAborted, "JWKS timeout did not abort the underlying request");
+
+  const oversizedJwks = new JwksOidcWorkerCredentialVerifier(config, async () => ({
+    ok: true, status: 200,
+    async json() {
+      return { keys: Array.from({ length: 65 }, (_, index) => ({ ...jwk, kid: "key-" + index })) };
+    },
+  }));
+  assert(await oversizedJwks.verifyCredential(token(validClaims)) === null,
+    "oversized JWKS key set was accepted");
+
   const unavailable = new JwksOidcWorkerCredentialVerifier(config, async () => ({
     ok: false, status: 503, async json() { return {}; },
   }));
