@@ -28,6 +28,10 @@ export class TaskGraphEngine {
       "PENDING", "BLOCKED", "READY", "RUNNING", "VERIFYING",
       "COMPLETED", "FAILED", "CANCELLED",
     ]);
+    const approvalRequiredActions = new Set([
+      "POST", "PUT", "PATCH", "DELETE", "DEPLOY", "PUBLISH", "CONTROL",
+      "DB_INSERT", "DB_UPDATE", "DB_DELETE", "DB_TRANSACTION",
+    ]);
 
     for (const task of tasks) {
       if (typeof task.id !== "string" || !task.id.trim()) {
@@ -62,6 +66,10 @@ export class TaskGraphEngine {
       if (typeof task.requiresApproval !== "boolean" ||
           typeof task.verificationRequired !== "boolean") {
         errors.push(`Task ${task.id || "<unknown>"} has invalid security flags.`);
+      } else if (approvalRequiredActions.has(task.action) && !task.requiresApproval) {
+        errors.push(
+          `Task ${task.id || "<unknown>"} (${task.action}) must require approval.`,
+        );
       }
       if (!Array.isArray(task.dependencyIds)) {
         errors.push(`Task ${task.id || "<unknown>"} has invalid dependencies.`);
