@@ -19,6 +19,12 @@ export interface JwksOidcVerifierConfig {
   jwksUri: string;
   /** Server-owned deployment environment; workload subject is independently allowlisted. */
   environment: string;
+  /** Exact Vercel subject; wildcard/prefix matching is deliberately unsupported. */
+  expectedSubject: string;
+  /** Exact signed Vercel workload claims, provisioned from trusted project metadata. */
+  expectedWorkloadClaims: { ownerId: string; projectId: string; environment: string };
+  /** Maximum permitted signed token lifetime, in seconds. */
+  maxTokenLifetimeSeconds: number;
   /** Server-owned grants for this exact worker deployment, never read from the token. */
   capabilities: readonly WorkerCapability[];
   cacheTtlMs?: number;
@@ -49,6 +55,12 @@ export class JwksOidcWorkerCredentialVerifier implements WorkerCredentialVerifie
         typeof credential !== "string" || !credential.trim() ||
         !this.config.issuer.trim() || !this.config.audience.trim() ||
         !this.config.jwksUri.trim() || !this.config.environment.trim() ||
+        !this.config.expectedSubject.trim() ||
+        !this.config.expectedWorkloadClaims?.ownerId.trim() ||
+        !this.config.expectedWorkloadClaims?.projectId.trim() ||
+        !this.config.expectedWorkloadClaims?.environment.trim() ||
+        !Number.isSafeInteger(this.config.maxTokenLifetimeSeconds) ||
+        this.config.maxTokenLifetimeSeconds < 1 || this.config.maxTokenLifetimeSeconds > 3600 ||
         !Array.isArray(this.config.capabilities) || this.config.capabilities.length === 0 ||
         this.config.capabilities.some((capability) =>
           !["API", "BROWSER", "FILE", "DATABASE", "DEPLOY", "PUBLISH", "CONTROL", "VERIFY"].includes(capability)
@@ -91,10 +103,15 @@ export class JwksOidcWorkerCredentialVerifier implements WorkerCredentialVerifie
         !audiences.includes(this.config.audience) ||
         (audiences.length > 1 && payload.azp !== this.config.audience) ||
         (payload.azp !== undefined && payload.azp !== this.config.audience) ||
-        typeof payload.sub !== "string" || !payload.sub.trim() ||
+        payload.sub !== this.config.expectedSubject ||
+        payload.owner_id !== this.config.expectedWorkloadClaims.ownerId ||
+        payload.project_id !== this.config.expectedWorkloadClaims.projectId ||
+        payload.environment !== this.config.expectedWorkloadClaims.environment ||
+        payload.environment !== this.config.environment ||
         !isTimestamp(payload.iat) || !isTimestamp(payload.nbf) || !isTimestamp(payload.exp) ||
         payload.iat > now + skew || payload.nbf > now + skew || payload.exp <= now - skew ||
         payload.exp <= payload.iat ||
+        payload.exp - payload.iat > this.config.maxTokenLifetimeSeconds ||
         (payload.jti !== undefined && (typeof payload.jti !== "string" || !payload.jti.trim()))
       ) return null;
 
