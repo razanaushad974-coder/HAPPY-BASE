@@ -96,7 +96,11 @@ export class TaskGraphEngine {
       }
     }
 
-    const cycleDetected = this.hasCycle(tasks);
+    // Malformed dependency payloads are already reported above; avoid
+    // traversing them while producing the validation result.
+    const cycleDetected =
+      tasks.every((task) => Array.isArray(task.dependencyIds)) &&
+      this.hasCycle(tasks);
 
     if (cycleDetected) {
       errors.push("Task graph contains a dependency cycle.");
