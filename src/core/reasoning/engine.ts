@@ -248,7 +248,7 @@ export class ReasoningEngine {
           "Run validation before completion.",
         dependencies: [],
         requiresApproval: false,
-        risk: "MEDIUM",
+        risk: "LOW",
         verificationRequired: true,
       },
       {
@@ -260,7 +260,7 @@ export class ReasoningEngine {
           "Verify the actual result and require evidence.",
         dependencies: [],
         requiresApproval: false,
-        risk: "MEDIUM",
+        risk: "LOW",
         verificationRequired: true,
       },
     ];
