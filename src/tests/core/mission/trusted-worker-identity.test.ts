@@ -1,4 +1,5 @@
 import {
+  isVerifiedWorkerIdentity,
   TrustedWorkerIdentityProvider,
   type VerifiedWorkerCredentialClaims,
   type WorkerCapability,
@@ -52,6 +53,10 @@ async function main(): Promise<void> {
   if (accepted.status === "VERIFIED") {
     assert(accepted.identity.principal === valid.subject, "worker principal mismatch");
     assert(accepted.identity.capabilities.join(",") === "API,VERIFY", "capability binding mismatch");
+    assert(isVerifiedWorkerIdentity(accepted.identity), "provider result is missing runtime attestation");
+    assert(Object.isFrozen(accepted.identity), "verified identity must be immutable");
+    assert(Object.isFrozen(accepted.identity.capabilities), "verified capabilities must be immutable");
+    assert(!isVerifiedWorkerIdentity({ ...accepted.identity }), "spread copy must not retain runtime attestation");
   }
 
   assert((await new TrustedWorkerIdentityProvider(null, null, policy).getVerifiedWorkerIdentity()).status === "NOT_CONNECTED",
