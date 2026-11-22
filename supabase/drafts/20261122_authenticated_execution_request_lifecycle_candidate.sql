@@ -253,6 +253,7 @@ begin
      or p_task_id is null or length(btrim(p_task_id)) not between 1 and 200
      or p_mission_id is null or length(btrim(p_mission_id)) not between 1 and 200
      or p_organization_id is null or p_workspace_id is null
+     or p_capability is null
      or p_capability not in ('CODE','FILE','API','BROWSER','SHELL','DATABASE','AI','DEPLOYMENT','PUBLISH','AUTOMATION')
      or p_action is null or length(btrim(p_action)) not between 1 and 200
      or p_input is null or jsonb_typeof(p_input) <> 'object'
@@ -398,6 +399,7 @@ declare
 begin
   if v_actor is null
      or p_request_id is null or length(btrim(p_request_id)) = 0
+     or p_decision is null
      or p_decision not in ('APPROVED','REJECTED')
      or p_reason is null or length(btrim(p_reason)) not between 1 and 2000 then
     raise exception 'INVALID_EXECUTION_REQUEST_DECISION' using errcode = '22023';
@@ -416,15 +418,22 @@ begin
 
   if not exists (
     select 1
-      from private.organization_memberships om
-      join private.workspace_memberships wm
-        on wm.organization_id = om.organization_id
-       and wm.user_id = om.user_id
-       and wm.workspace_id = v_request.workspace_id
-       and wm.status = 'ACTIVE'
-     where om.organization_id = v_request.organization_id
+      from private.organizations o
+      join private.workspaces w
+        on w.organization_id = o.organization_id
+       and w.workspace_id = v_request.workspace_id
+       and w.status = 'ACTIVE'
+      join private.organization_memberships om
+        on om.organization_id = o.organization_id
        and om.user_id = v_actor
        and om.status = 'ACTIVE'
+      join private.workspace_memberships wm
+        on wm.organization_id = o.organization_id
+       and wm.user_id = om.user_id
+       and wm.workspace_id = w.workspace_id
+       and wm.status = 'ACTIVE'
+     where o.organization_id = v_request.organization_id
+       and o.status = 'ACTIVE'
        and om.role = 'FOUNDER'
   ) then
     raise exception 'FOUNDER_APPROVAL_REQUIRED' using errcode = '42501';
