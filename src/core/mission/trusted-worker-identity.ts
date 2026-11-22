@@ -47,7 +47,10 @@ export interface TrustedWorkerIdentityPolicy {
   clockSkewSeconds?: number;
 }
 
+const WORKER_IDENTITY_ATTESTATION = Symbol("HAPPY_VERIFIED_WORKER_IDENTITY");
+
 export interface VerifiedWorkerIdentity {
+  readonly [WORKER_IDENTITY_ATTESTATION]: true;
   principal: string;
   issuer: string;
   audience: string;
@@ -61,6 +64,18 @@ export interface VerifiedWorkerIdentity {
 export type WorkerIdentityResolution =
   | { status: "VERIFIED"; identity: VerifiedWorkerIdentity }
   | { status: "NOT_CONNECTED" | "DENIED" };
+
+/**
+ * Runtime attestation check for server-side composition. A plain object that
+ * copies the public identity fields is not a verified identity.
+ */
+export function isVerifiedWorkerIdentity(value: unknown): value is VerifiedWorkerIdentity {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    (value as VerifiedWorkerIdentity)[WORKER_IDENTITY_ATTESTATION] === true
+  );
+}
 
 const CAPABILITIES = new Set<WorkerCapability>([
   "API", "BROWSER", "FILE", "DATABASE", "DEPLOY", "PUBLISH",
@@ -163,19 +178,23 @@ export class TrustedWorkerIdentityProvider {
         )
       ) return { status: "DENIED" };
 
-      return {
-        status: "VERIFIED",
-        identity: {
-          principal: claims.subject,
-          issuer,
-          audience,
-          environment,
-          tokenId: claims.tokenId,
-          issuedAt: claims.issuedAt,
-          expiresAt: claims.expiresAt,
-          capabilities: capabilities as WorkerCapability[],
-        },
-      };
+      const identity = {
+        principal: claims.subject,
+        issuer,
+        audience,
+        environment,
+        tokenId: claims.tokenId,
+        issuedAt: claims.issuedAt,
+        expiresAt: claims.expiresAt,
+        capabilities: capabilities as WorkerCapability[],
+      } as VerifiedWorkerIdentity;
+      Object.defineProperty(identity, WORKER_IDENTITY_ATTESTATION, {
+        value: true,
+        enumerable: false,
+        configurable: false,
+        writable: false,
+      });
+      return { status: "VERIFIED", identity };
     } catch {
       // Credential source, verifier, clock, or malformed runtime config
       // failures are authorization failures; never fall back to user identity.
