@@ -107,8 +107,12 @@ async function main(): Promise<void> {
   }
   assert(mismatchRejected, "unexpected RPC identity must not be treated as persisted");
 
+  const nullEvidenceRejected = await store.append(null as never).then(() => false, (error) => error instanceof Error && error.message === "RECONCILIATION_EVIDENCE_INVALID");
+  assert(nullEvidenceRejected && calls.length === 1, "null evidence must fail before database access");
+
   const malformedCases: Array<{ evidence: never; expected: string }> = [
     { evidence: { outboxId, idempotencyKey: "key", providerId: "provider-a", observedAt: "2026-11-21T10:00:00.000Z", observation: { status: "ALIEN" } } as never, expected: "RECONCILIATION_OBSERVATION_STATUS_INVALID" },
+    { evidence: { outboxId, idempotencyKey: "key", providerId: "provider-a", observedAt: "2026-11-21T10:00:00.000Z", observation: { status: "SUCCEEDED", providerRequestId: 7, result: {} } } as never, expected: "RECONCILIATION_PROVIDER_REQUEST_ID_INVALID" },
     { evidence: { outboxId, idempotencyKey: "key", providerId: "provider-a", observedAt: "2026-11-21T10:00:00.000Z", observation: { status: "FAILED", providerRequestId: "remote", code: 9, message: "bad" } } as never, expected: "RECONCILIATION_FAILURE_DETAILS_INVALID" },
     { evidence: { outboxId, idempotencyKey: "key", providerId: "provider-a", observedAt: "2026-11-21T10:00:00.000Z", observation: { status: "UNKNOWN", reason: null } } as never, expected: "RECONCILIATION_UNKNOWN_REASON_INVALID" },
   ];
