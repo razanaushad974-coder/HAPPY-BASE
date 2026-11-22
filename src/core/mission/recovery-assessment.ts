@@ -48,21 +48,52 @@ export function assessMissionRecovery(
   tasks: MissionTask[],
   executions: MissionRecoveryExecution[],
 ): MissionTaskRecoveryAssessment[] {
+  const allowedTaskStatuses = new Set([
+    "PENDING", "BLOCKED", "READY", "RUNNING", "VERIFYING",
+    "COMPLETED", "FAILED", "CANCELLED",
+  ]);
+  const allowedExecutionStatuses = new Set([
+    "RECEIVED", "WAITING_APPROVAL", "READY", "RUNNING", "COMPLETED",
+    "FAILED", "BLOCKED", "NOT_YET_CONNECTED", "CANCELLED",
+  ]);
+
+  if (
+    typeof mission.id !== "string" ||
+    !mission.id.trim() ||
+    !Array.isArray(mission.taskIds) ||
+    !Array.isArray(tasks) ||
+    !Array.isArray(executions) ||
+    mission.taskIds.some((id) => typeof id !== "string" || !id.trim()) ||
+    tasks.some((task) => !task || typeof task !== "object")
+  ) {
+    throw new Error("Mission recovery received malformed mission/task/execution data.");
+  }
+
   const declared = new Set(mission.taskIds);
   if (
     declared.size !== mission.taskIds.length ||
     tasks.length !== declared.size ||
-    tasks.some((task) => task.missionId !== mission.id || !declared.has(task.id)) ||
+    tasks.some((task) =>
+      task.missionId !== mission.id ||
+      !declared.has(task.id) ||
+      !allowedTaskStatuses.has(task.status)
+    ) ||
     new Set(tasks.map((task) => task.id)).size !== tasks.length
   ) {
-    throw new Error("Mission recovery requires an exact mission task snapshot.");
+    throw new Error("Mission recovery requires an exact, valid mission task snapshot.");
   }
 
   const taskIds = new Set(tasks.map((task) => task.id));
   if (executions.some((execution) =>
-    execution.missionId !== mission.id || !taskIds.has(execution.taskId)
+    !execution ||
+    typeof execution !== "object" ||
+    typeof execution.id !== "string" ||
+    !execution.id.trim() ||
+    execution.missionId !== mission.id ||
+    !taskIds.has(execution.taskId) ||
+    (execution.status !== undefined && !allowedExecutionStatuses.has(execution.status))
   )) {
-    throw new Error("Mission recovery received an execution outside the mission snapshot.");
+    throw new Error("Mission recovery received malformed or out-of-scope execution data.");
   }
 
   return tasks.map((task) => {
