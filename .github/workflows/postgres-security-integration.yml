@@ -10,6 +10,7 @@ on:
       - "scripts/security/postgres-grant-integration.sh"
       - "scripts/security/postgres-file-grant-transaction-integration.sh"
       - "scripts/security/postgres-execution-request-approval-integration.sh"
+      - "scripts/security/postgres-worker-principal-registry-integration.sh"
       - "supabase/drafts/**"
       - ".github/workflows/postgres-security-integration.yml"
       - "src/core/approval/**"
@@ -61,5 +62,9 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/happy_security_test
       - name: Run authenticated execution request and approval integration checks
         run: bash scripts/security/postgres-execution-request-approval-integration.sh
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/happy_security_test
+      - name: Run dedicated PostgreSQL worker principal registry checks
+        run: bash scripts/security/postgres-worker-principal-registry-integration.sh
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/happy_security_test
