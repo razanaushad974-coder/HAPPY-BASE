@@ -250,6 +250,45 @@ begin
 end;
 $claim$;
 
+-- Deterministic JSON serializer shared by the TS payload digest contract.
+-- Object keys use bytewise ordering; arrays preserve order.
+create or replace function private.happy_canonical_jsonb(p_value jsonb)
+returns text
+language plpgsql
+immutable
+strict
+set search_path = pg_catalog
+as $canonical$
+declare
+  v_type text := jsonb_typeof(p_value);
+  v_result text;
+begin
+  if v_type = 'object' then
+    select '{' || coalesce(string_agg(
+      to_json(k.key)::text || ':' || private.happy_canonical_jsonb(k.value),
+      ',' order by k.key collate "C"
+    ), '') || '}'
+      into v_result
+      from jsonb_each(p_value) as k(key, value);
+    return v_result;
+  elsif v_type = 'array' then
+    select '[' || coalesce(string_agg(
+      private.happy_canonical_jsonb(a.value), ',' order by a.ordinality
+    ), '') || ']'
+      into v_result
+      from jsonb_array_elements(p_value) with ordinality as a(value, ordinality);
+    return v_result;
+  elsif v_type = 'string' then
+    return to_json(p_value #>> '{}')::text;
+  else
+    return p_value::text;
+  end if;
+end;
+$canonical$;
+
+revoke all on function private.happy_canonical_jsonb(jsonb)
+  from public, anon, authenticated, service_role;
+
 create or replace function public.happy_enqueue_mission_dispatch(
   p_organization_id uuid,
   p_workspace_id uuid,
