@@ -111,13 +111,63 @@ async function run() {
   assert(revoked.status === "DENIED" && revoked.reason === "PRINCIPAL_NOT_AUTHORIZED",
     "disabled or revoked principal must be denied before broker use");
 
-  const wrongCapability = await composeTrustedWorkerRuntime({
+  const verifyAllowed = await composeTrustedWorkerRuntime({
     dependencies: complete,
     operation: "append_reconciliation_evidence",
     now: () => now * 1000,
   });
-  assert(wrongCapability.status === "COMPOSITION_AVAILABLE",
-    "VERIFY capability is present and should allow evidence composition");
+  assert(verifyAllowed.status === "COMPOSITION_AVAILABLE",
+    "VERIFY capability should allow reconciliation evidence composition");
+
+  const capabilityDenied = await composeTrustedWorkerRuntime({
+    dependencies: {
+      ...complete,
+      principalRegistry: {
+        findByIssuerSubjectEnvironment: async () => ({
+          principalId: "principal-1",
+          issuer: claims.issuer,
+          subject: claims.subject,
+          audience: "happy-worker-broker",
+          environment: "staging",
+          enabled: true,
+          capabilities: ["CONTROL"],
+        }),
+      },
+    },
+    operation: "append_reconciliation_evidence",
+    now: () => now * 1000,
+  });
+  assert(capabilityDenied.status === "DENIED",
+    "registry missing VERIFY capability must deny evidence operations");
+
+  const registryUnavailable = await composeTrustedWorkerRuntime({
+    dependencies: {
+      ...complete,
+      principalRegistry: {
+        findByIssuerSubjectEnvironment: async () => { throw new Error("registry unavailable"); },
+      },
+    },
+    operation: "claim_task",
+    now: () => now * 1000,
+  });
+  assert(registryUnavailable.status === "DENIED",
+    "registry outage must fail closed");
+
+  const forgedIdentity = await composeTrustedWorkerRuntime({
+    dependencies: {
+      ...complete,
+      identityProvider: {
+        getVerifiedWorkerIdentity: async () => ({
+          status: "VERIFIED" as const,
+          identity: { ...({} as object), principal: claims.subject } as never,
+        }),
+      },
+    },
+    operation: "claim_task",
+    now: () => now * 1000,
+  });
+  assert(forgedIdentity.status === "DENIED" && forgedIdentity.reason === "IDENTITY_INVALID",
+    "plain copied identity claims must not pass runtime attestation");
 
   const expired = await composeTrustedWorkerRuntime({
     dependencies: complete,
