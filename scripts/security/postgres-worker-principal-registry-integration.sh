@@ -204,6 +204,10 @@ do $worker_identity$
 declare
   v_principal record;
 begin
+  if session_user::text <> 'happy_worker_dispatch' then
+    raise exception 'worker session authorization did not switch to the dedicated LOGIN role';
+  end if;
+
   select * into v_principal
     from private.happy_require_worker_principal('CONTROL');
   if not found
