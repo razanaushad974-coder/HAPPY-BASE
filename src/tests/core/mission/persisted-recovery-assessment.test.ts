@@ -42,6 +42,7 @@ const persistence: AsyncTenantPersistenceAdapter = {
   async delete() { throw new Error("read only"); },
   async transaction() { throw new Error("read only"); },
 };
+async function main(): Promise<void> {
 const evidenceCalls: unknown[] = [];
 const before = JSON.stringify([...records.entries()]);
 const result = await assessPersistedMissionRecovery(scope, "mission-1", persistence, {
@@ -126,3 +127,10 @@ catch (error) { requestMismatchDenied = error instanceof Error && error.message 
 if (!requestMismatchDenied) throw new Error("Execution result with a substituted request ID must be rejected.");
 
 console.log("Persisted mission recovery assessment: PASS");
+
+}
+
+void main().catch((error: unknown) => {
+  console.error(error);
+  process.exitCode = 1;
+});
