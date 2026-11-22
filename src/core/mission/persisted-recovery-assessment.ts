@@ -52,7 +52,11 @@ export async function assessPersistedMissionRecovery(
   if (!missionRecord) throw new Error("MISSION_RECOVERY_MISSION_NOT_FOUND");
   assertTenantRecordScope(missionRecord, scope);
   if (missionRecord.id !== missionId || missionRecord.entityType !== "MISSION" ||
-      !missionRecord.data || missionRecord.data.id !== missionId) {
+      !missionRecord.data || typeof missionRecord.data !== "object" ||
+      missionRecord.data.id !== missionId || !Array.isArray(missionRecord.data.taskIds) ||
+      missionRecord.data.taskIds.length > 500 ||
+      missionRecord.data.taskIds.some((id) => typeof id !== "string" || !id.trim()) ||
+      new Set(missionRecord.data.taskIds).size !== missionRecord.data.taskIds.length) {
     throw new Error("MISSION_RECOVERY_MISSION_BINDING_INVALID");
   }
   const mission = missionRecord.data;
@@ -73,6 +77,10 @@ export async function assessPersistedMissionRecovery(
     entityType: "EXECUTION",
     limit: 500,
   });
+  if (executionRecords.length >= 500) {
+    throw new Error("MISSION_RECOVERY_EXECUTION_SNAPSHOT_INCOMPLETE");
+  }
+
   const executions: MissionRecoveryExecution[] = [];
   const executionBindings: Array<{ executionId: string; taskId: string; requestId: string; outboxId?: string }> = [];
   for (const record of executionRecords) {
