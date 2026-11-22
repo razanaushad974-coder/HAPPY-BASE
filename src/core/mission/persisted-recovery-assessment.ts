@@ -15,10 +15,11 @@ export interface RecoveryEvidenceReader {
 }
 
 interface PersistedExecutionSnapshot {
+  id: string;
   missionId: string;
   taskId: string;
-  status: ExecutionStatus;
-  requestId: string;
+  status?: ExecutionStatus;
+  requestId?: string;
   outboxId?: string;
 }
 
@@ -30,8 +31,10 @@ export interface PersistedMissionRecoveryResult {
 
 /**
  * Read-only recovery composition over authenticated tenant persistence.
- * All records are loaded through the same complete tenant scope. It never
- * changes mission/task/execution state and never retries or dispatches work.
+ * It accepts both actual orchestration snapshots: the pre-execution request
+ * (data.id equals the persisted record ID, with no result status yet) and the
+ * post-execution result (data.requestId equals the persisted record ID).
+ * It never changes state, retries, or dispatches work.
  */
 export async function assessPersistedMissionRecovery(
   scope: TenantScope & { userId: string },
@@ -86,17 +89,25 @@ export async function assessPersistedMissionRecovery(
   for (const record of executionRecords) {
     assertTenantRecordScope(record, scope);
     if (!record.data || typeof record.data !== "object" ||
-        typeof record.data.missionId !== "string" || typeof record.data.taskId !== "string" ||
-        typeof record.data.status !== "string") {
+        typeof record.data.missionId !== "string" ||
+        typeof record.data.taskId !== "string" ||
+        (record.data.status !== undefined && typeof record.data.status !== "string")) {
       throw new Error("MISSION_RECOVERY_EXECUTION_RECORD_MALFORMED");
     }
     if (record.data.missionId !== missionId) continue;
-    if (record.entityType !== "EXECUTION" || !record.id.trim() ||
-        typeof record.data.requestId !== "string" || !record.data.requestId.trim() ||
+
+    const hasResultRequestId = typeof record.data.requestId === "string" && !!record.data.requestId.trim();
+    const isInitialRequest = record.data.requestId === undefined && record.data.id === record.id;
+    if (record.entityType !== "EXECUTION" || typeof record.id !== "string" || !record.id.trim() ||
+        (!hasResultRequestId && !isInitialRequest) ||
+        (hasResultRequestId && record.data.requestId !== record.id) ||
+        (typeof record.data.id !== "string" || !record.data.id.trim()) ||
         (record.data.outboxId !== undefined &&
           (typeof record.data.outboxId !== "string" || !record.data.outboxId.trim()))) {
       throw new Error("MISSION_RECOVERY_EXECUTION_BINDING_INVALID");
     }
+
+    const requestId = hasResultRequestId ? record.data.requestId! : record.id;
     executions.push({
       id: record.id,
       missionId: record.data.missionId,
@@ -106,7 +117,7 @@ export async function assessPersistedMissionRecovery(
     executionBindings.push({
       executionId: record.id,
       taskId: record.data.taskId,
-      requestId: record.data.requestId,
+      requestId,
       outboxId: record.data.outboxId,
     });
   }
@@ -120,6 +131,9 @@ export async function assessPersistedMissionRecovery(
       const binding = executionBindings.find((item) =>
         item.taskId === assessment.taskId && item.executionId === assessment.executionId
       );
+      // The current synchronous orchestration producer does not create a
+      // durable outbox ID. Evidence lookup is only allowed when one is truly
+      // present on the persisted record; never synthesize an outbox binding.
       if (!binding?.outboxId) continue;
       evidenceByTask[assessment.taskId] = await evidenceReader.listForExecution({
         outboxId: binding.outboxId,
