@@ -844,7 +844,7 @@ begin
      or v_outbox.payload->>'id' is distinct from p_execution_request_id
      or v_outbox.payload->>'missionId' is distinct from p_mission_id
      or v_outbox.payload->>'taskId' is distinct from p_task_id
-     or v_outbox.status not in ('AMBIGUOUS','RECONCILIATION_REQUIRED') then
+     or v_outbox.status not in ('DISPATCHED','AMBIGUOUS','RECONCILIATION_REQUIRED') then
     raise exception 'RECONCILIATION_READ_TARGET_BINDING_MISMATCH' using errcode = '55000';
   end if;
 
