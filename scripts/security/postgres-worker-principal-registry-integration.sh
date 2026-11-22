@@ -111,10 +111,20 @@ grant select on private.happy_worker_principal_registry,
   private.happy_worker_tenant_grants, private.organizations, private.workspaces,
   private.organization_memberships, private.workspace_memberships
   to happy_worker_registry_owner;
+-- SELECT FOR SHARE requires UPDATE privilege. Limit the non-login function
+-- owner to one status/activation column per table; it receives no table-wide
+-- UPDATE and no runtime login is granted this authority.
+grant update (enabled) on private.happy_worker_principal_registry,
+  private.happy_worker_tenant_grants to happy_worker_registry_owner;
+grant update (status) on private.organizations, private.workspaces,
+  private.organization_memberships, private.workspace_memberships
+  to happy_worker_registry_owner;
+grant create on schema private to happy_worker_registry_owner;
 alter function private.happy_require_worker_principal(text)
   owner to happy_worker_registry_owner;
 alter function private.happy_require_worker_tenant_scope(uuid,uuid,uuid,uuid,text)
   owner to happy_worker_registry_owner;
+revoke create on schema private from happy_worker_registry_owner;
 grant usage on schema private to happy_worker_dispatch;
 grant execute on function private.happy_require_worker_principal(text),
   private.happy_require_worker_tenant_scope(uuid,uuid,uuid,uuid,text)
