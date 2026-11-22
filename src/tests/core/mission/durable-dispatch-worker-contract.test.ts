@@ -19,6 +19,7 @@ const dispatch: ClaimedDispatch = {
   executionRequestId: request.id, leaseId: "lease-1",
   ownerId: "worker-1", fencingToken: 4, request,
 };
+const workerNow = Math.floor(Date.now() / 1000);
 const workerIdentity: WorkerIdentityResolution = {
   status: "VERIFIED",
   identity: {
@@ -27,8 +28,8 @@ const workerIdentity: WorkerIdentityResolution = {
     audience: "happy-execution",
     environment: "staging",
     tokenId: "token-unique-1",
-    issuedAt: 1_800_000_000,
-    expiresAt: 1_800_000_240,
+    issuedAt: workerNow - 30,
+    expiresAt: workerNow + 240,
     capabilities: ["API"],
   },
 };
@@ -132,6 +133,22 @@ async function run(): Promise<void> {
   );
   assert(disconnected.status === "RECONCILIATION_REQUIRED" && providerCalls === 1,
     "unconnected worker identity reached provider");
+
+  const expiredIdentity: WorkerIdentityResolution = {
+    ...workerIdentity,
+    identity: { ...workerIdentity.identity, expiresAt: workerNow - 1 },
+  };
+  const expired = await dispatchClaimedOutboxItem(
+    dispatch, expiredIdentity, provider, recorderFor(async () => {}), () => workerNow * 1000,
+  );
+  assert(expired.status === "RECONCILIATION_REQUIRED" && providerCalls === 1,
+    "expired worker identity reached provider");
+
+  const unavailableClock = await dispatchClaimedOutboxItem(
+    dispatch, workerIdentity, provider, recorderFor(async () => {}), () => Number.NaN,
+  );
+  assert(unavailableClock.status === "RECONCILIATION_REQUIRED" && providerCalls === 1,
+    "invalid worker clock reached provider");
 
   console.log("Durable dispatch worker contract tests: PASS");
 }
