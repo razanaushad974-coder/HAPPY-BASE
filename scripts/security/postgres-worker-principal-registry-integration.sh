@@ -57,9 +57,28 @@ create table if not exists private.workspaces (
   status text not null default 'ACTIVE',
   unique (organization_id, workspace_id)
 );
+create table if not exists private.organization_memberships (
+  organization_id uuid not null references private.organizations(organization_id),
+  user_id uuid not null references auth.users(id),
+  status text not null,
+  role text not null,
+  primary key (organization_id, user_id)
+);
+create table if not exists private.workspace_memberships (
+  organization_id uuid not null,
+  workspace_id uuid not null,
+  user_id uuid not null references auth.users(id),
+  status text not null,
+  role text not null,
+  primary key (organization_id, workspace_id, user_id),
+  foreign key (organization_id, workspace_id)
+    references private.workspaces(organization_id, workspace_id)
+);
 
 insert into auth.users(id)
-values ('30000000-0000-4000-8000-000000000003')
+values
+  ('30000000-0000-4000-8000-000000000003'),
+  ('40000000-0000-4000-8000-000000000004')
 on conflict do nothing;
 insert into private.organizations(organization_id,status)
 values ('10000000-0000-4000-8000-000000000001','ACTIVE')
@@ -71,6 +90,16 @@ values (
   'ACTIVE'
 )
 on conflict do nothing;
+insert into private.organization_memberships(organization_id,user_id,status,role)
+values
+  ('10000000-0000-4000-8000-000000000001','30000000-0000-4000-8000-000000000003','ACTIVE','MEMBER'),
+  ('10000000-0000-4000-8000-000000000001','40000000-0000-4000-8000-000000000004','ACTIVE','MEMBER')
+on conflict do nothing;
+insert into private.workspace_memberships(organization_id,workspace_id,user_id,status,role)
+values
+  ('10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002','30000000-0000-4000-8000-000000000003','ACTIVE','MEMBER'),
+  ('10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002','40000000-0000-4000-8000-000000000004','ACTIVE','MEMBER')
+on conflict do nothing;
 SQL
 
 "${psql[@]}" -f "$REGISTRY_SQL"
@@ -78,11 +107,17 @@ SQL
 "${psql[@]}" <<'SQL'
 -- Use a non-login, non-privileged SECURITY DEFINER owner in the test as well.
 grant usage on schema private to happy_worker_registry_owner;
-grant select on private.happy_worker_principal_registry to happy_worker_registry_owner;
+grant select on private.happy_worker_principal_registry,
+  private.happy_worker_tenant_grants, private.organizations, private.workspaces,
+  private.organization_memberships, private.workspace_memberships
+  to happy_worker_registry_owner;
 alter function private.happy_require_worker_principal(text)
   owner to happy_worker_registry_owner;
+alter function private.happy_require_worker_tenant_scope(uuid,uuid,uuid,uuid,text)
+  owner to happy_worker_registry_owner;
 grant usage on schema private to happy_worker_dispatch;
-grant execute on function private.happy_require_worker_principal(text)
+grant execute on function private.happy_require_worker_principal(text),
+  private.happy_require_worker_tenant_scope(uuid,uuid,uuid,uuid,text)
   to happy_worker_dispatch;
 
 insert into private.happy_worker_principal_registry (
@@ -171,6 +206,28 @@ begin
   select * into v_principal
     from private.happy_require_worker_principal('VERIFY');
   if not found then raise exception 'registered VERIFY capability was denied'; end if;
+
+  if private.happy_require_worker_tenant_scope(
+    '60000000-0000-4000-8000-000000000006',
+    '10000000-0000-4000-8000-000000000001',
+    '20000000-0000-4000-8000-000000000002',
+    '30000000-0000-4000-8000-000000000003',
+    'CONTROL'
+  ) <> '30000000-0000-4000-8000-000000000003' then
+    raise exception 'active worker tenant grant did not resolve its mapped user';
+  end if;
+
+  begin
+    perform private.happy_require_worker_tenant_scope(
+      '60000000-0000-4000-8000-000000000006',
+      '10000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000002',
+      '40000000-0000-4000-8000-000000000004',
+      'CONTROL'
+    );
+    raise exception 'ungranted user scope unexpectedly succeeded';
+  exception when insufficient_privilege then null;
+  end;
 
   begin
     perform * from private.happy_require_worker_principal('API');
