@@ -59,7 +59,9 @@ export class JwksOidcWorkerCredentialVerifier implements WorkerCredentialVerifie
       if (parts.length !== 3 || parts.some((part) => !part)) return null;
 
       const header = decodeJson(parts[0]);
-      if (!header || header.alg !== "RS256" || typeof header.kid !== "string" || !header.kid.trim()) return null;
+      if (!header || header.alg !== "RS256" || typeof header.kid !== "string" || !header.kid.trim() ||
+          (header.crit !== undefined && (!Array.isArray(header.crit) || header.crit.length > 0)) ||
+          header.jku !== undefined || header.x5u !== undefined) return null;
 
       const keys = await this.getKeys(false);
       let jwk = keys.get(header.kid);
@@ -84,8 +86,10 @@ export class JwksOidcWorkerCredentialVerifier implements WorkerCredentialVerifie
       const audiences = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
       if (
         payload.iss !== this.config.issuer ||
+        audiences.length === 0 ||
         audiences.some((audience) => typeof audience !== "string") ||
         !audiences.includes(this.config.audience) ||
+        (audiences.length > 1 && payload.azp !== this.config.audience) ||
         typeof payload.sub !== "string" || !payload.sub.trim() ||
         !isTimestamp(payload.iat) || !isTimestamp(payload.nbf) || !isTimestamp(payload.exp) ||
         payload.iat > now + skew || payload.nbf > now + skew || payload.exp <= now - skew ||
@@ -134,8 +138,15 @@ export class JwksOidcWorkerCredentialVerifier implements WorkerCredentialVerifie
         if (
           typeof key.kid === "string" && key.kid.trim() &&
           key.kty === "RSA" && key.use === "sig" &&
-          (!key.alg || key.alg === "RS256")
-        ) next.set(key.kid, key);
+          (!key.alg || key.alg === "RS256") &&
+          typeof key.n === "string" && decodeBase64Url(key.n).length >= 256 &&
+          typeof key.e === "string" &&
+          (!Array.isArray((key as JsonWebKey & { key_ops?: unknown }).key_ops) ||
+            ((key as JsonWebKey & { key_ops: unknown[] }).key_ops.includes("verify")))
+        ) {
+          if (next.has(key.kid)) throw new Error("Worker JWKS contains duplicate key IDs");
+          next.set(key.kid, key);
+        }
       }
       if (next.size === 0) throw new Error("Worker JWKS contains no supported signing keys");
       this.cachedKeys = next;
