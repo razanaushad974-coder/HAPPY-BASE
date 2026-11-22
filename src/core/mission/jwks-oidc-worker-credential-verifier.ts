@@ -138,7 +138,7 @@ export class JwksOidcWorkerCredentialVerifier implements WorkerCredentialVerifie
         const key = item as JsonWebKey & { kid?: unknown; kty?: unknown; use?: unknown; alg?: unknown };
         if (
           typeof key.kid === "string" && key.kid.trim() &&
-          key.kty === "RSA" && key.use === "sig" &&
+          key.kty === "RSA" && (key.use === undefined || key.use === "sig") &&
           (!key.alg || key.alg === "RS256") &&
           typeof key.n === "string" && decodeBase64Url(key.n).length >= 256 &&
           typeof key.e === "string" &&
