@@ -92,6 +92,28 @@ function parseJsonObject(
   }
 }
 
+const APPROVAL_SENSITIVE_ACTIONS = new Set<PlanStepAction>([
+  "POST", "PUT", "PATCH", "DELETE", "DEPLOY", "PUBLISH", "CONTROL",
+  "DB_INSERT", "DB_UPDATE", "DB_DELETE", "DB_TRANSACTION",
+]);
+
+const SIDE_EFFECT_ACTIONS = new Set<PlanStepAction>([
+  "CREATE", "MODIFY", "BUILD", "REQUEST", "CALL", "POST", "PUT", "PATCH",
+  "DELETE", "DEPLOY", "PUBLISH", "AUTOMATE", "CONTROL",
+  "DB_INSERT", "DB_UPDATE", "DB_DELETE", "DB_TRANSACTION",
+]);
+
+const RISK_ORDER: Record<PlanRisk, number> = {
+  LOW: 0,
+  MEDIUM: 1,
+  HIGH: 2,
+  CRITICAL: 3,
+};
+
+function higherRisk(left: PlanRisk, right: PlanRisk): PlanRisk {
+  return RISK_ORDER[left] >= RISK_ORDER[right] ? left : right;
+}
+
 export class ReasoningEngine {
   constructor(
     private readonly gateway: AIGateway =
@@ -419,12 +441,17 @@ Rules:
               ? step.risk
               : "LOW";
 
+          // The model may understate risk. Trusted request-level risk and
+          // intrinsically sensitive actions must override model output.
+          const effectiveRisk = APPROVAL_SENSITIVE_ACTIONS.has(step.action)
+            ? higherRisk(declaredRisk, "HIGH")
+            : SIDE_EFFECT_ACTIONS.has(step.action)
+              ? higherRisk(declaredRisk, assessedRisk)
+              : declaredRisk;
           const requiresApproval =
-            asBoolean(
-              step.requiresApproval,
-            ) ||
-            declaredRisk === "HIGH" ||
-            declaredRisk === "CRITICAL";
+            asBoolean(step.requiresApproval) ||
+            effectiveRisk === "HIGH" ||
+            effectiveRisk === "CRITICAL";
 
           return {
             id: createId("plan-step"),
@@ -447,13 +474,7 @@ Rules:
                 : undefined,
             dependencies: [],
             requiresApproval,
-            risk:
-              declaredRisk === "LOW" &&
-              (assessedRisk === "HIGH" ||
-                assessedRisk === "CRITICAL") &&
-              step.action === "BUILD"
-                ? assessedRisk
-                : declaredRisk,
+            risk: effectiveRisk,
             verificationRequired: true,
           };
         },
