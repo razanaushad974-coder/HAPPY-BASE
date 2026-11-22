@@ -105,3 +105,58 @@ A follow-up source comparison confirmed that the scheduler enqueue candidate sti
 This remains a P0 blocker even though worker RPCs are fully grant-revoked. Do not restore any grants. The next SQL design change must first add a canonical immutable request envelope and an authenticated creation/decision lifecycle that matches the TypeScript contract; it must bind the exact request to tenant, requester, executor, mission, task, capability, action, input, target reference, idempotency key, approval requirement, and persisted approval. The enqueue function must then lock that exact request, derive/verify the digest from persisted columns, compare the complete envelope and lease/attempt binding, and reject missing, cancelled, completed, mismatched, or unapproved requests before outbox insertion. The disposable PostgreSQL harness must include fabricated request IDs, altered input/action/capability, stale/revoked/missing approval, idempotency reuse, and concurrent enqueue attacks.
 
 No implementation is claimed for this P0 gap yet. It is intentionally left blocked until the canonical request and approval lifecycle can be designed end-to-end without inventing or bypassing the missing producer authority.
+
+
+## Persisted execution envelope and founder approval binding implemented in candidate — 2026-11-22
+
+The earlier P0 request-binding gap has now been addressed in the design-only SQL candidates. The canonical lifecycle is the existing `supabase/drafts/20261121_authenticated_execution_envelope_candidate.sql`; the scheduler enqueue implementation is in `supabase/drafts/20261121_durable_mission_scheduler_candidate.sql`. No second competing request-lifecycle migration is retained.
+
+### Request creation and approval lifecycle
+
+- The execution-request table now has a complete immutable envelope: capability, action, JSON input, target reference, requester/executor, organization/workspace, mission/task, HIGH risk, required Founder approval, input digest, envelope digest, request-creation idempotency key, and creation timestamp.
+- New enveloped requests must start `WAITING_APPROVAL` with `approval_status=PENDING`; direct legacy inserts cannot mint a pre-approved executable request.
+- The authenticated creation RPC derives requester and executor from `auth.uid()`, validates active organization/workspace membership, and binds mission/task selectors to same-user/same-tenant persisted records. The mission must contain the task ID and the task must point back to the mission.
+- Exact idempotent request retries return the original persisted request and timestamp. Reuse of the same key with a different action/input/envelope is rejected.
+- The authenticated decision RPC locks the request, organization, workspace, and both memberships; requires an active organization FOUNDER plus an allowed active workspace role; rejects self-approval; and atomically changes the request from `WAITING_APPROVAL/PENDING` to `READY/APPROVED` or `CANCELLED/REJECTED`.
+- Approval decision evidence is append-only. Legacy rows without a complete envelope remain non-executable and are not returned by the new executor-bound resolver.
+- Current producer contract does not accept a trusted risk classification, so the database conservatively classifies every request as HIGH and requires Founder approval. This is deliberately restrictive, not a final risk-policy design.
+
+### Enqueue now verifies persisted authority
+
+Before an outbox insert, `happy_enqueue_mission_dispatch`:
+
+1. Locks the current lease and exact persisted execution-request row, scoped to organization, workspace, user, mission, and task.
+2. Requires `READY`, `APPROVED`, `requires_approval=true`, `required_approval_role=FOUNDER`, a distinct persisted `decided_by`, and decision timestamp.
+3. Recomputes the stored input digest and immutable envelope digest from persisted fields; it does not trust a caller-supplied request digest.
+4. Reconstructs the exact execution payload (including `approved=true`, HIGH risk, target reference and persisted creation time) and requires structural equality with caller payload.
+5. Recomputes the payload digest and rejects any digest or payload mismatch.
+6. Recomputes the dispatch idempotency key from tenant scope, mission, task, lease attempt, request ID, capability, and action. This is deliberately separate from the request-creation idempotency key.
+7. Preserves the existing tenant-scoped outbox uniqueness and exact idempotent-retry comparison.
+
+The TypeScript durable-request store now normalizes database timestamps to ISO milliseconds before rebuilding the execution request, and the creator always sends explicit SQL NULL for an absent target reference. New tests cover the creator/decision adapters and timestamp normalization. The SQL static contract test now checks the persisted request lock, Founder approval, digest recomputation, exact payload binding, attempt-bound idempotency, and retained worker grant revocation.
+
+### Disposable PostgreSQL verification
+
+The PostgreSQL integration harness now applies the canonical envelope candidate after the base request RPC and:
+- Creates two canonical requests through the authenticated RPC.
+- Verifies exact idempotent creation and rejects same-key/different-action reuse.
+- Verifies requester self-approval returns false and a separate FOUNDER decision succeeds.
+- Leaves a third request pending and verifies enqueue denies it.
+- Verifies a fabricated request ID and altered payload cannot enqueue.
+- Verifies complete envelopes resolve to their executor while legacy incomplete rows are hidden.
+- Exercises the scheduler outbox using persisted approved requests and attempt-bound idempotency keys.
+- Resolves reconciliation concurrency tests using the persisted outbox idempotency key rather than the older request-creation key.
+
+GitHub Actions run `45025306413` on code commit `8fdb98806affd38e36142e3cb078ecf0f84ffdc6` completed **SUCCESS**. TypeScript, the complete security harness, PostgreSQL RLS/CAS + scheduler/outbox/reconciliation integration, orchestration/mission harnesses, ESLint, dependency audit, and production build all passed. The run uses a disposable PostgreSQL 17 database with a local `auth.uid()` claim stub.
+
+### Remaining blockers — do not deploy or grant worker access
+
+- All worker/dispatch/reconciliation RPC EXECUTE grants remain revoked from `PUBLIC`, `anon`, `authenticated`, and `service_role`.
+- A dedicated Vercel worker project/runtime, supported OIDC token source, cryptographic JWKS verifier, and worker registry are still NOT_YET_CONNECTED.
+- The database bridge must preserve the distinction between verified workload identity and the original human tenant actor; Vercel OIDC `sub` is not a Supabase `auth.uid()` UUID.
+- Scheduler function ownership and the least-privilege database principal for a future worker remain unresolved. Do not use broad `service_role` as a substitute.
+- The request lifecycle currently has no post-approval revocation RPC; decision evidence is one final append-only event per request. A reviewed revocation/cancellation path must be designed before claiming approval revocation support.
+- Cross-language canonical digest parity should receive explicit edge-case coverage for Unicode object keys and unusual numeric representations before production wiring. The current disposable harness verifies the selected JSON payloads and SQL digest path; it is not proof of every JSON serialization edge case.
+- No hosted Supabase migration, Vercel setting, production deployment, or `main` change was performed.
+
+**Status:** persisted request + Founder approval + enqueue binding are implemented and CI-verified in design-only candidates; production worker authentication and dispatch remain BLOCKED / NOT_YET_CONNECTED.
