@@ -11,7 +11,7 @@ export interface WorkerJwksResponse {
   json(): Promise<unknown>;
 }
 
-export type WorkerJwksFetcher = (url: string) => Promise<WorkerJwksResponse>;
+export type WorkerJwksFetcher = (url: string, signal?: AbortSignal) => Promise<WorkerJwksResponse>;
 
 export interface JwksOidcVerifierConfig {
   issuer: string;
@@ -48,7 +48,7 @@ export class JwksOidcWorkerCredentialVerifier implements WorkerCredentialVerifie
 
   constructor(
     private readonly config: JwksOidcVerifierConfig,
-    private readonly fetcher: WorkerJwksFetcher = (url) => fetch(url),
+    private readonly fetcher: WorkerJwksFetcher = (url, signal) => fetch(url, { signal }),
   ) {}
 
   async verifyCredential(credential: string): Promise<VerifiedWorkerCredentialClaims | null> {
