@@ -189,8 +189,6 @@ $claim$;
 -- Deterministic JSON serializer shared by the TS payload digest contract.
 -- Object keys use bytewise ordering; arrays preserve order.
 
-revoke all on function private.happy_worker_claim_mission_task(uuid,uuid,uuid,uuid,text,text,text,integer)
-  from public, anon, authenticated, service_role;
 
 -- Worker-only twin of happy_enqueue_mission_dispatch; uses DB-derived identity and a
 -- transactionally locked worker-to-user tenant scope.
@@ -424,8 +422,6 @@ begin
 end;
 $enqueue$;
 
-revoke all on function private.happy_worker_enqueue_mission_dispatch(uuid,uuid,uuid,uuid,text,text,uuid,text,bigint,text,text,text,text,text,jsonb)
-  from public, anon, authenticated, service_role;
 
 -- Worker-only twin of happy_heartbeat_mission_task_lease; uses DB-derived identity and a
 -- transactionally locked worker-to-user tenant scope.
@@ -478,8 +474,6 @@ begin
 end;
 $heartbeat$;
 
-revoke all on function private.happy_worker_heartbeat_mission_task_lease(uuid,uuid,uuid,uuid,text,text,uuid,text,bigint,integer)
-  from public, anon, authenticated, service_role;
 
 -- Worker-only twin of happy_claim_dispatch_outbox; uses DB-derived identity and a
 -- transactionally locked worker-to-user tenant scope.
@@ -570,8 +564,6 @@ begin
 end;
 $dispatch$;
 
-revoke all on function private.happy_worker_claim_dispatch_outbox(uuid,uuid,uuid,uuid,uuid,uuid,text,bigint)
-  from public, anon, authenticated, service_role;
 
 -- Worker-only twin of happy_record_dispatch_outcome; uses DB-derived identity and a
 -- transactionally locked worker-to-user tenant scope.
@@ -661,10 +653,6 @@ begin
 end;
 $outcome$;
 
-revoke all on function public.happy_heartbeat_mission_task_lease(uuid,uuid,text,text,uuid,text,bigint,integer)
-  from public, anon, authenticated, service_role;
-revoke all on function private.happy_worker_record_dispatch_outcome(uuid,uuid,uuid,uuid,text,bigint,text,jsonb)
-  from public, anon, authenticated, service_role;
 
 -- WORKER AUTHORIZATION FAIL-CLOSED GATE:
 -- No worker workload identity provider is currently implemented. Therefore
@@ -733,8 +721,6 @@ revoke all on public.happy_dispatch_reconciliation_evidence
 comment on table public.happy_dispatch_reconciliation_evidence is
   'Append-only provider status observations. Never rewrites the original dispatch outcome.';
 
-revoke all on function private.happy_worker_record_dispatch_outcome(uuid,uuid,uuid,uuid,uuid,uuid,text,bigint,text,jsonb)
-  from public, anon, authenticated, service_role;
 
 -- Worker-only twin of happy_append_dispatch_reconciliation_evidence; uses DB-derived identity and a
 -- transactionally locked worker-to-user tenant scope.
@@ -829,16 +815,12 @@ begin
 end;
 $append$;
 
-revoke all on function private.happy_worker_append_dispatch_reconciliation_evidence(uuid,uuid,uuid,uuid,text,text,text,timestamptz,jsonb)
-  from public, anon, authenticated, service_role;
 
 -- Read-only recovery evidence lookup. The caller must present the complete
 -- immutable dispatch identity; the database re-derives auth.uid() and checks
 -- the tenant, mission, task, and execution request against the outbox row.
 -- Direct SELECT on the evidence table remains revoked.
 
-revoke all on function private.happy_worker_append_dispatch_reconciliation_evidence(uuid,uuid,uuid,uuid,uuid,uuid,text,text,text,timestamptz,jsonb)
-  from public, anon, authenticated, service_role;
 
 -- Worker-only twin of happy_list_dispatch_reconciliation_evidence; uses DB-derived identity and a
 -- transactionally locked worker-to-user tenant scope.
@@ -952,6 +934,25 @@ $read_evidence$;
 -- 6. The trigger blocks ordinary UPDATE/DELETE, but privileged owners can
 --    disable triggers; production ownership and operational controls remain
 --    mandatory.
+
+
+revoke all on function private.happy_worker_claim_mission_task(uuid,uuid,uuid,uuid,text,text,text,integer)
+  from public, anon, authenticated, service_role;
+
+revoke all on function private.happy_worker_enqueue_mission_dispatch(uuid,uuid,uuid,uuid,text,text,uuid,text,bigint,text,text,text,text,text,jsonb)
+  from public, anon, authenticated, service_role;
+
+revoke all on function private.happy_worker_heartbeat_mission_task_lease(uuid,uuid,uuid,uuid,text,text,uuid,text,bigint,integer)
+  from public, anon, authenticated, service_role;
+
+revoke all on function private.happy_worker_claim_dispatch_outbox(uuid,uuid,uuid,uuid,uuid,uuid,text,bigint)
+  from public, anon, authenticated, service_role;
+
+revoke all on function private.happy_worker_record_dispatch_outcome(uuid,uuid,uuid,uuid,uuid,uuid,text,bigint,text,jsonb)
+  from public, anon, authenticated, service_role;
+
+revoke all on function private.happy_worker_append_dispatch_reconciliation_evidence(uuid,uuid,uuid,uuid,uuid,uuid,text,text,text,timestamptz,jsonb)
+  from public, anon, authenticated, service_role;
 
 revoke all on function private.happy_worker_list_dispatch_reconciliation_evidence(uuid,uuid,uuid,uuid,uuid,text,text,text)
   from public, anon, authenticated, service_role;
