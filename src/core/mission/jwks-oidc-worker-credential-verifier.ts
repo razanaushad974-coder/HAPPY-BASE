@@ -90,6 +90,7 @@ export class JwksOidcWorkerCredentialVerifier implements WorkerCredentialVerifie
         audiences.some((audience) => typeof audience !== "string") ||
         !audiences.includes(this.config.audience) ||
         (audiences.length > 1 && payload.azp !== this.config.audience) ||
+        (payload.azp !== undefined && payload.azp !== this.config.audience) ||
         typeof payload.sub !== "string" || !payload.sub.trim() ||
         !isTimestamp(payload.iat) || !isTimestamp(payload.nbf) || !isTimestamp(payload.exp) ||
         payload.iat > now + skew || payload.nbf > now + skew || payload.exp <= now - skew ||
