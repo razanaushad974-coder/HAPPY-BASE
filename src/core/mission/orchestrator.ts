@@ -10,10 +10,44 @@ import type {
 
 import { MissionEngine } from "./mission-engine";
 import { TaskGraphEngine } from "./task-graph";
+import {
+  composeTrustedWorkerRuntime,
+  type WorkerRuntimeComposition,
+  type WorkerRuntimeCompositionDependencies,
+} from "./worker-runtime-composition";
+import type { WorkerBrokerOperation } from "./worker-database-broker";
 
 export class MissionOrchestrator {
   private readonly missionEngine = new MissionEngine();
   private readonly graphEngine = new TaskGraphEngine();
+
+  constructor(
+    private readonly workerRuntimeDependencies: WorkerRuntimeCompositionDependencies | null = null,
+  ) {}
+
+  /**
+   * Explicit worker-only authorization seam. The default application
+   * orchestrator remains disconnected and continues using its existing
+   * mission/task graph behavior; it never falls back to a human session or
+   * silently treats in-memory orchestration as durable worker execution.
+   */
+  prepareWorkerRuntimeOperation(
+    operation: WorkerBrokerOperation,
+    now?: () => number,
+  ): Promise<WorkerRuntimeComposition> {
+    if (!this.workerRuntimeDependencies) {
+      return Promise.resolve({
+        status: "NOT_CONNECTED",
+        missing: "IDENTITY_PROVIDER",
+      });
+    }
+
+    return composeTrustedWorkerRuntime({
+      dependencies: this.workerRuntimeDependencies,
+      operation,
+      ...(now ? { now } : {}),
+    });
+  }
 
   create(plan: ExecutionPlan): MissionSnapshot {
     const mission = this.missionEngine.createMission(plan);
@@ -50,4 +84,3 @@ export class MissionOrchestrator {
     };
   }
 }
-
