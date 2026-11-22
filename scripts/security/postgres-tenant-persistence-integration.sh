@@ -585,10 +585,6 @@ select * from public.create_authenticated_execution_request(
   'API','POST','{"value":9}'::jsonb,null,
   'tenant-attempt-key-pending'
 );
-reset role;
-set role authenticated;
-select set_config('request.jwt.claim.sub',
-  '40000000-0000-4000-8000-000000000004', false);
 do $self_approval$
 declare
   v_result boolean;
@@ -599,6 +595,10 @@ begin
   if v_result then raise exception 'requester self-approval unexpectedly succeeded'; end if;
 end
 $self_approval$;
+reset role;
+set role authenticated;
+select set_config('request.jwt.claim.sub',
+  '40000000-0000-4000-8000-000000000004', false);
 select public.decide_authenticated_execution_request(
   'request-scheduler-1','APPROVED','test founder approval'
 );
