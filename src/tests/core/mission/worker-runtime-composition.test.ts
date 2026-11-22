@@ -1,5 +1,6 @@
 import {
   composeTrustedWorkerRuntime,
+  WorkerBrokerAuthorizationError,
   type WorkerRuntimeCompositionDependencies,
 } from "../../../core/mission/worker-runtime-composition";
 import {
@@ -38,19 +39,32 @@ const identityProvider = new TrustedWorkerIdentityProvider(
   },
   () => now * 1000,
 );
-const registry: WorkerPrincipalRegistry = {
-  findByIssuerSubjectEnvironment: async () => ({
-    principalId: "principal-1",
-    issuer: claims.issuer,
-    subject: claims.subject,
-    audience: "happy-worker-broker",
-    environment: "staging",
-    enabled: true,
-    capabilities: ["CONTROL", "VERIFY"],
-  }),
+let liveRegistration = {
+  principalId: "principal-1",
+  issuer: claims.issuer,
+  subject: claims.subject,
+  audience: "happy-worker-broker",
+  environment: "staging",
+  enabled: true,
+  capabilities: ["CONTROL", "VERIFY"] as const,
 };
-// This test double proves composition only; it is not a database connection.
-const broker = {} as WorkerDatabaseBroker;
+const registry: WorkerPrincipalRegistry = {
+  findByIssuerSubjectEnvironment: async () => liveRegistration,
+};
+// This test double proves guarded dispatch only; it is not a database connection.
+let brokerCalls = 0;
+const broker = {
+  claimTask: async () => {
+    brokerCalls += 1;
+    return { leaseId: "lease-1", attempt: 1, fencingToken: 1, expiresAt: new Date(now * 1000 + 60_000).toISOString(), taskVersion: 1 };
+  },
+  heartbeatLease: async () => "2026-11-22T20:00:00.000Z",
+  enqueueDispatch: async () => ({}),
+  claimDispatch: async () => ({}),
+  recordDispatchOutcome: async () => ({}),
+  appendReconciliationEvidence: async () => "evidence-1",
+  listReconciliationEvidence: async () => [],
+} as unknown as WorkerDatabaseBroker;
 const complete: WorkerRuntimeCompositionDependencies = {
   identityProvider,
   principalRegistry: registry,
@@ -101,8 +115,31 @@ async function run() {
   assert(composed.status === "COMPOSITION_AVAILABLE", "valid worker dependencies should compose");
   assert(composed.status === "COMPOSITION_AVAILABLE" && composed.liveDatabaseSession === "NOT_VERIFIED",
     "composition must not claim a live PostgreSQL session");
-  assert(composed.status === "COMPOSITION_AVAILABLE" && composed.broker === broker,
-    "composition must preserve the injected fixed-operation broker");
+  assert(composed.status === "COMPOSITION_AVAILABLE" && composed.broker !== broker,
+    "composition must expose a guarded facade, never the raw broker");
+  if (composed.status === "COMPOSITION_AVAILABLE") {
+    await composed.broker.claimTask({
+      tenantScope: { workerPrincipalId: "principal-1", organizationId: "org-1", workspaceId: "ws-1", userId: "user-1" },
+      missionId: "mission-1", taskId: "task-1", ownerId: claims.subject, leaseMilliseconds: 30_000,
+    });
+  }
+  assert(brokerCalls === 1, "authorized broker call should reach the underlying broker");
+  liveRegistration = { ...liveRegistration, enabled: false };
+  let revokedCallDenied = false;
+  try {
+    if (composed.status === "COMPOSITION_AVAILABLE") {
+      await composed.broker.claimTask({
+        tenantScope: { workerPrincipalId: "principal-1", organizationId: "org-1", workspaceId: "ws-1", userId: "user-1" },
+        missionId: "mission-1", taskId: "task-2", ownerId: claims.subject, leaseMilliseconds: 30_000,
+      });
+    }
+  } catch (error) {
+    revokedCallDenied = error instanceof WorkerBrokerAuthorizationError &&
+      error.reason === "PRINCIPAL_NOT_AUTHORIZED";
+  }
+  assert(revokedCallDenied, "revocation after composition must deny subsequent broker calls");
+  assert(brokerCalls === 1, "revoked call must not reach the raw broker");
+  liveRegistration = { ...liveRegistration, enabled: true };
 
   const revoked = await composeTrustedWorkerRuntime({
     dependencies: {
