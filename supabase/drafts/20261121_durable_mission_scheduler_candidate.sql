@@ -71,6 +71,67 @@ create index happy_execution_dispatch_outbox_pending_idx
   on public.happy_execution_dispatch_outbox (created_at, outbox_id)
   where status = 'PENDING';
 
+
+-- Enforce the outbox's immutable dispatch identity and monotonic state machine
+-- at the table boundary, independently of the SECURITY DEFINER RPC code.
+create or replace function public.happy_guard_execution_dispatch_outbox()
+returns trigger
+language plpgsql
+set search_path = pg_catalog
+as $outbox_guard$
+begin
+  if tg_op = 'DELETE' then
+    raise exception 'DISPATCH_OUTBOX_APPEND_ONLY' using errcode = '55000';
+  end if;
+
+  if new.outbox_id is distinct from old.outbox_id
+     or new.organization_id is distinct from old.organization_id
+     or new.workspace_id is distinct from old.workspace_id
+     or new.user_id is distinct from old.user_id
+     or new.mission_id is distinct from old.mission_id
+     or new.task_id is distinct from old.task_id
+     or new.lease_id is distinct from old.lease_id
+     or new.fencing_token is distinct from old.fencing_token
+     or new.attempt is distinct from old.attempt
+     or new.execution_request_id is distinct from old.execution_request_id
+     or new.idempotency_key is distinct from old.idempotency_key
+     or new.capability is distinct from old.capability
+     or new.action is distinct from old.action
+     or new.payload_digest is distinct from old.payload_digest
+     or new.payload is distinct from old.payload
+     or new.created_at is distinct from old.created_at then
+    raise exception 'DISPATCH_OUTBOX_IMMUTABLE_BINDING' using errcode = '55000';
+  end if;
+
+  if new.updated_at <= old.updated_at then
+    raise exception 'DISPATCH_OUTBOX_UPDATED_AT_MUST_ADVANCE' using errcode = '55000';
+  end if;
+
+  if old.status = 'PENDING' and new.status = 'DISPATCHED' then
+    if new.outcome is distinct from old.outcome then
+      raise exception 'DISPATCH_OUTBOX_OUTCOME_BEFORE_RESULT' using errcode = '55000';
+    end if;
+  elsif old.status = 'DISPATCHED'
+        and new.status in ('ACKNOWLEDGED','AMBIGUOUS','FAILED','RECONCILIATION_REQUIRED') then
+    if old.outcome is distinct from '{}'::jsonb
+       or new.outcome is null
+       or jsonb_typeof(new.outcome) is distinct from 'object'
+       or new.outcome = '{}'::jsonb then
+      raise exception 'DISPATCH_OUTBOX_OUTCOME_MUST_BE_RECORDED_ONCE' using errcode = '55000';
+    end if;
+  else
+    raise exception 'DISPATCH_OUTBOX_ILLEGAL_STATE_TRANSITION' using errcode = '55000';
+  end if;
+
+  return new;
+end;
+$outbox_guard$;
+
+create trigger happy_execution_dispatch_outbox_guard
+before update or delete on public.happy_execution_dispatch_outbox
+for each row execute function public.happy_guard_execution_dispatch_outbox();
+
+
 alter table public.happy_mission_task_leases enable row level security;
 alter table public.happy_execution_dispatch_outbox enable row level security;
 revoke all on public.happy_mission_task_leases from public, anon, authenticated, service_role;
