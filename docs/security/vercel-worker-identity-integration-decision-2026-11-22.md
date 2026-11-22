@@ -91,3 +91,16 @@ Two stale test assumptions were corrected without restoring worker grants:
 The first rerun exposed this second stale assumption in the separate concurrency script; that failure was fixed. GitHub Actions run `45022850389` on commit `83d603c15f30630750f58e6572df2b055862e331` completed **SUCCESS**: TypeScript, security harnesses, async tenant/persistence contracts, PostgreSQL RLS/CAS and scheduler/outbox/reconciliation integration, orchestration/mission harnesses, ESLint, dependency audit, and production build all passed.
 
 This CI evidence is from an isolated disposable PostgreSQL 17 harness with a local `auth.uid()` claim stub. It does not prove real Vercel OIDC token verification, hosted Supabase JWT/RLS/function-owner compatibility, a live worker, provider-side idempotency, or production deployment. All worker-facing scheduler/reconciliation RPC grants remain revoked. No hosted database or production Vercel resource was changed.
+
+
+## Vercel verifier claim-pinning hardening — 2026-11-22
+
+The concrete JWKS verifier now requires server-configured exact values for:
+- the complete Vercel subject (no prefix/wildcard matching);
+- owner_id, project_id, and environment;
+- a maximum signed token lifetime (bounded to 1–3600 seconds);
+- the existing issuer, audience, RS256 algorithm, key ID, and server-owned capabilities.
+
+The signed token environment must match both the exact workload claim configuration and the server-owned environment. The signed owner_id and project_id are compared before any verified claims are returned. Missing configuration or any mismatch fails closed. Adversarial unit cases cover wrong subject/project, owner, environment, and excessive token lifetime.
+
+This is verifier hardening only. It does not provide the Vercel request-context token source, configure actual team/project IDs, create a dedicated worker deployment, add replay/revocation storage, or bridge worker identity into PostgreSQL. Until those values are provisioned and independently verified, the verifier cannot be composed into a live worker and scheduler grants remain revoked. CI must run on this commit before this code change is considered test-verified.
