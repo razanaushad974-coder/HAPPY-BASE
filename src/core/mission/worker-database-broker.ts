@@ -80,19 +80,44 @@ export async function authorizeWorkerBrokerOperation(input: {
     if (!registration) return { status: "DENIED" };
 
     const requiredCapability = OPERATION_CAPABILITY[input.operation];
+    const capabilities = registration.capabilities;
     if (
+      typeof registration.principalId !== "string" || !registration.principalId.trim() ||
+      typeof registration.issuer !== "string" ||
+      typeof registration.subject !== "string" ||
+      typeof registration.environment !== "string" ||
+      typeof registration.audience !== "string" ||
+      typeof registration.enabled !== "boolean" ||
+      !Array.isArray(capabilities) ||
+      capabilities.length === 0 ||
+      capabilities.some((capability) =>
+        typeof capability !== "string" ||
+        !Object.values(OPERATION_CAPABILITY).includes(capability as WorkerCapability) &&
+        !["API", "BROWSER", "FILE", "DATABASE", "DEPLOY", "PUBLISH"].includes(capability)
+      ) ||
+      new Set(capabilities).size !== capabilities.length ||
       !registration.enabled ||
       registration.revokedAt != null ||
-      !registration.principalId.trim() ||
       registration.issuer !== input.identity.issuer ||
       registration.subject !== input.identity.principal ||
       registration.environment !== input.identity.environment ||
       registration.audience !== input.identity.audience ||
-      !registration.capabilities.includes(requiredCapability) ||
+      !capabilities.includes(requiredCapability) ||
       !input.identity.capabilities.includes(requiredCapability)
     ) return { status: "DENIED" };
 
-    return { status: "AUTHORIZED", registration };
+    // Return an immutable snapshot, not a mutable object owned by the registry.
+    const authorizedRegistration: WorkerPrincipalRegistration = Object.freeze({
+      principalId: registration.principalId,
+      issuer: registration.issuer,
+      subject: registration.subject,
+      audience: registration.audience,
+      environment: registration.environment,
+      enabled: registration.enabled,
+      capabilities: Object.freeze([...capabilities]),
+      revokedAt: registration.revokedAt ?? null,
+    });
+    return { status: "AUTHORIZED", registration: authorizedRegistration };
   } catch {
     // Registry outage or malformed records must never downgrade to user auth.
     return { status: "DENIED" };
