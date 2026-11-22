@@ -25,6 +25,7 @@ export type WorkerRuntimeComposition =
       readonly status: "COMPOSITION_AVAILABLE";
       readonly identity: VerifiedWorkerIdentity;
       readonly registration: WorkerPrincipalRegistration;
+      /** Every method re-resolves identity and registry authorization before touching the raw broker. */
       readonly broker: WorkerDatabaseBroker;
       /** A real broker call must still prove the dedicated DB LOGIN session. */
       readonly liveDatabaseSession: "NOT_VERIFIED";
@@ -36,13 +37,66 @@ export interface WorkerRuntimeCompositionDependencies {
   readonly databaseBroker: WorkerDatabaseBroker | null;
 }
 
+export class WorkerBrokerAuthorizationError extends Error {
+  constructor(readonly reason: "IDENTITY_UNAVAILABLE" | "IDENTITY_INVALID" | "PRINCIPAL_NOT_AUTHORIZED") {
+    super(reason);
+    this.name = "WorkerBrokerAuthorizationError";
+  }
+}
+
+type WorkerAuthorizationCheck = (
+  operation: WorkerBrokerOperation,
+) => Promise<WorkerPrincipalRegistration>;
+
 /**
- * Resolves the three mandatory worker-runtime dependencies without silently
- * substituting a human session, service-role client, or in-memory scheduler.
+ * The returned facade never exposes the raw broker. Identity and operator
+ * registry authorization are refreshed immediately before every operation,
+ * so a previously composed runtime cannot retain access after revocation or
+ * capability downgrade.
+ */
+function createAuthorizedBroker(
+  rawBroker: WorkerDatabaseBroker,
+  authorize: WorkerAuthorizationCheck,
+): WorkerDatabaseBroker {
+  return Object.freeze({
+    claimTask: async (input) => {
+      await authorize("claim_task");
+      return rawBroker.claimTask(input);
+    },
+    heartbeatLease: async (input) => {
+      await authorize("claim_task");
+      return rawBroker.heartbeatLease(input);
+    },
+    enqueueDispatch: async (input) => {
+      await authorize("enqueue_dispatch");
+      return rawBroker.enqueueDispatch(input);
+    },
+    claimDispatch: async (input) => {
+      await authorize("claim_task");
+      return rawBroker.claimDispatch(input);
+    },
+    recordDispatchOutcome: async (input) => {
+      await authorize("record_dispatch_outcome");
+      return rawBroker.recordDispatchOutcome(input);
+    },
+    appendReconciliationEvidence: async (input) => {
+      await authorize("append_reconciliation_evidence");
+      return rawBroker.appendReconciliationEvidence(input);
+    },
+    listReconciliationEvidence: async (input) => {
+      await authorize("list_reconciliation_evidence");
+      return rawBroker.listReconciliationEvidence(input);
+    },
+  });
+}
+
+/**
+ * Resolves mandatory worker dependencies without substituting a human
+ * session, service-role client, or in-memory scheduler.
  *
- * COMPOSITION_AVAILABLE means only that dependencies and the live principal
- * registry check are present. It does not claim that a database connection,
- * dedicated LOGIN role, RPC deployment, or hosted tenant authorization works.
+ * COMPOSITION_AVAILABLE means only that initial composition succeeded. It
+ * does not claim a database connection, dedicated LOGIN role, RPC deployment,
+ * or hosted tenant authorization works.
  */
 export async function composeTrustedWorkerRuntime(input: {
   readonly dependencies: WorkerRuntimeCompositionDependencies;
@@ -55,37 +109,62 @@ export async function composeTrustedWorkerRuntime(input: {
   if (!principalRegistry) return { status: "NOT_CONNECTED", missing: "PRINCIPAL_REGISTRY" };
   if (!databaseBroker) return { status: "NOT_CONNECTED", missing: "DATABASE_BROKER" };
 
-  let resolution: WorkerIdentityResolution;
+  const authorize: WorkerAuthorizationCheck = async (operation) => {
+    let resolution: WorkerIdentityResolution;
+    try {
+      resolution = await identityProvider.getVerifiedWorkerIdentity();
+    } catch {
+      throw new WorkerBrokerAuthorizationError("IDENTITY_UNAVAILABLE");
+    }
+    if (resolution.status === "NOT_CONNECTED") {
+      throw new WorkerBrokerAuthorizationError("IDENTITY_UNAVAILABLE");
+    }
+    if (resolution.status !== "VERIFIED" || !isVerifiedWorkerIdentity(resolution.identity)) {
+      throw new WorkerBrokerAuthorizationError("IDENTITY_INVALID");
+    }
+
+    const authorization = await authorizeWorkerBrokerOperation({
+      identity: resolution.identity,
+      operation,
+      registry: principalRegistry,
+      ...(input.now ? { now: input.now } : {}),
+    });
+    if (authorization.status !== "AUTHORIZED") {
+      throw new WorkerBrokerAuthorizationError("PRINCIPAL_NOT_AUTHORIZED");
+    }
+    return authorization.registration;
+  };
+
+  let initialRegistration: WorkerPrincipalRegistration;
   try {
-    resolution = await identityProvider.getVerifiedWorkerIdentity();
+    initialRegistration = await authorize(input.operation);
+  } catch (error) {
+    return {
+      status: "DENIED",
+      reason: error instanceof WorkerBrokerAuthorizationError
+        ? error.reason
+        : "PRINCIPAL_NOT_AUTHORIZED",
+    };
+  }
+
+  // Identity is resolved again for the returned descriptive snapshot only;
+  // the facade itself never trusts this snapshot for subsequent operations.
+  let initialIdentity: VerifiedWorkerIdentity;
+  try {
+    const resolution = await identityProvider.getVerifiedWorkerIdentity();
+    if (resolution.status !== "VERIFIED" || !isVerifiedWorkerIdentity(resolution.identity)) {
+      return { status: "DENIED", reason: "IDENTITY_INVALID" };
+    }
+    initialIdentity = resolution.identity;
   } catch {
     return { status: "DENIED", reason: "IDENTITY_UNAVAILABLE" };
   }
 
-  if (resolution.status !== "VERIFIED") {
-    return resolution.status === "NOT_CONNECTED"
-      ? { status: "NOT_CONNECTED", missing: "IDENTITY_PROVIDER" }
-      : { status: "DENIED", reason: "IDENTITY_INVALID" };
-  }
-  if (!isVerifiedWorkerIdentity(resolution.identity)) {
-    return { status: "DENIED", reason: "IDENTITY_INVALID" };
-  }
-
-  const authorization = await authorizeWorkerBrokerOperation({
-    identity: resolution.identity,
-    operation: input.operation,
-    registry: principalRegistry,
-    ...(input.now ? { now: input.now } : {}),
-  });
-  if (authorization.status !== "AUTHORIZED") {
-    return { status: "DENIED", reason: "PRINCIPAL_NOT_AUTHORIZED" };
-  }
-
   return Object.freeze({
     status: "COMPOSITION_AVAILABLE" as const,
-    identity: resolution.identity,
-    registration: authorization.registration,
-    broker: databaseBroker,
+    identity: initialIdentity,
+    registration: initialRegistration,
+    broker: createAuthorizedBroker(databaseBroker, authorize),
     liveDatabaseSession: "NOT_VERIFIED" as const,
   });
 }
