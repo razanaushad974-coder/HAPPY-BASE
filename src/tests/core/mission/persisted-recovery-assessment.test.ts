@@ -1,4 +1,4 @@
-import type { AsyncTenantPersistenceAdapter, TenantPersistedRecord } from "../../../core/persistence/async-tenant-repository";
+import type { AsyncTenantPersistenceAdapter, TenantPersistedRecord, TenantRecordQuery } from "../../../core/persistence/async-tenant-repository";
 import type { EntityType } from "../../../core/persistence/types";
 import type { TenantScope } from "../../../core/state/types";
 import type { Mission } from "../../../core/mission/types";
@@ -22,17 +22,17 @@ const task = {
 };
 const records = new Map<string, TenantPersistedRecord<unknown>>([
   ["MISSION:mission-1", { id: mission.id, entityType: "MISSION", version: 1, createdAt: mission.createdAt, updatedAt: mission.updatedAt, organizationId: scope.organizationId, workspaceId: scope.workspaceId, userId: scope.userId, data: mission }],
-  ["TASK:task-1", { id: task.id, entityType: "TASK", version: 1, createdAt: task.createdAt, updatedAt: task.updatedAt, organizationId: scope.organizationId, workspaceId: scope.workspaceId, userId: scope.userId, data: task }],
+  ["TASK:task-1", { id: task.id, entityType: "TASK", version: 1, createdAt: mission.createdAt, updatedAt: mission.updatedAt, organizationId: scope.organizationId, workspaceId: scope.workspaceId, userId: scope.userId, data: task }],
   ["EXECUTION:execution-1", { id: "execution-1", entityType: "EXECUTION", version: 1, createdAt: mission.createdAt, updatedAt: mission.updatedAt, organizationId: scope.organizationId, workspaceId: scope.workspaceId, userId: scope.userId, data: { missionId: "mission-1", taskId: "task-1", requestId: "request-1", outboxId: "outbox-1", status: "RUNNING" } }],
 ]);
 const calls: string[] = [];
 const persistence: AsyncTenantPersistenceAdapter = {
-  async get<T>(givenScope, entityType: EntityType, id: string) {
+  async get<T>(givenScope: TenantScope & { userId: string }, entityType: EntityType, id: string) {
     calls.push(`get:${entityType}:${id}`);
     if (givenScope.organizationId !== scope.organizationId || givenScope.workspaceId !== scope.workspaceId || givenScope.userId !== scope.userId) throw new Error("cross tenant");
     return records.get(`${entityType}:${id}`) as TenantPersistedRecord<T> | undefined;
   },
-  async list<T>(givenScope, query) {
+  async list<T>(givenScope: TenantScope & { userId: string }, query?: TenantRecordQuery) {
     calls.push(`list:${query?.entityType}`);
     if (givenScope.organizationId !== scope.organizationId || givenScope.workspaceId !== scope.workspaceId || givenScope.userId !== scope.userId) throw new Error("cross tenant");
     return [...records.values()].filter((r) => r.entityType === query?.entityType) as TenantPersistedRecord<T>[];
