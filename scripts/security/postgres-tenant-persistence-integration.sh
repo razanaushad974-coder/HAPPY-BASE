@@ -12,10 +12,10 @@ SCHEMA_FILE="$ROOT_DIR/supabase/drafts/20261119_async_tenant_persistence_schema_
 SCHEDULER_SCHEMA_FILE="$ROOT_DIR/supabase/drafts/20261121_durable_mission_scheduler_candidate.sql"
 TENANT_CONTEXT_RPC_FILE="$ROOT_DIR/supabase/drafts/20261121_authenticated_tenant_context_rpc_candidate.sql"
 EXECUTION_REQUEST_RPC_FILE="$ROOT_DIR/supabase/drafts/20261121_authenticated_execution_request_rpc_candidate.sql"
-EXECUTION_REQUEST_LIFECYCLE_FILE="$ROOT_DIR/supabase/drafts/20261122_authenticated_execution_request_lifecycle_candidate.sql"
+EXECUTION_ENVELOPE_FILE="$ROOT_DIR/supabase/drafts/20261121_authenticated_execution_envelope_candidate.sql"
 RACE_SCRIPT="$ROOT_DIR/scripts/security/postgres-tenant-cas-concurrency.sh"
 RECONCILIATION_RACE_SCRIPT="$ROOT_DIR/scripts/security/postgres-reconciliation-evidence-concurrency.sh"
-for required_file in "$SCHEMA_FILE" "$SCHEDULER_SCHEMA_FILE" "$TENANT_CONTEXT_RPC_FILE" "$EXECUTION_REQUEST_RPC_FILE" "$EXECUTION_REQUEST_LIFECYCLE_FILE" "$RACE_SCRIPT" "$RECONCILIATION_RACE_SCRIPT"; do
+for required_file in "$SCHEMA_FILE" "$SCHEDULER_SCHEMA_FILE" "$TENANT_CONTEXT_RPC_FILE" "$EXECUTION_REQUEST_RPC_FILE" "$EXECUTION_ENVELOPE_FILE" "$RACE_SCRIPT" "$RECONCILIATION_RACE_SCRIPT"; do
   if [[ ! -f "$required_file" ]]; then
     echo "Required tenant persistence test file not found: $required_file" >&2
     exit 1
@@ -160,7 +160,7 @@ SQL
 "${psql_base[@]}" -f "$SCHEDULER_SCHEMA_FILE"
 "${psql_base[@]}" -f "$TENANT_CONTEXT_RPC_FILE"
 "${psql_base[@]}" -f "$EXECUTION_REQUEST_RPC_FILE"
-"${psql_base[@]}" -f "$EXECUTION_REQUEST_LIFECYCLE_FILE"
+"${psql_base[@]}" -f "$EXECUTION_ENVELOPE_FILE"
 
 # Exercise the SECURITY DEFINER RPC under a deliberately narrow, non-login
 # function owner instead of silently relying on the migration/superuser owner.
@@ -498,25 +498,25 @@ select * from public.happy_create_tenant_record(
   '10000000-0000-4000-8000-000000000001',
   '20000000-0000-4000-8000-000000000002',
   'MISSION', 'mission-scheduler',
-  '{"status":"READY","taskIds":["task-scheduler-root","task-scheduler-child","task-scheduler-reclaim"]}'
+  '{"id":"mission-scheduler","status":"READY","taskIds":["task-scheduler-root","task-scheduler-child","task-scheduler-reclaim"]}'
 );
 select * from public.happy_create_tenant_record(
   '10000000-0000-4000-8000-000000000001',
   '20000000-0000-4000-8000-000000000002',
   'TASK', 'task-scheduler-root',
-  '{"missionId":"mission-scheduler","status":"READY","dependencyIds":[]}'
+  '{"id":"task-scheduler-root","missionId":"mission-scheduler","status":"READY","dependencyIds":[]}'
 );
 select * from public.happy_create_tenant_record(
   '10000000-0000-4000-8000-000000000001',
   '20000000-0000-4000-8000-000000000002',
   'TASK', 'task-scheduler-child',
-  '{"missionId":"mission-scheduler","status":"READY","dependencyIds":["task-scheduler-root"]}'
+  '{"id":"task-scheduler-child","missionId":"mission-scheduler","status":"READY","dependencyIds":["task-scheduler-root"]}'
 );
 select * from public.happy_create_tenant_record(
   '10000000-0000-4000-8000-000000000001',
   '20000000-0000-4000-8000-000000000002',
   'TASK', 'task-scheduler-reclaim',
-  '{"missionId":"mission-scheduler","status":"READY","dependencyIds":[]}'
+  '{"id":"task-scheduler-reclaim","missionId":"mission-scheduler","status":"READY","dependencyIds":[]}'
 );
 
 -- Create canonical execution requests as the authenticated requester, then
@@ -524,11 +524,11 @@ select * from public.happy_create_tenant_record(
 -- remain revoked; the state-machine tests below run only as the DB owner.
 create temp table happy_test_scheduler_requests (
   request_id text primary key,
-  created_at_iso text not null
+  created_at text not null
 ) on commit preserve rows;
 
 insert into happy_test_scheduler_requests
-select request_id, created_at_iso
+select request_id, created_at
   from public.create_authenticated_execution_request(
     'request-scheduler-1','task-scheduler-root','mission-scheduler',
     '10000000-0000-4000-8000-000000000001',
@@ -537,7 +537,7 @@ select request_id, created_at_iso
     'tenant-attempt-key-1'
   );
 insert into happy_test_scheduler_requests
-select request_id, created_at_iso
+select request_id, created_at
   from public.create_authenticated_execution_request(
     'request-scheduler-2','task-scheduler-reclaim','mission-scheduler',
     '10000000-0000-4000-8000-000000000001',
@@ -560,7 +560,7 @@ begin
     'API','POST','{"value":1}'::jsonb,null,
     'tenant-attempt-key-1'
   );
-  if v_second.created_at_iso <> v_first.created_at_iso then
+  if v_second.created_at <> v_first.created_at then
     raise exception 'idempotent request retry replaced original createdAt';
   end if;
   begin
@@ -589,15 +589,13 @@ set role authenticated;
 select set_config('request.jwt.claim.sub',
   '40000000-0000-4000-8000-000000000004', false);
 do $self_approval$
+declare
+  v_result boolean;
 begin
-  begin
-    perform public.decide_authenticated_execution_request(
-      'request-scheduler-1','APPROVED','requester cannot approve own request'
-    );
-    raise exception 'requester self-approval unexpectedly succeeded';
-  exception when insufficient_privilege then
-    if sqlerrm <> 'SELF_APPROVAL_FORBIDDEN' then raise; end if;
-  end;
+  v_result := public.decide_authenticated_execution_request(
+    'request-scheduler-1','APPROVED','requester cannot approve own request'
+  );
+  if v_result then raise exception 'requester self-approval unexpectedly succeeded'; end if;
 end
 $self_approval$;
 select public.decide_authenticated_execution_request(
@@ -643,7 +641,7 @@ begin
   if v_claim.attempt <> 1 or v_claim.fencing_token <> 1 then
     raise exception 'initial lease must start at attempt/fencing token 1';
   end if;
-  select created_at_iso into v_request_created_at
+  select to_char(created_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') into v_request_created_at
     from happy_test_scheduler_requests where request_id = 'request-scheduler-1';
   v_payload := jsonb_build_object(
     'id','request-scheduler-1','missionId','mission-scheduler',
@@ -829,7 +827,7 @@ begin
   exception when sqlstate '55000' then
     if sqlerrm <> 'STALE_OR_EXPIRED_LEASE' then raise; end if;
   end;
-  select created_at_iso into v_request_created_at
+  select to_char(created_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') into v_request_created_at
     from happy_test_scheduler_requests where request_id = 'request-scheduler-2';
   v_payload := jsonb_build_object(
     'id','request-scheduler-2','missionId','mission-scheduler',
