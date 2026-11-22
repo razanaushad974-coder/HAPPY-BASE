@@ -321,6 +321,7 @@ for (const blockedMissionStatus of [
 }
 
 const malformedRuntimeTaskRecords: unknown[] = [
+  null,
   { ...firstTask, id: " ", missionId: " " },
   { ...firstTask, dependencyIds: null },
   { ...firstTask, retryCount: -1 },
