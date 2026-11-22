@@ -92,3 +92,16 @@ Updated `scripts/security/postgres-tenant-persistence-integration.sh`:
 - This validates SQL behavior in a local disposable database only. It does not grant application roles, authenticate a production worker, or establish hosted Supabase compatibility.
 
 The failed CI run is recorded as a failure; it is not represented as a pass. A fresh workflow run on the corrected commit is required.
+
+
+## P0 persisted execution-envelope binding gap confirmed — 2026-11-22
+
+A follow-up source comparison confirmed that the scheduler enqueue candidate still cannot prove that its request ID and supplied payload correspond to the canonical persisted execution request:
+
+- The design-only `private.execution_requests` table in `20261119_file_mutation_atomic_consume_candidate.sql` currently stores only request/task/mission IDs, requester/executor user IDs, organization/workspace IDs, and status. It does not persist capability, action, input, target reference, immutable envelope digest, idempotency key, approval requirement, or approval decision binding.
+- The TypeScript creation-client contract in `src/core/tenant/supabase-private-tenant-stores.ts` already expects capability, action, input, target reference, and idempotency key, but a corresponding `create_authenticated_execution_request` SQL implementation was not found in the inspected draft candidates.
+- `happy_enqueue_mission_dispatch` currently checks that caller-supplied JSON top-level ID/mission/task/capability/action match its parameters and checks only that the digest has SHA-256 syntax. It does not lock and compare a canonical persisted request envelope or recompute the digest from persisted immutable fields.
+
+This remains a P0 blocker even though worker RPCs are fully grant-revoked. Do not restore any grants. The next SQL design change must first add a canonical immutable request envelope and an authenticated creation/decision lifecycle that matches the TypeScript contract; it must bind the exact request to tenant, requester, executor, mission, task, capability, action, input, target reference, idempotency key, approval requirement, and persisted approval. The enqueue function must then lock that exact request, derive/verify the digest from persisted columns, compare the complete envelope and lease/attempt binding, and reject missing, cancelled, completed, mismatched, or unapproved requests before outbox insertion. The disposable PostgreSQL harness must include fabricated request IDs, altered input/action/capability, stale/revoked/missing approval, idempotency reuse, and concurrent enqueue attacks.
+
+No implementation is claimed for this P0 gap yet. It is intentionally left blocked until the canonical request and approval lifecycle can be designed end-to-end without inventing or bypassing the missing producer authority.
