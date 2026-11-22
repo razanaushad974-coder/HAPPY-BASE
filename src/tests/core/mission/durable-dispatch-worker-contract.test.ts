@@ -6,6 +6,7 @@ import {
   type IdempotentDispatchProvider,
   type PersistedDispatchOutcome,
 } from "../../../core/mission/durable-dispatch-worker-contract";
+import type { WorkerIdentityResolution } from "../../../core/mission/trusted-worker-identity";
 
 const request: ExecutionRequest = {
   id: "request-1", missionId: "mission-1", taskId: "task-1",
@@ -17,6 +18,19 @@ const dispatch: ClaimedDispatch = {
   outboxId: "outbox-1", idempotencyKey: "tenant-key-1",
   executionRequestId: request.id, leaseId: "lease-1",
   ownerId: "worker-1", fencingToken: 4, request,
+};
+const workerIdentity: WorkerIdentityResolution = {
+  status: "VERIFIED",
+  identity: {
+    principal: "worker-1",
+    issuer: "https://identity.example.test",
+    audience: "happy-execution",
+    environment: "staging",
+    tokenId: "token-unique-1",
+    issuedAt: 1_800_000_000,
+    expiresAt: 1_800_000_240,
+    capabilities: ["API"],
+  },
 };
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -42,7 +56,7 @@ async function run(): Promise<void> {
     },
   };
   const success = await dispatchClaimedOutboxItem(
-    dispatch, provider,
+    dispatch, workerIdentity, provider,
     recorderFor(async (_item, outcome) => { persisted = outcome; }),
   );
   assert(success.status === "RECORDED" && success.outcome === "ACKNOWLEDGED", "acknowledged provider result was not recorded");
@@ -55,7 +69,7 @@ async function run(): Promise<void> {
     async dispatch() { unsafeCalls += 1; return { kind: "ACKNOWLEDGED" as const, provider: "x", providerRequestId: "x", response: null }; },
   };
   const unsafe = await dispatchClaimedOutboxItem(
-    dispatch, unsafeProvider as unknown as IdempotentDispatchProvider,
+    dispatch, workerIdentity, unsafeProvider as unknown as IdempotentDispatchProvider,
     recorderFor(async () => {}),
   );
   assert(unsafe.status === "RECONCILIATION_REQUIRED" && unsafeCalls === 0, "non-idempotent provider was invoked");
@@ -67,7 +81,7 @@ async function run(): Promise<void> {
     async dispatch() { throw new Error("socket closed after request write"); },
   };
   const unknown = await dispatchClaimedOutboxItem(
-    dispatch, throwingProvider,
+    dispatch, workerIdentity, throwingProvider,
     recorderFor(async (_item, outcome) => { ambiguous = outcome; }),
   );
   assert(unknown.status === "RECORDED" && ambiguous?.status === "AMBIGUOUS", "transport failure was incorrectly treated as definitive failure");
@@ -75,6 +89,7 @@ async function run(): Promise<void> {
   let retryCalls = 0;
   const persistenceFailure = await dispatchClaimedOutboxItem(
     dispatch,
+    workerIdentity,
     { ...provider, async dispatch() { retryCalls += 1; return { kind: "ACKNOWLEDGED" as const, provider: "provider-a", providerRequestId: "remote-2", response: {} }; } },
     recorderFor(async () => { throw new Error("database unavailable"); }),
   );
@@ -83,10 +98,40 @@ async function run(): Promise<void> {
   let invalidCalls = 0;
   const invalid = await dispatchClaimedOutboxItem(
     { ...dispatch, executionRequestId: "different-request" },
+    workerIdentity,
     { ...provider, async dispatch() { invalidCalls += 1; return { kind: "ACKNOWLEDGED" as const, provider: "provider-a", providerRequestId: "x", response: {} }; } },
     recorderFor(async () => {}),
   );
   assert(invalid.status === "RECONCILIATION_REQUIRED" && invalidCalls === 0, "mismatched request binding reached provider");
+
+  let identityMismatchCalls = 0;
+  const wrongPrincipal: WorkerIdentityResolution = {
+    ...workerIdentity,
+    identity: { ...workerIdentity.identity, principal: "workload:other" },
+  };
+  const deniedIdentity = await dispatchClaimedOutboxItem(
+    dispatch, wrongPrincipal,
+    { ...provider, async dispatch() { identityMismatchCalls += 1; return { kind: "ACKNOWLEDGED" as const, provider: "x", providerRequestId: "x", response: null }; } },
+    recorderFor(async () => {}),
+  );
+  assert(deniedIdentity.status === "RECONCILIATION_REQUIRED" && identityMismatchCalls === 0,
+    "worker principal mismatch reached provider");
+
+  const missingCapability: WorkerIdentityResolution = {
+    ...workerIdentity,
+    identity: { ...workerIdentity.identity, capabilities: ["VERIFY"] },
+  };
+  const deniedCapability = await dispatchClaimedOutboxItem(
+    dispatch, missingCapability, provider, recorderFor(async () => {}),
+  );
+  assert(deniedCapability.status === "RECONCILIATION_REQUIRED" && providerCalls === 1,
+    "worker without the request capability reached provider");
+
+  const disconnected = await dispatchClaimedOutboxItem(
+    dispatch, { status: "NOT_CONNECTED" }, provider, recorderFor(async () => {}),
+  );
+  assert(disconnected.status === "RECONCILIATION_REQUIRED" && providerCalls === 1,
+    "unconnected worker identity reached provider");
 
   console.log("Durable dispatch worker contract tests: PASS");
 }
