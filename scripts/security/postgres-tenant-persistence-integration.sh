@@ -943,6 +943,68 @@ begin
 
 end
 $scheduler_privileges$;
+
+-- Exercise the permission boundary as a real authenticated role, not only
+-- through has_function_privilege metadata. Every worker RPC must stop at the
+-- PostgreSQL EXECUTE check before any function body or caller-supplied owner
+-- label can influence scheduler state.
+set role authenticated;
+do $worker_rpc_denial$
+begin
+  begin
+    perform * from public.happy_claim_mission_task(
+      null::uuid,null::uuid,null::text,null::text,null::text,null::integer
+    );
+    raise exception 'authenticated executed worker claim RPC';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    perform public.happy_heartbeat_mission_task_lease(
+      null::uuid,null::uuid,null::text,null::text,null::uuid,null::text,null::bigint,null::integer
+    );
+    raise exception 'authenticated executed worker heartbeat RPC';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    perform * from public.happy_claim_dispatch_outbox(
+      null::uuid,null::uuid,null::uuid,null::uuid,null::text,null::bigint
+    );
+    raise exception 'authenticated executed worker outbox claim RPC';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    perform * from public.happy_record_dispatch_outcome(
+      null::uuid,null::uuid,null::uuid,null::uuid,null::text,null::bigint,null::text,null::jsonb
+    );
+    raise exception 'authenticated executed worker outcome RPC';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    perform public.happy_enqueue_mission_dispatch(
+      null::uuid,null::uuid,null::text,null::text,null::uuid,null::text,null::bigint,
+      null::text,null::text,null::text,null::text,null::text,null::jsonb
+    );
+    raise exception 'authenticated executed worker enqueue RPC';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    perform public.happy_append_dispatch_reconciliation_evidence(
+      null::uuid,null::uuid,null::uuid,null::uuid,null::text,null::text,null::text,
+      null::timestamptz,null::jsonb
+    );
+    raise exception 'authenticated executed worker reconciliation append RPC';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    perform * from public.happy_list_dispatch_reconciliation_evidence(
+      null::uuid,null::uuid,null::uuid,null::text,null::text,null::text
+    );
+    raise exception 'authenticated executed worker reconciliation read RPC';
+  exception when insufficient_privilege then null;
+  end;
+end
+$worker_rpc_denial$;
+reset role;
 select 'PostgreSQL durable mission lease/outbox integration: PASS' as result;
 SQL
 
