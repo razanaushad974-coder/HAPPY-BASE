@@ -186,7 +186,8 @@ begin
        and p.enabled = true
        and p.activated_at is not null
        and p.revoked_at is null
-       and p.capabilities @> array[p_required_capability]::text[];
+       and p.capabilities @> array[p_required_capability]::text[]
+     for share;
 
   if not found then
     raise exception 'WORKER_PRINCIPAL_NOT_REGISTERED_OR_CAPABILITY_DENIED'
@@ -235,20 +236,9 @@ begin
     raise exception 'WORKER_PRINCIPAL_SCOPE_MISMATCH' using errcode = '42501';
   end if;
 
-  -- Lock order: principal registry -> worker tenant grant -> organization ->
-  -- workspace -> organization membership -> workspace membership.
-  select true into v_found
-    from private.happy_worker_principal_registry p
-   where p.worker_principal_id = v_principal_id
-     and p.db_login_role = session_user::text
-     and p.enabled = true
-     and p.revoked_at is null
-     and p.capabilities @> array[p_required_capability]::text[]
-   for share;
-  if not found then
-    raise exception 'WORKER_PRINCIPAL_REVOKED' using errcode = '42501';
-  end if;
-
+  -- The principal helper above locks the exact session_user-mapped registry
+  -- row with FOR SHARE. Continue in a fixed order for the tenant grant and
+  -- canonical organization/workspace membership rows.
   select g.user_id into v_user_id
     from private.happy_worker_tenant_grants g
    where g.worker_principal_id = v_principal_id
