@@ -76,7 +76,14 @@ export class PostgresProviderReconciliationEvidenceStore implements ProviderReco
 }
 
 function toSafeObservation(evidence: ProviderReconciliationEvidence): Record<string, string> {
+  if (!evidence || typeof evidence !== "object" || !evidence.observation || typeof evidence.observation !== "object") {
+    throw new Error("RECONCILIATION_OBSERVATION_INVALID");
+  }
   const observation = evidence.observation;
+  const allowedStatuses = new Set(["SUCCEEDED", "FAILED", "PROCESSING", "NOT_FOUND", "UNKNOWN"]);
+  if (typeof observation.status !== "string" || !allowedStatuses.has(observation.status)) {
+    throw new Error("RECONCILIATION_OBSERVATION_STATUS_INVALID");
+  }
   const safe: Record<string, string> = { status: observation.status };
   if ("providerRequestId" in observation) {
     if (!observation.providerRequestId.trim() || observation.providerRequestId.length > MAX_IDENTIFIER_LENGTH) {
@@ -85,10 +92,18 @@ function toSafeObservation(evidence: ProviderReconciliationEvidence): Record<str
     safe.providerRequestId = observation.providerRequestId;
   }
   if (observation.status === "FAILED") {
+    if (typeof observation.code !== "string" || typeof observation.message !== "string") {
+      throw new Error("RECONCILIATION_FAILURE_DETAILS_INVALID");
+    }
     safe.code = observation.code.slice(0, 256);
     safe.message = observation.message.slice(0, 1024);
   }
-  if (observation.status === "UNKNOWN") safe.reason = observation.reason.slice(0, 1024);
+  if (observation.status === "UNKNOWN") {
+    if (typeof observation.reason !== "string") {
+      throw new Error("RECONCILIATION_UNKNOWN_REASON_INVALID");
+    }
+    safe.reason = observation.reason.slice(0, 1024);
+  }
   // Do not persist SUCCEEDED.result: provider bodies may contain credentials,
   // personal data, or unbounded payloads. Verification must use separately
   // scoped, capability-specific evidence.
