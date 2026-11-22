@@ -13,7 +13,7 @@ async function main(): Promise<void> {
     capability: "FILE", action: "READ", input: { path: "README.md" },
     target_reference: null, requires_approval: true, risk: "HIGH",
     approval_status: "PENDING", required_approval_role: "FOUNDER", status: "WAITING_APPROVAL",
-    input_digest: "a".repeat(64), envelope_digest: "b".repeat(64), created_at: "2026-11-21T12:00:00.000Z",
+    input_digest: "a".repeat(64), envelope_digest: "b".repeat(64), created_at: "2026-11-21T12:00:00+00:00",
   };
   const calls: Array<{ name: string; args: { p_request_id: string } }> = [];
   const client: SupabaseExecutionRequestRpcClient = {
@@ -28,6 +28,7 @@ async function main(): Promise<void> {
       record.executorUserId !== "executor-1" ||
       record.executionRequest.capability !== "FILE" ||
       record.executionRequest.action !== "READ" ||
+      record.executionRequest.createdAt !== "2026-11-21T12:00:00.000Z" ||
       (record.executionRequest.input as { path?: string }).path !== "README.md" ||
       record.executionRequest.requiresApproval !== true ||
       record.approvalStatus !== "PENDING" ||
