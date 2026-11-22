@@ -22,7 +22,7 @@ const request: ExecutionRequest = {
 const dispatch: ClaimedDispatch = {
   outboxId: "outbox-1", idempotencyKey: "tenant-key-1",
   executionRequestId: request.id, leaseId: "lease-1",
-  ownerId: "worker-1", fencingToken: 4, request,
+  ownerId: "owner:team:project:happy-worker:environment:staging", fencingToken: 4, request,
 };
 const workerNow = Math.floor(Date.now() / 1000);
 const identityPolicy = {
