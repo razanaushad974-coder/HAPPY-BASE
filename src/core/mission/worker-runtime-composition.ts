@@ -75,7 +75,7 @@ export async function composeTrustedWorkerRuntime(input: {
     identity: resolution.identity,
     operation: input.operation,
     registry: principalRegistry,
-    now: input.now,
+    ...(input.now ? { now: input.now } : {}),
   });
   if (authorization.status !== "AUTHORIZED") {
     return { status: "DENIED", reason: "PRINCIPAL_NOT_AUTHORIZED" };
