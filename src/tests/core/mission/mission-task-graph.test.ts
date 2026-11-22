@@ -804,6 +804,25 @@ if (!foreignRecoveryExecutionDenied) {
   throw new Error("Recovery assessment accepted an execution from another mission.");
 }
 
+const duplicateExecutionIdentityDenied = (() => {
+  try {
+    assessMissionRecovery(
+      recoveryMission,
+      activeRecoveryTasks,
+      [
+        { id: "duplicate-execution", missionId: recoveryMission.id, taskId: recoveryTask.id, status: "RUNNING" },
+        { id: "duplicate-execution", missionId: recoveryMission.id, taskId: recoveryTask.id, status: "COMPLETED" },
+      ],
+    );
+    return false;
+  } catch {
+    return true;
+  }
+})();
+if (!duplicateExecutionIdentityDenied) {
+  throw new Error("Recovery assessment accepted duplicate execution record identities.");
+}
+
 const malformedRecoveryInputs: Array<() => unknown> = [
   () => assessMissionRecovery(
     recoveryMission,
