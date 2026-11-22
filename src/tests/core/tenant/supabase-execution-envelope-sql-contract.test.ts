@@ -58,8 +58,10 @@ assert(/v_request\.status <> 'READY'[\s\S]*v_request\.approval_status <> 'APPROV
   "Enqueue must require the persisted founder-approved request lifecycle.");
 assert(/v_input_digest <> v_request\.input_digest[\s\S]*v_envelope_digest <> v_request\.envelope_digest/i.test(enqueueSql),
   "Enqueue must recompute both persisted input and immutable envelope digests.");
-assert(/p_payload is distinct from v_expected_payload[\s\S]*p_idempotency_key is distinct from v_request\.idempotency_key[\s\S]*p_payload_digest is distinct from v_computed_payload_digest/i.test(enqueueSql),
+assert(/p_payload is distinct from v_expected_payload[\s\S]*p_idempotency_key is distinct from v_expected_idempotency_key[\s\S]*p_payload_digest is distinct from v_computed_payload_digest/i.test(enqueueSql),
   "Enqueue must compare the full immutable payload, idempotency key and recomputed digest.");
+assert(/happy-dispatch:v1:[\\s\\S]*v_lease\\.attempt::text[\\s\\S]*v_request\\.request_id[\\s\\S]*v_request\\.capability[\\s\\S]*v_request\\.action/i.test(enqueueSql),
+  "Dispatch idempotency must be recomputed from the exact tenant, mission, task, attempt and request.");
 assert(/revoke all on function public\.happy_enqueue_mission_dispatch[\s\S]*from public, anon, authenticated, service_role/i.test(schedulerSql),
   "Worker enqueue remains unavailable until a trusted workload identity is connected.");
 
