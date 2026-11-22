@@ -79,3 +79,16 @@ The scheduler candidate previously granted the `authenticated` role EXECUTE on h
 Commits: `7c28b79cbd85ba74e8fc716a94a9073cec1407a3`, followed by correction `84e4429ec3451557e60428617c47c8d38c521470`.
 
 This is a fail-closed SQL-candidate containment change, not a worker implementation. It has not yet received exact-commit CI validation; no database was connected or modified. The candidate remains design-only and must not be applied until request/approval binding, graph/retry invariants, workload identity, outbox immutability, and hosted role ownership are resolved.
+
+
+## CI correction for fail-closed worker grants — 2026-11-22
+
+The workflow for the preceding worker-identity contract commit reached TypeScript and the complete security harness successfully, then failed in PostgreSQL integration because the scheduler SQL test still invoked worker-gated RPCs under the `authenticated` role. The SQL candidate correctly revoked those EXECUTE grants, so this was a stale test-harness assumption, not a reason to restore grants.
+
+Updated `scripts/security/postgres-tenant-persistence-integration.sh`:
+- Scheduler SQL state-machine assertions now run as the isolated disposable PostgreSQL owner after test tenant records are created. The simulated `auth.uid()` claim remains set, so tenant membership and tenant binding logic still execute.
+- Added explicit assertions that all seven worker-facing RPCs are not executable by `authenticated`, `anon`, or `service_role`.
+- Retained the separate assertions denying direct access to scheduler/outbox/reconciliation tables and the existing lease, fencing, outbox, idempotency, outcome and reconciliation behavior tests.
+- This validates SQL behavior in a local disposable database only. It does not grant application roles, authenticate a production worker, or establish hosted Supabase compatibility.
+
+The failed CI run is recorded as a failure; it is not represented as a pass. A fresh workflow run on the corrected commit is required.
