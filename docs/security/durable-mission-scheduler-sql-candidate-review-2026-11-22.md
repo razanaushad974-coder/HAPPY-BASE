@@ -65,3 +65,17 @@ The SQL increments the lease attempt on lease reclaim, while the persisted task 
 - Hosted Supabase changes: **NONE**
 - Worker identity / durable dispatch runtime: **NOT_YET_CONNECTED**
 - This review does not authorize migration, production deployment, merge, or changes to `main`.
+
+
+## Follow-up containment patch — 2026-11-22
+
+The scheduler candidate previously granted the `authenticated` role EXECUTE on human-session RPCs for task claim, lease heartbeat, dispatch enqueue/claim, outcome recording, and reconciliation evidence. That is not an acceptable worker trust boundary: `auth.uid()` authenticates a human Supabase user, while `p_owner_id` is caller-controlled data.
+
+- Removed the `authenticated` EXECUTE grants from all seven scheduler/dispatch/reconciliation RPCs.
+- Explicitly revoked EXECUTE from `PUBLIC`, `anon`, `authenticated`, and `service_role` for those functions.
+- Kept the candidate functions inert until a dedicated workload identity, server-side identity-to-lease binding, and narrowly privileged function-owner model are implemented and tested.
+- Verified statically that each of the seven functions has an authenticated revoke and no authenticated grant.
+
+Commits: `7c28b79cbd85ba74e8fc716a94a9073cec1407a3`, followed by correction `84e4429ec3451557e60428617c47c8d38c521470`.
+
+This is a fail-closed SQL-candidate containment change, not a worker implementation. It has not yet received exact-commit CI validation; no database was connected or modified. The candidate remains design-only and must not be applied until request/approval binding, graph/retry invariants, workload identity, outbox immutability, and hosted role ownership are resolved.
