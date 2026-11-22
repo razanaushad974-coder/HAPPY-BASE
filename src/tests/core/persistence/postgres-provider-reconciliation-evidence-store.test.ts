@@ -107,6 +107,17 @@ async function main(): Promise<void> {
   }
   assert(mismatchRejected, "unexpected RPC identity must not be treated as persisted");
 
+  const malformedCases: Array<{ evidence: never; expected: string }> = [
+    { evidence: { outboxId, idempotencyKey: "key", providerId: "provider-a", observedAt: "2026-11-21T10:00:00.000Z", observation: { status: "ALIEN" } } as never, expected: "RECONCILIATION_OBSERVATION_STATUS_INVALID" },
+    { evidence: { outboxId, idempotencyKey: "key", providerId: "provider-a", observedAt: "2026-11-21T10:00:00.000Z", observation: { status: "FAILED", providerRequestId: "remote", code: 9, message: "bad" } } as never, expected: "RECONCILIATION_FAILURE_DETAILS_INVALID" },
+    { evidence: { outboxId, idempotencyKey: "key", providerId: "provider-a", observedAt: "2026-11-21T10:00:00.000Z", observation: { status: "UNKNOWN", reason: null } } as never, expected: "RECONCILIATION_UNKNOWN_REASON_INVALID" },
+  ];
+  for (const item of malformedCases) {
+    let rejected = false;
+    try { await store.append(item.evidence); }
+    catch (error) { rejected = error instanceof Error && error.message === item.expected; }
+    assert(rejected && calls.length === 1, "malformed evidence must fail before database access: " + item.expected);
+  }
   console.log("PostgreSQL provider reconciliation evidence store tests: PASS");
 }
 void main();
