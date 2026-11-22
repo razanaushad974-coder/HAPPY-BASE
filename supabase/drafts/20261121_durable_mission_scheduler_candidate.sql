@@ -449,6 +449,7 @@ begin
 
   if p_payload is distinct from v_expected_payload
      or p_execution_request_id is distinct from v_request.request_id
+     or p_idempotency_key is distinct from v_request.idempotency_key
      or p_capability is distinct from v_request.capability
      or p_action is distinct from v_request.action
      or p_payload_digest is distinct from v_computed_payload_digest then
