@@ -140,3 +140,19 @@ Official references:
 Vercel is a **candidate provider, not yet connected**. A safe HAPPY implementation would require a dedicated worker project (so a general user-facing Function cannot inherit the same worker subject), exact team issuer + project + environment + audience pinning, JWKS signature/key-rotation verification, and a request-context token source that cannot be overridden by caller input. The `@vercel/oidc` token helper retrieves the token; it does not by itself replace cryptographic signature verification.
 
 Read-only Vercel account inspection found the existing `happy-base` Next.js project (`prj_f5qoF5I4BRz76sG3LJg2cJLUyZxx`) but no dedicated worker project was established by this review. Its latest deployment is reported as ERROR and `live=false`; no project settings, environment variables, deployment, or access controls were changed. Consequently no Vercel issuer, project subject, or audience values are assumed in code.
+
+
+## Concrete cryptographic verifier added — 2026-11-22
+
+Added `src/core/mission/jwks-oidc-worker-credential-verifier.ts` and a dedicated adversarial test.
+
+- Verifies compact JWT signatures using Node's RSA-SHA256 implementation and a server-configured JWKS URI.
+- Pins exact issuer and audience; requires `RS256`, a non-empty `kid`, RSA signing key use, and valid `iat`, `nbf`, and `exp`.
+- Refreshes JWKS once when an unknown key ID is encountered, caches successful key sets for a bounded configured interval, and fails closed on malformed JWKS/network errors.
+- Capabilities and environment are assigned from server-owned verifier configuration, never copied from caller input or unsigned token data. Exact subject authorization remains the responsibility of `TrustedWorkerIdentityProvider` policy.
+- Uses signed `jti` when present; otherwise derives a stable token fingerprint. The fingerprint is NOT replay protection. Replay/revocation control must be enforced by a durable worker registry/claim transaction.
+- Test covers valid signature, invalid signature, wrong issuer/audience, expired/not-before claims, disallowed algorithm, JWKS key rotation/unknown kid, and JWKS outage. The test is included in `test:security`.
+
+### Remaining integration boundary
+
+This is now a concrete cryptographic verifier, but it is not yet a deployed Vercel worker identity. No platform-controlled credential source has been wired, no Vercel request-context header trust assumption has been made, no dedicated worker project has been provisioned, and no runtime route invokes this verifier. A server-only composition must supply the real platform credential and exact issuer/audience/JWKS/subject/environment/capability configuration. Until that exists and is tested against the hosting platform, worker identity remains NOT_CONNECTED and all worker RPC grants stay revoked.
