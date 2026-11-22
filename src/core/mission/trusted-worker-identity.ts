@@ -158,7 +158,7 @@ export class TrustedWorkerIdentityProvider {
         !audiences.includes(audience) ||
         typeof claims.environment !== "string" || claims.environment !== environment ||
         typeof claims.subject !== "string" ||
-        !claims.subject.startsWith("workload:") ||
+        claims.subject.startsWith("user:") ||
         !allowedSubjects.has(claims.subject) ||
         typeof claims.tokenId !== "string" || !claims.tokenId.trim() ||
         !isFiniteInteger(claims.issuedAt) ||
