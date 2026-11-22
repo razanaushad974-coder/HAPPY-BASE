@@ -92,6 +92,52 @@ comment on table private.happy_worker_principal_registry is
 comment on table private.happy_worker_tenant_grants is
   'Operator-managed worker tenant allowlist. Every operation must additionally recheck canonical membership and approval transactionally.';
 
+-- Keep the registry and canonical tenant tables behind RLS as well as schema
+-- and table grants. A dedicated NOLOGIN function-owner role receives SELECT
+-- policies only; it is not a BYPASSRLS role and has no general table writes.
+alter table private.happy_worker_principal_registry enable row level security;
+alter table private.happy_worker_tenant_grants enable row level security;
+alter table private.organizations enable row level security;
+alter table private.workspaces enable row level security;
+alter table private.organization_memberships enable row level security;
+alter table private.workspace_memberships enable row level security;
+
+drop policy if exists happy_worker_registry_owner_read
+  on private.happy_worker_principal_registry;
+create policy happy_worker_registry_owner_read
+  on private.happy_worker_principal_registry
+  for select to happy_worker_registry_owner using (true);
+
+drop policy if exists happy_worker_tenant_grants_owner_read
+  on private.happy_worker_tenant_grants;
+create policy happy_worker_tenant_grants_owner_read
+  on private.happy_worker_tenant_grants
+  for select to happy_worker_registry_owner using (true);
+
+drop policy if exists happy_worker_organizations_owner_read
+  on private.organizations;
+create policy happy_worker_organizations_owner_read
+  on private.organizations
+  for select to happy_worker_registry_owner using (true);
+
+drop policy if exists happy_worker_workspaces_owner_read
+  on private.workspaces;
+create policy happy_worker_workspaces_owner_read
+  on private.workspaces
+  for select to happy_worker_registry_owner using (true);
+
+drop policy if exists happy_worker_org_memberships_owner_read
+  on private.organization_memberships;
+create policy happy_worker_org_memberships_owner_read
+  on private.organization_memberships
+  for select to happy_worker_registry_owner using (true);
+
+drop policy if exists happy_worker_workspace_memberships_owner_read
+  on private.workspace_memberships;
+create policy happy_worker_workspace_memberships_owner_read
+  on private.workspace_memberships
+  for select to happy_worker_registry_owner using (true);
+
 create or replace function private.happy_require_worker_principal(
   p_required_capability text
 )
