@@ -184,11 +184,7 @@ begin
 
   return query select v_lease_id, v_attempt, v_fencing_token, v_expires_at, v_task_version + 1;
 end;
-$claim$;
-
--- Deterministic JSON serializer shared by the TS payload digest contract.
--- Object keys use bytewise ordering; arrays preserve order.
-
+$claim$
 
 -- Worker-only twin of happy_enqueue_mission_dispatch; uses DB-derived identity and a
 -- transactionally locked worker-to-user tenant scope.
@@ -420,8 +416,7 @@ begin
 
   return v_outbox;
 end;
-$enqueue$;
-
+$enqueue$
 
 -- Worker-only twin of happy_heartbeat_mission_task_lease; uses DB-derived identity and a
 -- transactionally locked worker-to-user tenant scope.
@@ -472,8 +467,7 @@ begin
   if not found then raise exception 'STALE_OR_EXPIRED_LEASE' using errcode = '55000'; end if;
   return v_expires_at;
 end;
-$heartbeat$;
-
+$heartbeat$
 
 -- Worker-only twin of happy_claim_dispatch_outbox; uses DB-derived identity and a
 -- transactionally locked worker-to-user tenant scope.
@@ -562,8 +556,7 @@ begin
   if not found then raise exception 'OUTBOX_ALREADY_CLAIMED_OR_REQUIRES_RECONCILIATION' using errcode = '55000'; end if;
   return v_outbox;
 end;
-$dispatch$;
-
+$dispatch$
 
 -- Worker-only twin of happy_record_dispatch_outcome; uses DB-derived identity and a
 -- transactionally locked worker-to-user tenant scope.
@@ -651,76 +644,7 @@ begin
   end if;
   return v_outbox;
 end;
-$outcome$;
-
-
--- WORKER AUTHORIZATION FAIL-CLOSED GATE:
--- No worker workload identity provider is currently implemented. Therefore
--- none of the claim, heartbeat, enqueue, outbox-claim, outcome, or
--- reconciliation-evidence RPCs is executable by authenticated human users,
--- anon, service_role, or PUBLIC. Do not add grants until a dedicated
--- server-verified workload identity and least-privilege function-owner model
--- are implemented and adversarially tested. auth.uid() proves a human Supabase
--- session, not a worker workload identity; p_owner_id is caller data, not proof.
--- The functions below remain inert design candidates until that gate is met.
-
--- LIMITATIONS / REQUIRED FOLLOW-UP:
--- 1. Claim currently accepts only READY tasks. Retry must be an explicit,
---    separately authorized transition back to READY after policy/approval review.
--- 2. This RPC atomically checks dependency status but a production graph must
---    also enforce immutable mission membership and complete dependency graph
---    integrity at task creation/update boundaries.
--- 3. Outbox payload is JSONB. Production must define secret redaction/encryption,
---    payload size limits, retention, and provider-specific serialization.
--- 4. No worker polling/dispatch/acknowledgement or external side-effect
---    idempotency is implemented. Ambiguous outcomes must reconcile, never
---    blindly replay.
--- 5. Function ownership and the private tenant lock helper's owner privileges
---    are unresolved. Verify real Supabase JWT/RLS/role behavior before migration.
--- 6. Authenticated execution grants are intentionally withheld until a trusted
---    worker identity is connected; a human JWT is not worker authentication.
--- 6. This is a draft only; no connected database was changed.
-
-
--- Append-only provider reconciliation evidence.
--- A reconciliation observation is separate from the immutable first dispatch
--- outcome above. Repeated reads are new events; retrying the same event ID with
--- the same payload is idempotent. This is design-only and is NOT applied.
-create table public.happy_dispatch_reconciliation_evidence (
-  evidence_id uuid not null,
-  organization_id uuid not null,
-  workspace_id uuid not null,
-  user_id uuid not null references auth.users(id) on delete restrict,
-  outbox_id uuid not null references public.happy_execution_dispatch_outbox(outbox_id) on delete restrict,
-  idempotency_key text not null check (length(btrim(idempotency_key)) > 0),
-  provider_id text not null check (length(btrim(provider_id)) > 0),
-  observation_status text not null
-    check (observation_status in ('SUCCEEDED','FAILED','PROCESSING','NOT_FOUND','UNKNOWN')),
-  observed_at timestamptz not null,
-  observation jsonb not null check (jsonb_typeof(observation) = 'object'),
-  created_at timestamptz not null default clock_timestamp(),
-  constraint happy_dispatch_reconciliation_evidence_pk
-    primary key (organization_id, workspace_id, user_id, evidence_id),
-  constraint happy_dispatch_reconciliation_evidence_outbox_fk
-    foreign key (organization_id, workspace_id, user_id, outbox_id)
-    references public.happy_execution_dispatch_outbox
-      (organization_id, workspace_id, user_id, outbox_id)
-    on delete restrict,
-  constraint happy_dispatch_reconciliation_evidence_status_binding
-    check (observation->>'status' = observation_status)
-);
-
-create index happy_dispatch_reconciliation_evidence_outbox_idx
-  on public.happy_dispatch_reconciliation_evidence
-    (organization_id, workspace_id, user_id, outbox_id, observed_at, evidence_id);
-
-alter table public.happy_dispatch_reconciliation_evidence enable row level security;
-revoke all on public.happy_dispatch_reconciliation_evidence
-  from public, anon, authenticated, service_role;
-
-comment on table public.happy_dispatch_reconciliation_evidence is
-  'Append-only provider status observations. Never rewrites the original dispatch outcome.';
-
+$outcome$
 
 -- Worker-only twin of happy_append_dispatch_reconciliation_evidence; uses DB-derived identity and a
 -- transactionally locked worker-to-user tenant scope.
@@ -813,14 +737,7 @@ begin
 
   return p_evidence_id;
 end;
-$append$;
-
-
--- Read-only recovery evidence lookup. The caller must present the complete
--- immutable dispatch identity; the database re-derives auth.uid() and checks
--- the tenant, mission, task, and execution request against the outbox row.
--- Direct SELECT on the evidence table remains revoked.
-
+$append$
 
 -- Worker-only twin of happy_list_dispatch_reconciliation_evidence; uses DB-derived identity and a
 -- transactionally locked worker-to-user tenant scope.
@@ -917,24 +834,7 @@ begin
        and e.outbox_id = p_outbox_id
      order by e.observed_at, e.evidence_id;
 end;
-$read_evidence$;
-
-
--- Reconciliation limitations / gates:
--- 1. Provider identity is bound to outcome->>'provider' written by the dispatch
---    coordinator; provider adapters must preserve that exact stable identifier.
--- 2. The caller supplies a unique evidence_id. Reusing it with an identical
---    payload is idempotent; reusing it with different content is rejected.
--- 3. Evidence payload schema, size caps, secret redaction/encryption, and
---    retention/erasure policy still require capability-specific review.
--- 4. This SECURITY DEFINER candidate depends on the same unresolved function
---    ownership and private tenant-scope helper audit as the scheduler RPCs.
--- 5. The table has no direct API grants. Reconciliation RPC execution grants
---    are intentionally withheld until trusted workload identity is implemented.
--- 6. The trigger blocks ordinary UPDATE/DELETE, but privileged owners can
---    disable triggers; production ownership and operational controls remain
---    mandatory.
-
+$read_evidence$
 
 revoke all on function private.happy_worker_claim_mission_task(uuid,uuid,uuid,uuid,text,text,text,integer)
   from public, anon, authenticated, service_role;
