@@ -115,3 +115,8 @@ This is a **core contract hardening**, not a cryptographic proof at the call sit
 ### Dispatch-time identity freshness
 
 The dispatch contract now also validates the verified identity shape and checks its expiry against an injected clock immediately before the provider call. Expired credentials and invalid/unavailable clocks are rejected before side effects. Contract tests cover expired identity and invalid clock. This reduces stale-result reuse but does not replace a server-only verifier composition or database-side worker assertion; a token can still expire during a long provider call, so lease/fencing and outcome recording must remain authoritative.
+
+
+### In-process attestation integrity
+
+A `VERIFIED` identity is now runtime-branded with a module-private symbol, and the identity object plus copied capability list are frozen before return. The dispatch contract checks this brand, so a plain object with copied fields or an object reconstructed from caller-controlled JSON is rejected. This prevents ordinary structural forgery within the server process; it is not a substitute for keeping the verifier and dispatch composition server-only. Tests verify the brand, immutability, spread-copy rejection, and that forged objects cannot reach a provider.
