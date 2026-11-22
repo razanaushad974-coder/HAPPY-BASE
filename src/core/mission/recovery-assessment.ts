@@ -58,13 +58,17 @@ export function assessMissionRecovery(
   ]);
 
   if (
+    !mission || typeof mission !== "object" ||
     typeof mission.id !== "string" ||
     !mission.id.trim() ||
     !Array.isArray(mission.taskIds) ||
     !Array.isArray(tasks) ||
     !Array.isArray(executions) ||
     mission.taskIds.some((id) => typeof id !== "string" || !id.trim()) ||
-    tasks.some((task) => !task || typeof task !== "object")
+    tasks.some((task) => !task || typeof task !== "object" ||
+      typeof task.id !== "string" || !task.id.trim() ||
+      typeof task.missionId !== "string" ||
+      typeof task.status !== "string")
   ) {
     throw new Error("Mission recovery received malformed mission/task/execution data.");
   }
