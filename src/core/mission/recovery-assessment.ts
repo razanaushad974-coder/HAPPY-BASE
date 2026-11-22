@@ -84,16 +84,17 @@ export function assessMissionRecovery(
   }
 
   const taskIds = new Set(tasks.map((task) => task.id));
-  if (executions.some((execution) =>
-    !execution ||
-    typeof execution !== "object" ||
-    typeof execution.id !== "string" ||
-    !execution.id.trim() ||
-    execution.missionId !== mission.id ||
-    !taskIds.has(execution.taskId) ||
-    (execution.status !== undefined && !allowedExecutionStatuses.has(execution.status))
-  )) {
-    throw new Error("Mission recovery received malformed or out-of-scope execution data.");
+  const executionIds = new Set<string>();
+  if (executions.some((execution) => {
+    if (!execution || typeof execution !== "object" ||
+        typeof execution.id !== "string" || !execution.id.trim()) return true;
+    if (executionIds.has(execution.id)) return true;
+    executionIds.add(execution.id);
+    return execution.missionId !== mission.id ||
+      !taskIds.has(execution.taskId) ||
+      (execution.status !== undefined && !allowedExecutionStatuses.has(execution.status));
+  })) {
+    throw new Error("Mission recovery received malformed, duplicate, or out-of-scope execution data.");
   }
 
   return tasks.map((task) => {
