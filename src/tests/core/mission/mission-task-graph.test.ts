@@ -164,6 +164,36 @@ if (readyPlan.status !== "READY") {
 
 const readySnapshot = missions.create(readyPlan);
 
+// MissionEngine is a second boundary: callers must not bypass PlanningEngine
+// validation by constructing malformed plans directly.
+const malformedMissionPlans = [
+  { ...readyPlan, goal: "   " },
+  { ...readyPlan, steps: [] },
+  {
+    ...readyPlan,
+    steps: readyPlan.steps.map((step, index) =>
+      index === 0 ? { ...step, action: "DELETE" as const, requiresApproval: false } : step,
+    ),
+  },
+  {
+    ...readyPlan,
+    steps: readyPlan.steps.map((step, index) =>
+      index === 1 ? { ...step, order: readyPlan.steps[0].order } : step,
+    ),
+  },
+];
+for (const malformedPlan of malformedMissionPlans) {
+  let malformedPlanDenied = false;
+  try {
+    missionEngine.createMission(malformedPlan);
+  } catch {
+    malformedPlanDenied = true;
+  }
+  if (!malformedPlanDenied) {
+    throw new Error("MissionEngine accepted a malformed or approval-downgraded plan.");
+  }
+}
+
 let incompleteMissionSnapshotDenied = false;
 try {
   missionEngine.updateTaskStatus(
