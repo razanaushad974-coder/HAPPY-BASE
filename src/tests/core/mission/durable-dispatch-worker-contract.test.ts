@@ -76,6 +76,7 @@ async function run(): Promise<void> {
   assert(workerIdentity.status === "VERIFIED", "test workload identity was not verified");
 
   let providerCalls = 0;
+  const getProviderCallCount = () => providerCalls;
   let persisted: PersistedDispatchOutcome | undefined;
   const provider: IdempotentDispatchProvider = {
     providerId: "provider-a",
@@ -109,7 +110,7 @@ async function run(): Promise<void> {
     provider,
     recorderFor(async () => {}),
   );
-  assert(unavailableIdentityDispatch.status === "RECONCILIATION_REQUIRED" && providerCalls === 2,
+  assert(unavailableIdentityDispatch.status === "RECONCILIATION_REQUIRED" && getProviderCallCount() === 2,
     "missing worker identity must not call the provider");
 
   const failedIdentityDispatch = await dispatchWithTrustedWorkerIdentity(
@@ -118,7 +119,7 @@ async function run(): Promise<void> {
     provider,
     recorderFor(async () => {}),
   );
-  assert(failedIdentityDispatch.status === "RECONCILIATION_REQUIRED" && providerCalls === 2,
+  assert(failedIdentityDispatch.status === "RECONCILIATION_REQUIRED" && getProviderCallCount() === 2,
     "worker identity provider failure must not call the provider");
 
   let unsafeCalls = 0;
@@ -177,26 +178,26 @@ async function run(): Promise<void> {
   const deniedCapability = await dispatchClaimedOutboxItem(
     dispatch, missingCapability, provider, recorderFor(async () => {}),
   );
-  assert(deniedCapability.status === "RECONCILIATION_REQUIRED" && providerCalls === 2,
+  assert(deniedCapability.status === "RECONCILIATION_REQUIRED" && getProviderCallCount() === 2,
     "worker without the request capability reached provider");
 
   const disconnected = await dispatchClaimedOutboxItem(
     dispatch, { status: "NOT_CONNECTED" }, provider, recorderFor(async () => {}),
   );
-  assert(disconnected.status === "RECONCILIATION_REQUIRED" && providerCalls === 2,
+  assert(disconnected.status === "RECONCILIATION_REQUIRED" && getProviderCallCount() === 2,
     "unconnected worker identity reached provider");
 
   const expiringIdentity = await resolveWorkerIdentity({ expiresAt: workerNow + 1 });
   const expired = await dispatchClaimedOutboxItem(
     dispatch, expiringIdentity, provider, recorderFor(async () => {}), () => (workerNow + 1) * 1000,
   );
-  assert(expired.status === "RECONCILIATION_REQUIRED" && providerCalls === 2,
+  assert(expired.status === "RECONCILIATION_REQUIRED" && getProviderCallCount() === 2,
     "expired worker identity reached provider");
 
   const unavailableClock = await dispatchClaimedOutboxItem(
     dispatch, workerIdentity, provider, recorderFor(async () => {}), () => Number.NaN,
   );
-  assert(unavailableClock.status === "RECONCILIATION_REQUIRED" && providerCalls === 2,
+  assert(unavailableClock.status === "RECONCILIATION_REQUIRED" && getProviderCallCount() === 2,
     "invalid worker clock reached provider");
 
   const forged = {
@@ -206,7 +207,7 @@ async function run(): Promise<void> {
   const forgedResult = await dispatchClaimedOutboxItem(
     dispatch, forged, provider, recorderFor(async () => {}),
   );
-  assert(forgedResult.status === "RECONCILIATION_REQUIRED" && providerCalls === 2,
+  assert(forgedResult.status === "RECONCILIATION_REQUIRED" && getProviderCallCount() === 2,
     "structurally forged identity object reached provider");
 
   console.log("Durable dispatch worker contract tests: PASS");
