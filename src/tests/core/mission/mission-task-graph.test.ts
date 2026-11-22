@@ -326,11 +326,33 @@ const malformedRuntimeTaskRecords: unknown[] = [
   { ...firstTask, dependencyIds: null },
   { ...firstTask, retryCount: -1 },
   { ...firstTask, status: "UNKNOWN" },
+  { ...firstTask, action: "DELETE", requiresApproval: false },
+  { ...firstTask, action: "DB_UPDATE", requiresApproval: false },
 ];
 for (const malformedRecord of malformedRuntimeTaskRecords) {
   if (graphEngine.validate([malformedRecord as MissionTask]).valid) {
     throw new Error("TaskGraphEngine accepted a malformed runtime task record.");
   }
+}
+
+// A forged READY mission snapshot must not start a sensitive task whose
+// persisted approval marker was downgraded.
+const approvalDowngradedTaskSnapshot = readySnapshot.graph.tasks.map((task, index) =>
+  index === 0 ? { ...task, action: "DELETE" as const, requiresApproval: false } : task,
+);
+let approvalDowngradedTaskStartDenied = false;
+try {
+  missionEngine.updateTaskStatus(
+    readySnapshot.mission,
+    approvalDowngradedTaskSnapshot,
+    approvalDowngradedTaskSnapshot[0].id,
+    "RUNNING",
+  );
+} catch {
+  approvalDowngradedTaskStartDenied = true;
+}
+if (!approvalDowngradedTaskStartDenied) {
+  throw new Error("MissionEngine started a sensitive task with approval downgraded.");
 }
 
 const readyTasks = graphEngine.getReadyTasks(
