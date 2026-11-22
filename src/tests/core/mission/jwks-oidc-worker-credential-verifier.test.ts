@@ -13,6 +13,9 @@ const config = {
   audience: "happy-execution",
   jwksUri: "https://issuer.example.test/.well-known/jwks.json",
   environment: "staging",
+  expectedSubject: "owner:team:project:happy-worker:environment:staging",
+  expectedWorkloadClaims: { ownerId: "owner_123", projectId: "prj_worker_123", environment: "staging" },
+  maxTokenLifetimeSeconds: 300,
   capabilities: ["API", "VERIFY"] as const,
   now: () => now * 1000,
 };
@@ -34,6 +37,9 @@ const validClaims = {
   nbf: now - 20,
   exp: now + 240,
   jti: "jti-001",
+  owner_id: "owner_123",
+  project_id: "prj_worker_123",
+  environment: "staging",
 };
 
 async function main() {
@@ -60,6 +66,16 @@ async function main() {
     "wrong audience accepted");
   assert(await verifier.verifyCredential(token({ ...validClaims, azp: "other-client" })) === null,
     "wrong authorized party accepted");
+  assert(await verifier.verifyCredential(token({ ...validClaims, sub: "owner:team:project:other:environment:staging" })) === null,
+    "wrong Vercel project subject accepted");
+  assert(await verifier.verifyCredential(token({ ...validClaims, owner_id: "owner_attacker" })) === null,
+    "wrong Vercel owner ID accepted");
+  assert(await verifier.verifyCredential(token({ ...validClaims, project_id: "prj_attacker" })) === null,
+    "wrong Vercel project ID accepted");
+  assert(await verifier.verifyCredential(token({ ...validClaims, environment: "production" })) === null,
+    "wrong Vercel environment claim accepted");
+  assert(await verifier.verifyCredential(token({ ...validClaims, exp: now + 600 })) === null,
+    "credential exceeding configured maximum lifetime accepted");
   assert(await verifier.verifyCredential(token({ ...validClaims, exp: now - 100 })) === null,
     "expired credential accepted");
   assert(await verifier.verifyCredential(token({ ...validClaims, nbf: now + 100 })) === null,
