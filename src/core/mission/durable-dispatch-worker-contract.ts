@@ -1,4 +1,4 @@
-import type { WorkerCapability, WorkerIdentityResolution } from "./trusted-worker-identity";
+import { isVerifiedWorkerIdentity, type WorkerCapability, type WorkerIdentityResolution } from "./trusted-worker-identity";
 import type { ExecutionRequest } from "../execution/types";
 
 export type ProviderDispatchObservation =
@@ -58,7 +58,7 @@ export async function dispatchClaimedOutboxItem(
     !dispatch || typeof dispatch !== "object" ||
     !workerIdentity || typeof workerIdentity !== "object" ||
     workerIdentity.status !== "VERIFIED" ||
-    !workerIdentity.identity || typeof workerIdentity.identity !== "object" ||
+    !isVerifiedWorkerIdentity(workerIdentity.identity) ||
     typeof workerIdentity.identity.principal !== "string" ||
     typeof workerIdentity.identity.issuer !== "string" || !workerIdentity.identity.issuer.trim() ||
     typeof workerIdentity.identity.audience !== "string" || !workerIdentity.identity.audience.trim() ||
