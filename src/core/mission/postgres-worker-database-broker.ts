@@ -198,7 +198,7 @@ export class PostgresWorkerDatabaseBroker implements WorkerDatabaseBroker {
     positiveInteger(input.leaseMilliseconds, "leaseMilliseconds");
     return this.sessions.withTransaction(async (client) => {
       const result = await client.query<{ expires_at: string | Date }>(
-        "select private.happy_worker_heartbeat_mission_task_lease($1,$2,$3,$4,$5,$6,$7,$8,$9) as expires_at",
+        "select private.happy_worker_heartbeat_mission_task_lease($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) as expires_at",
         [...scope, input.missionId, input.taskId, input.leaseId, input.ownerId, input.fencingToken, input.leaseMilliseconds],
       );
       return iso(one(result.rows).expires_at, "expires_at");
