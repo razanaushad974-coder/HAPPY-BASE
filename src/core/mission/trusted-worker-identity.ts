@@ -186,7 +186,7 @@ export class TrustedWorkerIdentityProvider {
         tokenId: claims.tokenId,
         issuedAt: claims.issuedAt,
         expiresAt: claims.expiresAt,
-        capabilities: capabilities as WorkerCapability[],
+        capabilities: Object.freeze([...capabilities]) as readonly WorkerCapability[],
       } as VerifiedWorkerIdentity;
       Object.defineProperty(identity, WORKER_IDENTITY_ATTESTATION, {
         value: true,
@@ -194,6 +194,7 @@ export class TrustedWorkerIdentityProvider {
         configurable: false,
         writable: false,
       });
+      Object.freeze(identity);
       return { status: "VERIFIED", identity };
     } catch {
       // Credential source, verifier, clock, or malformed runtime config
