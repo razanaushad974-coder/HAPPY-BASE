@@ -572,7 +572,8 @@ begin
       'tenant-attempt-key-1'
     );
     raise exception 'idempotency key reuse with changed action unexpectedly succeeded';
-  exception when unique_violation then null;
+  exception when raise_exception then
+    if sqlerrm <> 'IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_EXECUTION' then raise; end if;
   end;
 end
 $request_idempotency$;
