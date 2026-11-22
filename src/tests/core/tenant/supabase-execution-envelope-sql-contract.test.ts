@@ -10,6 +10,11 @@ const sqlPath = resolve(
   "supabase/drafts/20261121_authenticated_execution_envelope_candidate.sql",
 );
 const sql = readFileSync(sqlPath, "utf8");
+const schedulerPath = resolve(
+  process.cwd(),
+  "supabase/drafts/20261121_durable_mission_scheduler_candidate.sql",
+);
+const schedulerSql = readFileSync(schedulerPath, "utf8");
 
 assert(/add column if not exists input_digest text/i.test(sql), "Payload digest column is missing.");
 assert(/add column if not exists envelope_digest text/i.test(sql), "Immutable envelope digest column is missing.");
@@ -43,4 +48,19 @@ assert(/create role happy_execution_request_create_rpc_owner nologin bypassrls/i
 assert(!/create\s+(?:or replace\s+)?function\s+(?:public|private)\.[a-z0-9_]*(?:claim|dispatch|finish|complete)[a-z0-9_]*\s*\(/i.test(sql),
   "This candidate must not introduce a worker claim, dispatch, or completion endpoint.");
 
-console.log("Supabase execution envelope SQL static contract: PASS");
+const enqueueStart = schedulerSql.indexOf("create or replace function public.happy_enqueue_mission_dispatch(");
+const enqueueEnd = schedulerSql.indexOf("$enqueue$;", enqueueStart);
+assert(enqueueStart >= 0 && enqueueEnd > enqueueStart, "Durable dispatch enqueue function is missing.");
+const enqueueSql = schedulerSql.slice(enqueueStart, enqueueEnd);
+assert(/from private\.execution_requests r[\s\S]*r\.request_id = p_execution_request_id[\s\S]*r\.organization_id = p_organization_id[\s\S]*r\.workspace_id = p_workspace_id[\s\S]*r\.task_id = p_task_id[\s\S]*for update/i.test(enqueueSql),
+  "Enqueue must lock the exact persisted tenant/request/task envelope.");
+assert(/v_request\.status <> 'READY'[\s\S]*v_request\.approval_status <> 'APPROVED'[\s\S]*v_request\.required_approval_role <> 'FOUNDER'/i.test(enqueueSql),
+  "Enqueue must require the persisted founder-approved request lifecycle.");
+assert(/v_input_digest <> v_request\.input_digest[\s\S]*v_envelope_digest <> v_request\.envelope_digest/i.test(enqueueSql),
+  "Enqueue must recompute both persisted input and immutable envelope digests.");
+assert(/p_payload is distinct from v_expected_payload[\s\S]*p_idempotency_key is distinct from v_request\.idempotency_key[\s\S]*p_payload_digest is distinct from v_computed_payload_digest/i.test(enqueueSql),
+  "Enqueue must compare the full immutable payload, idempotency key and recomputed digest.");
+assert(/revoke all on function public\.happy_enqueue_mission_dispatch[\s\S]*from public, anon, authenticated, service_role/i.test(schedulerSql),
+  "Worker enqueue remains unavailable until a trusted workload identity is connected.");
+
+console.log("Supabase execution envelope and scheduler SQL static contract: PASS");
