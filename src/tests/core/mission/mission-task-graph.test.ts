@@ -823,6 +823,18 @@ if (!duplicateExecutionIdentityDenied) {
   throw new Error("Recovery assessment accepted duplicate execution record identities.");
 }
 
+const malformedMissionRecoveryDenied = (() => {
+  try {
+    assessMissionRecovery(null as never, [], []);
+    return false;
+  } catch {
+    return true;
+  }
+})();
+if (!malformedMissionRecoveryDenied) {
+  throw new Error("Recovery assessment dereferenced a null mission instead of rejecting it.");
+}
+
 const malformedRecoveryInputs: Array<() => unknown> = [
   () => assessMissionRecovery(
     recoveryMission,
