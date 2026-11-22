@@ -524,7 +524,7 @@ select * from public.happy_create_tenant_record(
 -- remain revoked; the state-machine tests below run only as the DB owner.
 create temp table happy_test_scheduler_requests (
   request_id text primary key,
-  created_at text not null
+  created_at timestamptz not null
 ) on commit preserve rows;
 
 insert into happy_test_scheduler_requests
