@@ -29,7 +29,7 @@ const identityPolicy = {
   issuer: "https://identity.example.test",
   audience: "happy-execution",
   environment: "staging",
-  allowedSubjects: ["workload:worker-1", "workload:other"],
+  allowedSubjects: ["owner:team:project:happy-worker:environment:staging", "owner:team:project:other-worker:environment:staging"],
   allowedCapabilities: ["API", "VERIFY"] as const,
   maxCredentialLifetimeSeconds: 300,
   clockSkewSeconds: 15,
@@ -40,7 +40,7 @@ async function resolveWorkerIdentity(
 ): Promise<WorkerIdentityResolution> {
   const claims: VerifiedWorkerCredentialClaims = {
     issuer: identityPolicy.issuer,
-    subject: "workload:worker-1",
+    subject: "owner:team:project:happy-worker:environment:staging",
     audience: identityPolicy.audience,
     issuedAt: workerNow - 30,
     notBefore: workerNow - 30,
@@ -164,7 +164,7 @@ async function run(): Promise<void> {
   assert(invalid.status === "RECONCILIATION_REQUIRED" && invalidCalls === 0, "mismatched request binding reached provider");
 
   let identityMismatchCalls = 0;
-  const wrongPrincipal = await resolveWorkerIdentity({ subject: "workload:other" });
+  const wrongPrincipal = await resolveWorkerIdentity({ subject: "owner:team:project:other-worker:environment:staging" });
   const deniedIdentity = await dispatchClaimedOutboxItem(
     dispatch, wrongPrincipal,
     { ...provider, async dispatch() { identityMismatchCalls += 1; return { kind: "ACKNOWLEDGED" as const, provider: "x", providerRequestId: "x", response: null }; } },
@@ -201,7 +201,7 @@ async function run(): Promise<void> {
 
   const forged = {
     status: "VERIFIED" as const,
-    identity: { ...workerIdentity.identity, principal: "workload:worker-1" },
+    identity: { ...workerIdentity.identity, principal: "owner:team:project:happy-worker:environment:staging" },
   } as unknown as WorkerIdentityResolution;
   const forgedResult = await dispatchClaimedOutboxItem(
     dispatch, forged, provider, recorderFor(async () => {}),
