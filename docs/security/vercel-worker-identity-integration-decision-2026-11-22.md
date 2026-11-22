@@ -68,3 +68,26 @@ Therefore:
 - Vercel projects/deployments: unchanged.
 
 The generic injected identity contract remains useful for future worker runtimes, but it is not production authentication until the dedicated Vercel worker and verifier are connected and tested.
+
+
+## Database identity compatibility constraint
+
+Vercel's documented `sub` is a string in the form `owner:[TEAM_SLUG]:project:[PROJECT_NAME]:environment:[ENVIRONMENT]`; it is not the UUID user subject expected by Supabase `auth.uid()`. The current scheduler SQL candidate calls `auth.uid()` and uses that UUID as the tenant's human user binding. Passing the Vercel OIDC token directly to Supabase/PostgREST would therefore not satisfy the current SQL identity contract and must not be treated as a valid integration.
+
+The eventual design needs two independent authorities:
+1. A verified worker principal (for example, a dedicated Vercel worker project subject) that is authorized to perform only the worker operations granted to that project.
+2. The original tenant/user actor and persisted request/approval binding, re-derived from trusted persisted records and checked atomically by the database. The worker must not choose or impersonate that actor by supplying a user UUID.
+
+A reviewed worker-to-database broker or dedicated least-privilege PostgreSQL principal is required to bridge these authorities. A broad Supabase `service_role` client or caller-controlled `SET request.jwt.claim.sub` is not an acceptable bridge. The worker principal and user/tenant actor must remain distinct in audit and authorization decisions.
+
+Vercel OIDC federation's availability in the account/project settings was not independently verified through the connected project metadata. The Vercel projects were inspected read-only; no OIDC setting was enabled or changed.
+
+## CI correction and result — 2026-11-22
+
+Two stale test assumptions were corrected without restoring worker grants:
+- The main PostgreSQL integration harness now executes scheduler SQL state-machine assertions as the disposable database owner while retaining the local simulated `auth.uid()` claim; it separately asserts all seven worker-facing RPCs are not executable by `authenticated`, `anon`, or `service_role`, and explicitly attempts all seven calls as `authenticated` to verify PostgreSQL rejects them before function execution.
+- The concurrent reconciliation-evidence harness now runs its concurrency calls as the disposable database owner because the append RPC is also intentionally grant-revoked. It retains the simulated user claim for tenant membership logic. Application-role denial is checked separately by the main harness.
+
+The first rerun exposed this second stale assumption in the separate concurrency script; that failure was fixed. GitHub Actions run `45022850389` on commit `83d603c15f30630750f58e6572df2b055862e331` completed **SUCCESS**: TypeScript, security harnesses, async tenant/persistence contracts, PostgreSQL RLS/CAS and scheduler/outbox/reconciliation integration, orchestration/mission harnesses, ESLint, dependency audit, and production build all passed.
+
+This CI evidence is from an isolated disposable PostgreSQL 17 harness with a local `auth.uid()` claim stub. It does not prove real Vercel OIDC token verification, hosted Supabase JWT/RLS/function-owner compatibility, a live worker, provider-side idempotency, or production deployment. All worker-facing scheduler/reconciliation RPC grants remain revoked. No hosted database or production Vercel resource was changed.
