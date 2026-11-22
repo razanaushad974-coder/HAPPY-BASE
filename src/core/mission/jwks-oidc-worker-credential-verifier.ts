@@ -142,8 +142,8 @@ export class JwksOidcWorkerCredentialVerifier implements WorkerCredentialVerifie
           (!key.alg || key.alg === "RS256") &&
           typeof key.n === "string" && decodeBase64Url(key.n).length >= 256 &&
           typeof key.e === "string" &&
-          (!Array.isArray((key as JsonWebKey & { key_ops?: unknown }).key_ops) ||
-            ((key as JsonWebKey & { key_ops: unknown[] }).key_ops.includes("verify")))
+          (key.key_ops === undefined ||
+            (Array.isArray(key.key_ops) && key.key_ops.includes("verify")))
         ) {
           if (next.has(key.kid)) throw new Error("Worker JWKS contains duplicate key IDs");
           next.set(key.kid, key);
