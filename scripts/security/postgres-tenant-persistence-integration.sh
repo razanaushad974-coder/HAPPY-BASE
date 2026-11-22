@@ -718,6 +718,40 @@ begin
      or v_recorded.outcome->>'providerRequestId' <> 'provider-req-1' then
     raise exception 'provider outcome was not persisted with exact dispatch record';
   end if;
+
+  -- Table-boundary guard: even the isolated DB owner cannot rewrite a
+  -- dispatch binding, terminal result, or delete the outbox record.
+  begin
+    update public.happy_execution_dispatch_outbox
+       set payload = jsonb_set(payload,'{action}','"DELETE"'::jsonb)
+     where outbox_id = v_outbox.outbox_id;
+    raise exception 'immutable dispatch payload mutation unexpectedly succeeded';
+  exception when sqlstate '55000' then
+    if sqlerrm <> 'DISPATCH_OUTBOX_IMMUTABLE_BINDING' then raise; end if;
+  end;
+  begin
+    update public.happy_execution_dispatch_outbox
+       set status = 'FAILED', updated_at = clock_timestamp()
+     where outbox_id = v_outbox.outbox_id;
+    raise exception 'terminal outbox state rewrite unexpectedly succeeded';
+  exception when sqlstate '55000' then
+    if sqlerrm <> 'DISPATCH_OUTBOX_ILLEGAL_STATE_TRANSITION' then raise; end if;
+  end;
+  begin
+    update public.happy_execution_dispatch_outbox
+       set outcome = '{"providerRequestId":"rewritten"}'::jsonb,
+           updated_at = clock_timestamp()
+     where outbox_id = v_outbox.outbox_id;
+    raise exception 'terminal outbox outcome rewrite unexpectedly succeeded';
+  exception when sqlstate '55000' then
+    if sqlerrm <> 'DISPATCH_OUTBOX_ILLEGAL_STATE_TRANSITION' then raise; end if;
+  end;
+  begin
+    delete from public.happy_execution_dispatch_outbox where outbox_id = v_outbox.outbox_id;
+    raise exception 'dispatch outbox deletion unexpectedly succeeded';
+  exception when sqlstate '55000' then
+    if sqlerrm <> 'DISPATCH_OUTBOX_APPEND_ONLY' then raise; end if;
+  end;
   begin
     perform public.happy_record_dispatch_outcome(
       '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
