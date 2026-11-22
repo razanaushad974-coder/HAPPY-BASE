@@ -1,6 +1,18 @@
 # Trusted execution worker identity and atomic claim gate — 2026-11-22
 
-## Decision
+## Existing identity-provider audit — 2026-11-22
+
+The current `SupabaseVerifiedServerIdentityProvider` in `src/core/tenant/supabase-verified-server-identity-provider.ts` is a human-session identity adapter, not a worker-attestation adapter:
+
+- It calls the request-scoped Supabase client's `auth.getUser()` and returns only the verified human `userId`.
+- Its documented contract explicitly requires the incoming user's cookies/JWT and forbids service-role and browser clients.
+- It does not verify a workload issuer, worker subject, worker audience, deployment environment, capability grant, or worker credential lifetime/revocation.
+- Therefore it may continue to establish the human principal for tenant-scoped user operations, but it MUST NOT be reused or relabelled as a worker identity provider.
+- The `ownerId` field in the pure `ClaimedDispatch` contract is data binding only; a string in that field is not proof of workload identity. The durable claim/RPC must bind it to an independently verified worker principal before it can authorize side effects.
+
+This is a source-level contract audit only. It does not establish a deployed worker identity or change the current NOT_YET_CONNECTED state.
+
+## Decision 
 
 HAPPY does not yet have a trusted execution-worker identity. Do not expose a claim, heartbeat, dispatch, completion, or failure endpoint to ordinary authenticated user sessions. A user JWT proves the user session; it does not prove that the caller is an approved worker process.
 
