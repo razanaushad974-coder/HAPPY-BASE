@@ -56,7 +56,7 @@ async function main() {
     "expired credential accepted");
   assert(await verifier.verifyCredential(token({ ...validClaims, nbf: now + 100 })) === null,
     "not-yet-valid credential accepted");
-  assert(await verifier.verifyCredential(token(validClaims), { alg: "none", kid: "key-1" }) === null,
+  assert(await verifier.verifyCredential(token(validClaims, { alg: "none", kid: "key-1" })) === null,
     "non-RS256 algorithm accepted");
 
   const invalidSignature = token(validClaims).slice(0, -4) + "AAAA";
