@@ -90,7 +90,7 @@ The new `TrustedWorkerIdentityProvider` is intentionally an injected boundary, n
 - Credential retrieval is an injected `TrustedWorkerCredentialSource` and must use a hosting-platform-controlled workload identity channel. Request body, query, ordinary user Authorization, and caller-controlled forwarded headers are explicitly prohibited.
 - Cryptographic verification is an injected `WorkerCredentialVerifier`; the core module never decodes JWT payloads or treats unverified claims as identity. The verifier contract requires signature/key rotation, issuer, audience, expiry, not-before, and revocation validation.
 - The core policy additionally pins issuer, audience, environment, exact workload subject allowlist, capability allowlist, bounded token lifetime, and clock skew.
-- Subjects must use the dedicated `workload:` namespace; a human `user:` subject is rejected.
+- Subjects must match an exact server-configured allowlist for the dedicated worker workload; known `user:` subjects are rejected. The subject syntax is provider-specific and must not be guessed or normalized.
 - Missing source/verifier returns `NOT_CONNECTED`; malformed claims, verifier errors, and policy mismatches return `DENIED`. There is no human-session fallback.
 - Contract tests cover valid identity, missing provider/credential, verifier failure, wrong issuer/audience/environment, human/unapproved subjects, expired/not-yet-valid/future-issued credentials, excessive lifetime, missing token ID, and invalid/duplicate capabilities. The test is added to `test:security`.
 
@@ -127,3 +127,16 @@ A `VERIFIED` identity is now runtime-branded with a module-private symbol, and t
 Added `dispatchWithTrustedWorkerIdentity` as the server-side composition entry point. It asks the injected identity provider to read and verify a fresh platform credential for each claimed outbox item, then passes only that resolution into the branded-identity dispatch guard. Identity-source exceptions and NOT_CONNECTED/DENIED results stop before the provider call. Tests assert one identity read per item and no provider call when identity resolution fails.
 
 The helper is a core composition contract only. It does not create an HTTP route, select Vercel as an identity source, create a worker process, or grant database access.
+
+
+## Vercel OIDC provider assessment — 2026-11-22
+
+Vercel's official OIDC documentation confirms that Vercel Functions receive a signed OIDC token in the request context as `x-vercel-oidc-token`; the `@vercel/oidc` helper retrieves it. The token's Vercel subject has the form `owner:<team>:project:<project>:environment:<environment>`, not a `workload:` prefix. Therefore the core identity policy now relies on exact configured subject allowlisting and rejects known `user:` subjects instead of hard-coding one provider's namespace.
+
+Official references:
+- https://vercel.com/docs/oidc — issuer modes, Function token delivery, and token lifetime.
+- https://vercel.com/docs/oidc/reference — Vercel token anatomy, JWKS discovery, and exact subject claim shape.
+
+Vercel is a **candidate provider, not yet connected**. A safe HAPPY implementation would require a dedicated worker project (so a general user-facing Function cannot inherit the same worker subject), exact team issuer + project + environment + audience pinning, JWKS signature/key-rotation verification, and a request-context token source that cannot be overridden by caller input. The `@vercel/oidc` token helper retrieves the token; it does not by itself replace cryptographic signature verification.
+
+Read-only Vercel account inspection found the existing `happy-base` Next.js project (`prj_f5qoF5I4BRz76sG3LJg2cJLUyZxx`) but no dedicated worker project was established by this review. Its latest deployment is reported as ERROR and `live=false`; no project settings, environment variables, deployment, or access controls were changed. Consequently no Vercel issuer, project subject, or audience values are assumed in code.
