@@ -23,7 +23,7 @@ const task = {
 const records = new Map<string, TenantPersistedRecord<unknown>>([
   ["MISSION:mission-1", { id: mission.id, entityType: "MISSION", version: 1, createdAt: mission.createdAt, updatedAt: mission.updatedAt, organizationId: scope.organizationId, workspaceId: scope.workspaceId, userId: scope.userId, data: mission }],
   ["TASK:task-1", { id: task.id, entityType: "TASK", version: 1, createdAt: mission.createdAt, updatedAt: mission.updatedAt, organizationId: scope.organizationId, workspaceId: scope.workspaceId, userId: scope.userId, data: task }],
-  ["EXECUTION:execution-1", { id: "execution-1", entityType: "EXECUTION", version: 1, createdAt: mission.createdAt, updatedAt: mission.updatedAt, organizationId: scope.organizationId, workspaceId: scope.workspaceId, userId: scope.userId, data: { missionId: "mission-1", taskId: "task-1", requestId: "request-1", outboxId: "outbox-1", status: "RUNNING" } }],
+  ["EXECUTION:execution-1", { id: "execution-1", entityType: "EXECUTION", version: 1, createdAt: mission.createdAt, updatedAt: mission.updatedAt, organizationId: scope.organizationId, workspaceId: scope.workspaceId, userId: scope.userId, data: { id: "result-1", missionId: "mission-1", taskId: "task-1", requestId: "execution-1", outboxId: "outbox-1", status: "RUNNING" } }],
 ]);
 const calls: string[] = [];
 const persistence: AsyncTenantPersistenceAdapter = {
@@ -43,6 +43,7 @@ const persistence: AsyncTenantPersistenceAdapter = {
   async transaction() { throw new Error("read only"); },
 };
 const evidenceCalls: unknown[] = [];
+const before = JSON.stringify([...records.entries()]);
 const result = await assessPersistedMissionRecovery(scope, "mission-1", persistence, {
   async listForExecution(binding) { evidenceCalls.push(binding); return []; },
 });
@@ -53,15 +54,43 @@ if (result.assessments.length !== 1 ||
 }
 if (evidenceCalls.length !== 1 ||
     JSON.stringify(evidenceCalls[0]) !== JSON.stringify({
-      outboxId: "outbox-1", missionId: "mission-1", taskId: "task-1", executionRequestId: "request-1",
+      outboxId: "outbox-1", missionId: "mission-1", taskId: "task-1", executionRequestId: "execution-1",
     })) {
   throw new Error("Recovery evidence must be read using exact persisted execution bindings.");
 }
 if (calls.join("|") !== "get:MISSION:mission-1|get:TASK:task-1|list:EXECUTION") {
   throw new Error("Recovery must use scoped mission/task/execution reads only.");
 }
-const before = JSON.stringify([...records.entries()]);
 if (before !== JSON.stringify([...records.entries()])) throw new Error("Recovery mutated persisted state.");
+
+// This is the actual orchestration crash window: task is RUNNING and the
+// persisted execution request exists, but the result update has not happened.
+const initialRequestRecords = new Map(records);
+initialRequestRecords.set("EXECUTION:execution-1", {
+  ...records.get("EXECUTION:execution-1")!,
+  data: {
+    id: "execution-1", missionId: "mission-1", taskId: "task-1",
+    capability: "CODE", action: "BUILD", input: {}, requiresApproval: false,
+    approved: false, risk: "LOW", createdAt: mission.createdAt,
+  },
+});
+const initialRequestPersistence: AsyncTenantPersistenceAdapter = {
+  ...persistence,
+  async list<T>(givenScope: TenantScope & { userId: string }, query?: TenantRecordQuery) {
+    if (givenScope.organizationId !== scope.organizationId || givenScope.workspaceId !== scope.workspaceId || givenScope.userId !== scope.userId) throw new Error("cross tenant");
+    return [...initialRequestRecords.values()].filter((r) => r.entityType === query?.entityType) as TenantPersistedRecord<T>[];
+  },
+};
+const initialRequestResult = await assessPersistedMissionRecovery(scope, "mission-1", initialRequestPersistence, {
+  async listForExecution() { throw new Error("No outbox exists in the current orchestration producer."); },
+});
+if (initialRequestResult.assessments[0]?.disposition !== "RECONCILIATION_REQUIRED" ||
+    initialRequestResult.assessments[0]?.reason !== "EXECUTION_STATE_UNCONFIRMED") {
+  throw new Error("Pre-result execution request must require reconciliation, never be treated as a confirmed RUNNING outcome.");
+}
+if (Object.keys(initialRequestResult.evidenceByTask).length !== 0) {
+  throw new Error("Recovery must not synthesize an outbox evidence lookup for the current producer.");
+}
 
 const wrongTenant: AsyncTenantPersistenceAdapter = {
   ...persistence,
@@ -84,5 +113,16 @@ let malformedDenied = false;
 try { await assessPersistedMissionRecovery(scope, "mission-1", malformedExecution); }
 catch (error) { malformedDenied = error instanceof Error && error.message === "MISSION_RECOVERY_EXECUTION_RECORD_MALFORMED"; }
 if (!malformedDenied) throw new Error("Malformed execution record must fail closed.");
+
+const mismatchedRequest: AsyncTenantPersistenceAdapter = {
+  ...persistence,
+  async list<T>() {
+    return [{ ...records.get("EXECUTION:execution-1")!, data: { id: "result-1", missionId: "mission-1", taskId: "task-1", requestId: "different-request", status: "COMPLETED" } }] as TenantPersistedRecord<T>[];
+  },
+};
+let requestMismatchDenied = false;
+try { await assessPersistedMissionRecovery(scope, "mission-1", mismatchedRequest); }
+catch (error) { requestMismatchDenied = error instanceof Error && error.message === "MISSION_RECOVERY_EXECUTION_BINDING_INVALID"; }
+if (!requestMismatchDenied) throw new Error("Execution result with a substituted request ID must be rejected.");
 
 console.log("Persisted mission recovery assessment: PASS");
