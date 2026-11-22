@@ -1,3 +1,4 @@
+import type { WorkerIdentityResolution } from "./trusted-worker-identity";
 import type { ExecutionRequest } from "../execution/types";
 
 export type ProviderDispatchObservation =
@@ -48,9 +49,18 @@ export type DispatchWorkerResult =
  */
 export async function dispatchClaimedOutboxItem(
   dispatch: ClaimedDispatch,
+  workerIdentity: WorkerIdentityResolution,
   provider: IdempotentDispatchProvider,
   recorder: DispatchOutcomeRecorder,
 ): Promise<DispatchWorkerResult> {
+  if (
+    workerIdentity.status !== "VERIFIED" ||
+    workerIdentity.identity.principal !== dispatch.ownerId ||
+    !workerIdentity.identity.capabilities.includes(dispatch.request.capability)
+  ) {
+    return { status: "RECONCILIATION_REQUIRED", reason: "TRUSTED_WORKER_IDENTITY_OR_CAPABILITY_MISMATCH" };
+  }
+
   if (
     !dispatch.outboxId.trim() ||
     !dispatch.idempotencyKey.trim() ||
