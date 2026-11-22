@@ -235,8 +235,7 @@ export class ReasoningEngine {
           request.resolvedReferences[0],
         dependencies: [],
         requiresApproval:
-          risk === "HIGH" ||
-          risk === "CRITICAL",
+          risk !== "LOW",
         risk,
         verificationRequired: true,
       },
@@ -273,8 +272,7 @@ export class ReasoningEngine {
       status:
         request.unresolvedQuestions.length > 0
           ? "NEEDS_CLARIFICATION"
-          : risk === "HIGH" ||
-              risk === "CRITICAL"
+          : risk !== "LOW"
             ? "WAITING_APPROVAL"
             : "READY",
       risk,
@@ -450,8 +448,7 @@ Rules:
               : declaredRisk;
           const requiresApproval =
             asBoolean(step.requiresApproval) ||
-            effectiveRisk === "HIGH" ||
-            effectiveRisk === "CRITICAL";
+            effectiveRisk !== "LOW";
 
           return {
             id: createId("plan-step"),
