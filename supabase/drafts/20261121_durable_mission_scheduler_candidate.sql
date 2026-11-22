@@ -585,7 +585,7 @@ revoke all on function public.happy_claim_dispatch_outbox(uuid,uuid,uuid,uuid,te
 revoke all on function public.happy_record_dispatch_outcome(uuid,uuid,uuid,uuid,text,bigint,text,jsonb)
   from public, anon, authenticated, service_role;
 revoke all on function public.happy_enqueue_mission_dispatch(uuid,uuid,text,text,uuid,text,bigint,text,text,text,text,text,jsonb)
-  from public, anon, service_role;
+  from public, anon, authenticated, service_role;
 
 -- WORKER AUTHORIZATION FAIL-CLOSED GATE:
 -- No worker workload identity provider is currently implemented. Therefore
@@ -861,7 +861,7 @@ end;
 $read_evidence$;
 
 revoke all on function public.happy_list_dispatch_reconciliation_evidence(uuid,uuid,uuid,text,text,text)
-  from public, anon, service_role;
+  from public, anon, authenticated, service_role;
 
 -- Reconciliation limitations / gates:
 -- 1. Provider identity is bound to outcome->>'provider' written by the dispatch
