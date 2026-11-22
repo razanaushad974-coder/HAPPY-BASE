@@ -6,7 +6,11 @@ import {
   type IdempotentDispatchProvider,
   type PersistedDispatchOutcome,
 } from "../../../core/mission/durable-dispatch-worker-contract";
-import type { WorkerIdentityResolution } from "../../../core/mission/trusted-worker-identity";
+import {
+  TrustedWorkerIdentityProvider,
+  type VerifiedWorkerCredentialClaims,
+  type WorkerIdentityResolution,
+} from "../../../core/mission/trusted-worker-identity";
 
 const request: ExecutionRequest = {
   id: "request-1", missionId: "mission-1", taskId: "task-1",
@@ -20,19 +24,41 @@ const dispatch: ClaimedDispatch = {
   ownerId: "worker-1", fencingToken: 4, request,
 };
 const workerNow = Math.floor(Date.now() / 1000);
-const workerIdentity: WorkerIdentityResolution = {
-  status: "VERIFIED",
-  identity: {
-    principal: "worker-1",
-    issuer: "https://identity.example.test",
-    audience: "happy-execution",
-    environment: "staging",
-    tokenId: "token-unique-1",
-    issuedAt: workerNow - 30,
-    expiresAt: workerNow + 240,
-    capabilities: ["API"],
-  },
+const identityPolicy = {
+  issuer: "https://identity.example.test",
+  audience: "happy-execution",
+  environment: "staging",
+  allowedSubjects: ["workload:worker-1", "workload:other"],
+  allowedCapabilities: ["API", "VERIFY"] as const,
+  maxCredentialLifetimeSeconds: 300,
+  clockSkewSeconds: 15,
 };
+
+async function resolveWorkerIdentity(
+  patch: Partial<VerifiedWorkerCredentialClaims> = {},
+): Promise<WorkerIdentityResolution> {
+  const claims: VerifiedWorkerCredentialClaims = {
+    issuer: identityPolicy.issuer,
+    subject: "workload:worker-1",
+    audience: identityPolicy.audience,
+    issuedAt: workerNow - 30,
+    notBefore: workerNow - 30,
+    expiresAt: workerNow + 240,
+    tokenId: "token-unique-1",
+    environment: identityPolicy.environment,
+    capabilities: ["API"],
+    ...patch,
+  };
+  return new TrustedWorkerIdentityProvider(
+    { async getCredential() { return "opaque-platform-credential"; } },
+    { async verifyCredential() { return claims; } },
+    {
+      ...identityPolicy,
+      allowedCapabilities: [...identityPolicy.allowedCapabilities],
+    },
+    () => workerNow * 1000,
+  ).getVerifiedWorkerIdentity();
+}
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -45,6 +71,9 @@ function recorderFor(
 }
 
 async function run(): Promise<void> {
+  const workerIdentity = await resolveWorkerIdentity();
+  assert(workerIdentity.status === "VERIFIED", "test workload identity was not verified");
+
   let providerCalls = 0;
   let persisted: PersistedDispatchOutcome | undefined;
   const provider: IdempotentDispatchProvider = {
@@ -106,10 +135,7 @@ async function run(): Promise<void> {
   assert(invalid.status === "RECONCILIATION_REQUIRED" && invalidCalls === 0, "mismatched request binding reached provider");
 
   let identityMismatchCalls = 0;
-  const wrongPrincipal: WorkerIdentityResolution = {
-    ...workerIdentity,
-    identity: { ...workerIdentity.identity, principal: "workload:other" },
-  };
+  const wrongPrincipal = await resolveWorkerIdentity({ subject: "workload:other" });
   const deniedIdentity = await dispatchClaimedOutboxItem(
     dispatch, wrongPrincipal,
     { ...provider, async dispatch() { identityMismatchCalls += 1; return { kind: "ACKNOWLEDGED" as const, provider: "x", providerRequestId: "x", response: null }; } },
@@ -118,10 +144,7 @@ async function run(): Promise<void> {
   assert(deniedIdentity.status === "RECONCILIATION_REQUIRED" && identityMismatchCalls === 0,
     "worker principal mismatch reached provider");
 
-  const missingCapability: WorkerIdentityResolution = {
-    ...workerIdentity,
-    identity: { ...workerIdentity.identity, capabilities: ["VERIFY"] },
-  };
+  const missingCapability = await resolveWorkerIdentity({ capabilities: ["VERIFY"] });
   const deniedCapability = await dispatchClaimedOutboxItem(
     dispatch, missingCapability, provider, recorderFor(async () => {}),
   );
@@ -134,12 +157,9 @@ async function run(): Promise<void> {
   assert(disconnected.status === "RECONCILIATION_REQUIRED" && providerCalls === 1,
     "unconnected worker identity reached provider");
 
-  const expiredIdentity: WorkerIdentityResolution = {
-    ...workerIdentity,
-    identity: { ...workerIdentity.identity, expiresAt: workerNow - 1 },
-  };
+  const expiringIdentity = await resolveWorkerIdentity({ expiresAt: workerNow + 1 });
   const expired = await dispatchClaimedOutboxItem(
-    dispatch, expiredIdentity, provider, recorderFor(async () => {}), () => workerNow * 1000,
+    dispatch, expiringIdentity, provider, recorderFor(async () => {}), () => (workerNow + 1) * 1000,
   );
   assert(expired.status === "RECONCILIATION_REQUIRED" && providerCalls === 1,
     "expired worker identity reached provider");
@@ -149,6 +169,16 @@ async function run(): Promise<void> {
   );
   assert(unavailableClock.status === "RECONCILIATION_REQUIRED" && providerCalls === 1,
     "invalid worker clock reached provider");
+
+  const forged = {
+    status: "VERIFIED" as const,
+    identity: { ...workerIdentity.identity, principal: "workload:worker-1" },
+  } as WorkerIdentityResolution;
+  const forgedResult = await dispatchClaimedOutboxItem(
+    dispatch, forged, provider, recorderFor(async () => {}),
+  );
+  assert(forgedResult.status === "RECONCILIATION_REQUIRED" && providerCalls === 1,
+    "structurally forged identity object reached provider");
 
   console.log("Durable dispatch worker contract tests: PASS");
 }
