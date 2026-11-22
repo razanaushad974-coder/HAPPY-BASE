@@ -47,6 +47,12 @@ async function main() {
   assert(accepted?.subject === validClaims.sub, "valid signed OIDC credential rejected");
   assert(accepted?.capabilities.join(",") === "API,VERIFY", "server-owned capabilities not applied");
   assert(fetchCount === 1, "JWKS should be fetched once and cached");
+  const standardJwks = new JwksOidcWorkerCredentialVerifier(config, async () => ({
+    ok: true, status: 200, async json() { return { keys: [{ ...jwk, kid: "key-1" }] }; },
+  }));
+  assert(await standardJwks.verifyCredential(token(validClaims)) !== null,
+    "valid standard JWKS key with omitted optional use was rejected");
+
 
   assert(await verifier.verifyCredential(token({ ...validClaims, iss: "https://attacker.test" })) === null,
     "wrong issuer accepted");
