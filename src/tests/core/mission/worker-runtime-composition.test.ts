@@ -7,6 +7,7 @@ import {
   type VerifiedWorkerCredentialClaims,
 } from "../../../core/mission/trusted-worker-identity";
 import type { WorkerDatabaseBroker, WorkerPrincipalRegistry } from "../../../core/mission/worker-database-broker";
+import { MissionOrchestrator } from "../../../core/mission/orchestrator";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -57,6 +58,19 @@ const complete: WorkerRuntimeCompositionDependencies = {
 };
 
 async function run() {
+  const defaultOrchestrator = new MissionOrchestrator();
+  const defaultWorkerStatus = await defaultOrchestrator.prepareWorkerRuntimeOperation("claim_task");
+  assert(defaultWorkerStatus.status === "NOT_CONNECTED",
+    "default mission orchestrator must not claim a worker runtime is connected");
+
+  const configuredOrchestrator = new MissionOrchestrator(complete);
+  const orchestratorWorkerStatus = await configuredOrchestrator.prepareWorkerRuntimeOperation(
+    "claim_task",
+    () => now * 1000,
+  );
+  assert(orchestratorWorkerStatus.status === "COMPOSITION_AVAILABLE",
+    "configured orchestrator must expose the explicit worker authorization seam");
+
   const missingIdentity = await composeTrustedWorkerRuntime({
     dependencies: { ...complete, identityProvider: null },
     operation: "claim_task",
