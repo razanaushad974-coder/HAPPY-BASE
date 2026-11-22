@@ -1,6 +1,7 @@
 import type { ExecutionRequest } from "../../../core/execution/types";
 import {
   dispatchClaimedOutboxItem,
+  dispatchWithTrustedWorkerIdentity,
   type ClaimedDispatch,
   type DispatchOutcomeRecorder,
   type IdempotentDispatchProvider,
@@ -91,6 +92,34 @@ async function run(): Promise<void> {
   );
   assert(success.status === "RECORDED" && success.outcome === "ACKNOWLEDGED", "acknowledged provider result was not recorded");
   assert(providerCalls === 1 && persisted?.status === "ACKNOWLEDGED", "provider call/result persistence mismatch");
+
+  let identityReads = 0;
+  const freshIdentityDispatch = await dispatchWithTrustedWorkerIdentity(
+    { async getVerifiedWorkerIdentity() { identityReads += 1; return workerIdentity; } },
+    dispatch,
+    provider,
+    recorderFor(async () => {}),
+  );
+  assert(freshIdentityDispatch.status === "RECORDED" && identityReads === 1,
+    "dispatch must resolve a fresh workload identity for each item");
+
+  const unavailableIdentityDispatch = await dispatchWithTrustedWorkerIdentity(
+    { async getVerifiedWorkerIdentity() { return { status: "NOT_CONNECTED" }; } },
+    dispatch,
+    provider,
+    recorderFor(async () => {}),
+  );
+  assert(unavailableIdentityDispatch.status === "RECONCILIATION_REQUIRED" && providerCalls === 2,
+    "missing worker identity must not call the provider");
+
+  const failedIdentityDispatch = await dispatchWithTrustedWorkerIdentity(
+    { async getVerifiedWorkerIdentity() { throw new Error("credential source unavailable"); } },
+    dispatch,
+    provider,
+    recorderFor(async () => {}),
+  );
+  assert(failedIdentityDispatch.status === "RECONCILIATION_REQUIRED" && providerCalls === 2,
+    "worker identity provider failure must not call the provider");
 
   let unsafeCalls = 0;
   const unsafeProvider = {
