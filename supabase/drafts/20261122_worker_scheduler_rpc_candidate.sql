@@ -8,8 +8,7 @@
 -- independently derived from PostgreSQL session_user and matched to the
 -- supplied worker ID. The user is checked against the operator-managed tenant
 -- grant and active canonical organization/workspace memberships in the same
--- transaction. The original human RPCs remain separate and continue using
--- auth.uid(); these worker RPCs never use auth.uid() or JWT claim GUCs.
+-- transaction. These worker RPCs never use auth.uid() or JWT claim GUCs.
 --
 -- All EXECUTE grants are intentionally withheld.
 
@@ -662,15 +661,9 @@ begin
 end;
 $outcome$;
 
-revoke all on function public.happy_claim_mission_task(uuid,uuid,text,text,text,integer)
-  from public, anon, authenticated, service_role;
 revoke all on function public.happy_heartbeat_mission_task_lease(uuid,uuid,text,text,uuid,text,bigint,integer)
   from public, anon, authenticated, service_role;
-revoke all on function public.happy_claim_dispatch_outbox(uuid,uuid,uuid,uuid,text,bigint)
-  from public, anon, authenticated, service_role;
 revoke all on function private.happy_worker_record_dispatch_outcome(uuid,uuid,uuid,uuid,text,bigint,text,jsonb)
-  from public, anon, authenticated, service_role;
-revoke all on function public.happy_enqueue_mission_dispatch(uuid,uuid,text,text,uuid,text,bigint,text,text,text,text,text,jsonb)
   from public, anon, authenticated, service_role;
 
 -- WORKER AUTHORIZATION FAIL-CLOSED GATE:
@@ -836,8 +829,6 @@ begin
 end;
 $append$;
 
-revoke all on function public.happy_reject_reconciliation_evidence_mutation()
-  from public, anon, authenticated, service_role;
 revoke all on function private.happy_worker_append_dispatch_reconciliation_evidence(uuid,uuid,uuid,uuid,text,text,text,timestamptz,jsonb)
   from public, anon, authenticated, service_role;
 
@@ -946,8 +937,6 @@ begin
 end;
 $read_evidence$;
 
-revoke all on function private.happy_worker_list_dispatch_reconciliation_evidence(uuid,uuid,uuid,text,text,text)
-  from public, anon, authenticated, service_role;
 
 -- Reconciliation limitations / gates:
 -- 1. Provider identity is bound to outcome->>'provider' written by the dispatch
