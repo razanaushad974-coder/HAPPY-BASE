@@ -128,18 +128,22 @@ export async function authorizeWorkerBrokerOperation(input: {
  * Narrow operation interface for a future authenticated DB connector.
  * Implementations must obtain their authority from a distinct PostgreSQL
  * login/session principal and must not accept caller-provided principal IDs.
- * No generic query, arbitrary SQL, or table CRUD method is exposed.
+ * tenantScope.userId is an untrusted selector only: the database must derive
+ * the worker from session_user and validate the worker-to-user tenant grant,
+ * active organization/workspace membership, and operation capability in the
+ * same transaction as the protected operation. No generic query, arbitrary
+ * SQL, or table CRUD method is exposed.
  */
 export interface WorkerDatabaseBroker {
   claimTask(input: {
-    tenantScope: { organizationId: string; workspaceId: string };
+    tenantScope: { organizationId: string; workspaceId: string; userId: string };
     missionId: string;
     taskId: string;
     idempotencyKey: string;
   }): Promise<unknown>;
 
   enqueueDispatch(input: {
-    tenantScope: { organizationId: string; workspaceId: string };
+    tenantScope: { organizationId: string; workspaceId: string; userId: string };
     executionRequestId: string;
     leaseId: string;
     fencingToken: number;
@@ -147,7 +151,7 @@ export interface WorkerDatabaseBroker {
   }): Promise<unknown>;
 
   recordDispatchOutcome(input: {
-    tenantScope: { organizationId: string; workspaceId: string };
+    tenantScope: { organizationId: string; workspaceId: string; userId: string };
     outboxId: string;
     leaseId: string;
     fencingToken: number;
@@ -157,7 +161,7 @@ export interface WorkerDatabaseBroker {
   }): Promise<unknown>;
 
   appendReconciliationEvidence(input: {
-    tenantScope: { organizationId: string; workspaceId: string };
+    tenantScope: { organizationId: string; workspaceId: string; userId: string };
     outboxId: string;
     evidenceId: string;
     idempotencyKey: string;
@@ -168,7 +172,7 @@ export interface WorkerDatabaseBroker {
   }): Promise<unknown>;
 
   listReconciliationEvidence(input: {
-    tenantScope: { organizationId: string; workspaceId: string };
+    tenantScope: { organizationId: string; workspaceId: string; userId: string };
     outboxId: string;
     missionId: string;
     taskId: string;
