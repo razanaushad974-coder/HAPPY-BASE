@@ -69,6 +69,41 @@ async function run() {
   });
   assert(allowed.status === "AUTHORIZED", "enabled matching worker with CONTROL must be authorized");
 
+  const mutableRegistration = {
+    principalId: "worker-principal-snapshot",
+    issuer: claims.issuer,
+    subject: claims.subject,
+    audience: "happy-worker-broker",
+    environment: "production",
+    enabled: true,
+    capabilities: ["CONTROL", "VERIFY"] as ("CONTROL" | "VERIFY")[],
+  };
+  const snapshot = await authorizeWorkerBrokerOperation({
+    identity,
+    operation: "claim_task",
+    registry: { findByIssuerSubjectEnvironment: async () => mutableRegistration },
+    now: () => now * 1000,
+  });
+  assert(snapshot.status === "AUTHORIZED", "well-formed registry entry must authorize");
+  mutableRegistration.principalId = "attacker-mutated-principal";
+  mutableRegistration.capabilities.splice(0, 1);
+  assert(
+    snapshot.status === "AUTHORIZED" &&
+      snapshot.registration.principalId === "worker-principal-snapshot" &&
+      snapshot.registration.capabilities.includes("CONTROL") &&
+      Object.isFrozen(snapshot.registration) &&
+      Object.isFrozen(snapshot.registration.capabilities),
+    "authorization must return a frozen defensive snapshot of registry data",
+  );
+
+  const malformed = await authorizeWorkerBrokerOperation({
+    identity,
+    operation: "claim_task",
+    registry: registry({ capabilities: ["CONTROL", "ROOT"] }),
+    now: () => now * 1000,
+  });
+  assert(malformed.status === "DENIED", "unknown registry capabilities must be denied");
+
   const revoked = await authorizeWorkerBrokerOperation({
     identity,
     operation: "claim_task",
