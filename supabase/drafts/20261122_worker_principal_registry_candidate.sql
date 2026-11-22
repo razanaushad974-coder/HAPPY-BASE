@@ -152,6 +152,117 @@ $worker_identity$;
 revoke all on function private.happy_require_worker_principal(text)
   from public, anon, authenticated, service_role;
 
+-- Resolve a caller-selected tenant/user scope only after deriving the worker
+-- principal from session_user and locking the current registry/grant/membership
+-- rows. The user ID is a selector, not proof: the live worker grant and active
+-- canonical memberships are rechecked on every operation.
+create or replace function private.happy_require_worker_tenant_scope(
+  p_worker_principal_id uuid,
+  p_organization_id uuid,
+  p_workspace_id uuid,
+  p_user_id uuid,
+  p_required_capability text
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = pg_catalog
+as $worker_scope$
+declare
+  v_principal_id uuid;
+  v_user_id uuid;
+  v_found boolean;
+begin
+  if p_worker_principal_id is null
+     or p_organization_id is null
+     or p_workspace_id is null
+     or p_user_id is null
+     or p_required_capability is null
+     or p_required_capability not in ('API','BROWSER','FILE','DATABASE','DEPLOY','PUBLISH','CONTROL','VERIFY') then
+    raise exception 'INVALID_WORKER_TENANT_SCOPE' using errcode = '22023';
+  end if;
+
+  select principal.worker_principal_id into v_principal_id
+    from private.happy_require_worker_principal(p_required_capability) principal
+   where principal.worker_principal_id = p_worker_principal_id;
+  if not found then
+    raise exception 'WORKER_PRINCIPAL_SCOPE_MISMATCH' using errcode = '42501';
+  end if;
+
+  -- Lock order: principal registry -> worker tenant grant -> organization ->
+  -- workspace -> organization membership -> workspace membership.
+  select true into v_found
+    from private.happy_worker_principal_registry p
+   where p.worker_principal_id = v_principal_id
+     and p.db_login_role = session_user::text
+     and p.enabled = true
+     and p.revoked_at is null
+     and p.capabilities @> array[p_required_capability]::text[]
+   for share;
+  if not found then
+    raise exception 'WORKER_PRINCIPAL_REVOKED' using errcode = '42501';
+  end if;
+
+  select g.user_id into v_user_id
+    from private.happy_worker_tenant_grants g
+   where g.worker_principal_id = v_principal_id
+     and g.organization_id = p_organization_id
+     and g.workspace_id = p_workspace_id
+     and g.user_id = p_user_id
+     and g.enabled = true
+     and g.capabilities @> array[p_required_capability]::text[]
+   for share;
+  if not found then
+    raise exception 'WORKER_TENANT_GRANT_DENIED' using errcode = '42501';
+  end if;
+
+  select true into v_found
+    from private.organizations o
+   where o.organization_id = p_organization_id
+     and o.status = 'ACTIVE'
+   for share;
+  if not found then
+    raise exception 'WORKER_TENANT_SCOPE_INACTIVE' using errcode = '42501';
+  end if;
+
+  select true into v_found
+    from private.workspaces w
+   where w.organization_id = p_organization_id
+     and w.workspace_id = p_workspace_id
+     and w.status = 'ACTIVE'
+   for share;
+  if not found then
+    raise exception 'WORKER_TENANT_SCOPE_INACTIVE' using errcode = '42501';
+  end if;
+
+  select true into v_found
+    from private.organization_memberships om
+   where om.organization_id = p_organization_id
+     and om.user_id = v_user_id
+     and om.status = 'ACTIVE'
+   for share;
+  if not found then
+    raise exception 'WORKER_TENANT_MEMBERSHIP_REVOKED' using errcode = '42501';
+  end if;
+
+  select true into v_found
+    from private.workspace_memberships wm
+   where wm.organization_id = p_organization_id
+     and wm.workspace_id = p_workspace_id
+     and wm.user_id = v_user_id
+     and wm.status = 'ACTIVE'
+   for share;
+  if not found then
+    raise exception 'WORKER_TENANT_MEMBERSHIP_REVOKED' using errcode = '42501';
+  end if;
+
+  return v_user_id;
+end;
+$worker_scope$;
+
+revoke all on function private.happy_require_worker_tenant_scope(uuid,uuid,uuid,uuid,text)
+  from public, anon, authenticated, service_role;
+
 -- Intentionally no GRANT EXECUTE, no worker-role grants, and no public RPCs.
 -- Future SECURITY DEFINER worker operations must call this helper and then
 -- verify the matching row in happy_worker_tenant_grants plus the canonical
