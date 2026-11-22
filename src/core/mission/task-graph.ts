@@ -11,12 +11,57 @@ export class TaskGraphEngine {
     const errors: string[] = [];
     const ids = new Set<string>();
 
+    const allowedActions = new Set([
+      "UNDERSTAND", "RESEARCH", "CREATE", "MODIFY", "BUILD", "TEST",
+      "REQUEST", "CALL", "GET", "POST", "PUT", "PATCH", "DELETE",
+      "VERIFY", "DEPLOY", "PUBLISH", "AUTOMATE", "CONTROL",
+      "DB_SELECT", "DB_QUERY", "DB_INSERT", "DB_UPDATE", "DB_DELETE",
+      "DB_TRANSACTION",
+    ]);
+    const allowedStatuses = new Set([
+      "PENDING", "BLOCKED", "READY", "RUNNING", "VERIFYING",
+      "COMPLETED", "FAILED", "CANCELLED",
+    ]);
+
     for (const task of tasks) {
-      if (ids.has(task.id)) {
+      if (typeof task.id !== "string" || !task.id.trim()) {
+        errors.push("Task ID must be a non-empty string.");
+      } else if (ids.has(task.id)) {
         errors.push(`Duplicate task ID: ${task.id}`);
       }
-
-      ids.add(task.id);
+      if (typeof task.missionId !== "string" || !task.missionId.trim()) {
+        errors.push(`Task ${task.id || "<unknown>"} has an empty mission ID.`);
+      }
+      if (typeof task.title !== "string" || !task.title.trim()) {
+        errors.push(`Task ${task.id || "<unknown>"} has an empty title.`);
+      }
+      if (!allowedActions.has(task.action)) {
+        errors.push(`Task ${task.id || "<unknown>"} has an unsupported action.`);
+      }
+      if (!allowedStatuses.has(task.status)) {
+        errors.push(`Task ${task.id || "<unknown>"} has an unsupported status.`);
+      }
+      if (!Number.isInteger(task.order) || task.order < 1) {
+        errors.push(`Task ${task.id || "<unknown>"} has an invalid order.`);
+      }
+      if (
+        !Number.isInteger(task.retryCount) ||
+        !Number.isInteger(task.maxRetries) ||
+        task.retryCount < 0 ||
+        task.maxRetries < 0 ||
+        task.retryCount > task.maxRetries
+      ) {
+        errors.push(`Task ${task.id || "<unknown>"} has invalid retry counters.`);
+      }
+      if (typeof task.requiresApproval !== "boolean" ||
+          typeof task.verificationRequired !== "boolean") {
+        errors.push(`Task ${task.id || "<unknown>"} has invalid security flags.`);
+      }
+      if (!Array.isArray(task.dependencyIds)) {
+        errors.push(`Task ${task.id || "<unknown>"} has invalid dependencies.`);
+      } else if (typeof task.id === "string" && task.id.trim()) {
+        ids.add(task.id);
+      }
     }
 
     const missionIds = new Set(tasks.map((task) => task.missionId));
