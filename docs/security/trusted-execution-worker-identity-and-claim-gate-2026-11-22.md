@@ -120,3 +120,10 @@ The dispatch contract now also validates the verified identity shape and checks 
 ### In-process attestation integrity
 
 A `VERIFIED` identity is now runtime-branded with a module-private symbol, and the identity object plus copied capability list are frozen before return. The dispatch contract checks this brand, so a plain object with copied fields or an object reconstructed from caller-controlled JSON is rejected. This prevents ordinary structural forgery within the server process; it is not a substitute for keeping the verifier and dispatch composition server-only. Tests verify the brand, immutability, spread-copy rejection, and that forged objects cannot reach a provider.
+
+
+### Fresh identity composition per dispatch
+
+Added `dispatchWithTrustedWorkerIdentity` as the server-side composition entry point. It asks the injected identity provider to read and verify a fresh platform credential for each claimed outbox item, then passes only that resolution into the branded-identity dispatch guard. Identity-source exceptions and NOT_CONNECTED/DENIED results stop before the provider call. Tests assert one identity read per item and no provider call when identity resolution fails.
+
+The helper is a core composition contract only. It does not create an HTTP route, select Vercel as an identity source, create a worker process, or grant database access.
