@@ -54,24 +54,32 @@ export async function dispatchClaimedOutboxItem(
   recorder: DispatchOutcomeRecorder,
 ): Promise<DispatchWorkerResult> {
   if (
+    !dispatch || typeof dispatch !== "object" ||
+    !workerIdentity || typeof workerIdentity !== "object" ||
     workerIdentity.status !== "VERIFIED" ||
+    !workerIdentity.identity || typeof workerIdentity.identity !== "object" ||
+    typeof workerIdentity.identity.principal !== "string" ||
+    !Array.isArray(workerIdentity.identity.capabilities) ||
+    !dispatch.request || typeof dispatch.request !== "object" ||
+    typeof dispatch.request.capability !== "string" ||
     workerIdentity.identity.principal !== dispatch.ownerId ||
-    !workerIdentity.identity.capabilities.includes(dispatch.request.capability)
+    !workerIdentity.identity.capabilities.includes(dispatch.request.capability as never)
   ) {
     return { status: "RECONCILIATION_REQUIRED", reason: "TRUSTED_WORKER_IDENTITY_OR_CAPABILITY_MISMATCH" };
   }
 
   if (
-    !dispatch.outboxId.trim() ||
-    !dispatch.idempotencyKey.trim() ||
-    !dispatch.executionRequestId.trim() ||
-    !dispatch.leaseId.trim() ||
-    !dispatch.ownerId.trim() ||
+    typeof dispatch.outboxId !== "string" || !dispatch.outboxId.trim() ||
+    typeof dispatch.idempotencyKey !== "string" || !dispatch.idempotencyKey.trim() ||
+    typeof dispatch.executionRequestId !== "string" || !dispatch.executionRequestId.trim() ||
+    typeof dispatch.leaseId !== "string" || !dispatch.leaseId.trim() ||
+    typeof dispatch.ownerId !== "string" || !dispatch.ownerId.trim() ||
     !Number.isSafeInteger(dispatch.fencingToken) ||
     dispatch.fencingToken < 1 ||
+    typeof dispatch.request.id !== "string" ||
     dispatch.request.id !== dispatch.executionRequestId ||
-    !dispatch.request.missionId.trim() ||
-    !dispatch.request.taskId.trim()
+    typeof dispatch.request.missionId !== "string" || !dispatch.request.missionId.trim() ||
+    typeof dispatch.request.taskId !== "string" || !dispatch.request.taskId.trim()
   ) {
     return { status: "RECONCILIATION_REQUIRED", reason: "CLAIMED_DISPATCH_BINDING_INVALID" };
   }
