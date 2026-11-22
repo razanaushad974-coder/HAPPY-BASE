@@ -52,6 +52,7 @@ export async function dispatchClaimedOutboxItem(
   workerIdentity: WorkerIdentityResolution,
   provider: IdempotentDispatchProvider,
   recorder: DispatchOutcomeRecorder,
+  now: () => number = () => Date.now(),
 ): Promise<DispatchWorkerResult> {
   if (
     !dispatch || typeof dispatch !== "object" ||
@@ -59,6 +60,13 @@ export async function dispatchClaimedOutboxItem(
     workerIdentity.status !== "VERIFIED" ||
     !workerIdentity.identity || typeof workerIdentity.identity !== "object" ||
     typeof workerIdentity.identity.principal !== "string" ||
+    typeof workerIdentity.identity.issuer !== "string" || !workerIdentity.identity.issuer.trim() ||
+    typeof workerIdentity.identity.audience !== "string" || !workerIdentity.identity.audience.trim() ||
+    typeof workerIdentity.identity.environment !== "string" || !workerIdentity.identity.environment.trim() ||
+    typeof workerIdentity.identity.tokenId !== "string" || !workerIdentity.identity.tokenId.trim() ||
+    !Number.isSafeInteger(workerIdentity.identity.issuedAt) ||
+    !Number.isSafeInteger(workerIdentity.identity.expiresAt) ||
+    workerIdentity.identity.expiresAt <= workerIdentity.identity.issuedAt ||
     !Array.isArray(workerIdentity.identity.capabilities) ||
     !dispatch.request || typeof dispatch.request !== "object" ||
     typeof dispatch.request.capability !== "string" ||
@@ -66,6 +74,17 @@ export async function dispatchClaimedOutboxItem(
     !workerIdentity.identity.capabilities.includes(dispatch.request.capability as WorkerCapability)
   ) {
     return { status: "RECONCILIATION_REQUIRED", reason: "TRUSTED_WORKER_IDENTITY_OR_CAPABILITY_MISMATCH" };
+  }
+
+  let nowMs: number;
+  try {
+    nowMs = now();
+  } catch {
+    return { status: "RECONCILIATION_REQUIRED", reason: "WORKER_IDENTITY_CLOCK_UNAVAILABLE" };
+  }
+  if (!Number.isFinite(nowMs) || nowMs < 0 ||
+      workerIdentity.identity.expiresAt <= Math.floor(nowMs / 1000)) {
+    return { status: "RECONCILIATION_REQUIRED", reason: "WORKER_IDENTITY_EXPIRED" };
   }
 
   if (
