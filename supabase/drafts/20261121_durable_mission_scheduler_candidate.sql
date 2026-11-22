@@ -763,6 +763,77 @@ revoke all on function public.happy_append_dispatch_reconciliation_evidence(uuid
 grant execute on function public.happy_append_dispatch_reconciliation_evidence(uuid,uuid,uuid,uuid,text,text,text,timestamptz,jsonb)
   to authenticated;
 
+-- Read-only recovery evidence lookup. The caller must present the complete
+-- immutable dispatch identity; the database re-derives auth.uid() and checks
+-- the tenant, mission, task, and execution request against the outbox row.
+-- Direct SELECT on the evidence table remains revoked.
+create or replace function public.happy_list_dispatch_reconciliation_evidence(
+  p_organization_id uuid,
+  p_workspace_id uuid,
+  p_outbox_id uuid,
+  p_mission_id text,
+  p_task_id text,
+  p_execution_request_id text
+)
+returns table (
+  evidence_id uuid,
+  outbox_id uuid,
+  idempotency_key text,
+  provider_id text,
+  observation_status text,
+  observed_at timestamptz,
+  observation jsonb
+)
+language plpgsql
+security definer
+set search_path = pg_catalog
+as $read_evidence$
+declare
+  v_actor uuid;
+  v_outbox public.happy_execution_dispatch_outbox%rowtype;
+begin
+  v_actor := auth.uid();
+  if v_actor is null or p_outbox_id is null
+     or p_mission_id is null or length(btrim(p_mission_id)) = 0
+     or p_task_id is null or length(btrim(p_task_id)) = 0
+     or p_execution_request_id is null or length(btrim(p_execution_request_id)) = 0 then
+    raise exception 'INVALID_RECONCILIATION_READ_BINDING' using errcode = '22023';
+  end if;
+  if not public.happy_lock_active_tenant_scope(p_organization_id, p_workspace_id) then
+    raise exception 'TENANT_SCOPE_DENIED' using errcode = '42501';
+  end if;
+
+  select * into v_outbox
+    from public.happy_execution_dispatch_outbox o
+   where o.organization_id = p_organization_id
+     and o.workspace_id = p_workspace_id
+     and o.user_id = v_actor
+     and o.outbox_id = p_outbox_id;
+  if not found
+     or v_outbox.mission_id <> p_mission_id
+     or v_outbox.task_id <> p_task_id
+     or v_outbox.execution_request_id <> p_execution_request_id
+     or v_outbox.status not in ('AMBIGUOUS','RECONCILIATION_REQUIRED') then
+    raise exception 'RECONCILIATION_READ_TARGET_BINDING_MISMATCH' using errcode = '55000';
+  end if;
+
+  return query
+    select e.evidence_id, e.outbox_id, e.idempotency_key, e.provider_id,
+           e.observation_status, e.observed_at, e.observation
+      from public.happy_dispatch_reconciliation_evidence e
+     where e.organization_id = p_organization_id
+       and e.workspace_id = p_workspace_id
+       and e.user_id = v_actor
+       and e.outbox_id = p_outbox_id
+     order by e.observed_at, e.evidence_id;
+end;
+$read_evidence$;
+
+revoke all on function public.happy_list_dispatch_reconciliation_evidence(uuid,uuid,uuid,text,text,text)
+  from public, anon, service_role;
+grant execute on function public.happy_list_dispatch_reconciliation_evidence(uuid,uuid,uuid,text,text,text)
+  to authenticated;
+
 -- Reconciliation limitations / gates:
 -- 1. Provider identity is bound to outcome->>'provider' written by the dispatch
 --    coordinator; provider adapters must preserve that exact stable identifier.
@@ -772,8 +843,8 @@ grant execute on function public.happy_append_dispatch_reconciliation_evidence(u
 --    retention/erasure policy still require capability-specific review.
 -- 4. This SECURITY DEFINER candidate depends on the same unresolved function
 --    ownership and private tenant-scope helper audit as the scheduler RPCs.
--- 5. The table has no direct API grants; authenticated callers can append only
---    through the auth.uid()-bound RPC. No SELECT API is exposed in this draft.
+-- 5. The table has no direct API grants; authenticated callers can append and
+--    perform exact-binding read-only lookups only through auth.uid()-bound RPCs.
 -- 6. The trigger blocks ordinary UPDATE/DELETE, but privileged owners can
 --    disable triggers; production ownership and operational controls remain
 --    mandatory.
