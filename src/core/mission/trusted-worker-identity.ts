@@ -87,23 +87,36 @@ export class TrustedWorkerIdentityProvider {
   async getVerifiedWorkerIdentity(): Promise<WorkerIdentityResolution> {
     if (!this.source || !this.verifier) return { status: "NOT_CONNECTED" };
 
-    const issuer = this.policy.issuer.trim();
-    const audience = this.policy.audience.trim();
-    const environment = this.policy.environment.trim();
-    const allowedSubjects = new Set(this.policy.allowedSubjects.map((value) => value.trim()).filter(Boolean));
-    const allowedCapabilities = new Set(this.policy.allowedCapabilities);
-    const maxLifetime = this.policy.maxCredentialLifetimeSeconds;
-    const skew = this.policy.clockSkewSeconds ?? 30;
-
-    if (
-      !issuer || !audience || !environment || allowedSubjects.size === 0 ||
-      allowedCapabilities.size === 0 ||
-      [...allowedCapabilities].some((capability) => !CAPABILITIES.has(capability)) ||
-      !Number.isSafeInteger(maxLifetime) || maxLifetime < 1 ||
-      !Number.isSafeInteger(skew) || skew < 0 || skew > 120
-    ) return { status: "DENIED" };
-
     try {
+      // Runtime configuration is untrusted until validated. Keep every
+      // property access inside this boundary so malformed injected config
+      // fails closed instead of escaping as an exception.
+      const policy = this.policy as TrustedWorkerIdentityPolicy | null;
+      if (!policy || typeof policy !== "object") return { status: "DENIED" };
+
+      const issuer = typeof policy.issuer === "string" ? policy.issuer.trim() : "";
+      const audience = typeof policy.audience === "string" ? policy.audience.trim() : "";
+      const environment = typeof policy.environment === "string" ? policy.environment.trim() : "";
+      const subjects = Array.isArray(policy.allowedSubjects) ? policy.allowedSubjects : [];
+      const capabilityList = Array.isArray(policy.allowedCapabilities) ? policy.allowedCapabilities : [];
+      if (
+        subjects.some((value) => typeof value !== "string") ||
+        capabilityList.some((value) => typeof value !== "string")
+      ) return { status: "DENIED" };
+
+      const allowedSubjects = new Set(subjects.map((value) => value.trim()).filter(Boolean));
+      const allowedCapabilities = new Set(capabilityList);
+      const maxLifetime = policy.maxCredentialLifetimeSeconds;
+      const skew = policy.clockSkewSeconds ?? 30;
+
+      if (
+        !issuer || !audience || !environment || allowedSubjects.size === 0 ||
+        allowedCapabilities.size === 0 ||
+        [...allowedCapabilities].some((capability) => !CAPABILITIES.has(capability as WorkerCapability)) ||
+        !Number.isSafeInteger(maxLifetime) || maxLifetime < 1 ||
+        !Number.isSafeInteger(skew) || skew < 0 || skew > 120
+      ) return { status: "DENIED" };
+
       const credential = await this.source.getCredential();
       if (typeof credential !== "string" || !credential.trim()) {
         return { status: "DENIED" };
@@ -112,9 +125,11 @@ export class TrustedWorkerIdentityProvider {
       // The verifier is the cryptographic trust boundary; never decode JWT
       // payloads locally and treat their contents as verified claims.
       const claims = await this.verifier.verifyCredential(credential);
-      if (!claims) return { status: "DENIED" };
+      if (!claims || typeof claims !== "object") return { status: "DENIED" };
 
-      const now = Math.floor(this.now() / 1000);
+      const nowMs = this.now();
+      if (!Number.isFinite(nowMs) || nowMs < 0) return { status: "DENIED" };
+      const now = Math.floor(nowMs / 1000);
       const audiences = Array.isArray(claims.audience)
         ? claims.audience
         : [claims.audience];
@@ -123,9 +138,10 @@ export class TrustedWorkerIdentityProvider {
         : [];
 
       if (
-        claims.issuer !== issuer ||
+        typeof claims.issuer !== "string" || claims.issuer !== issuer ||
+        audiences.some((value) => typeof value !== "string") ||
         !audiences.includes(audience) ||
-        claims.environment !== environment ||
+        typeof claims.environment !== "string" || claims.environment !== environment ||
         typeof claims.subject !== "string" ||
         !claims.subject.startsWith("workload:") ||
         !allowedSubjects.has(claims.subject) ||
@@ -139,6 +155,7 @@ export class TrustedWorkerIdentityProvider {
         claims.expiresAt <= claims.issuedAt ||
         claims.expiresAt - claims.issuedAt > maxLifetime ||
         capabilities.length === 0 ||
+        capabilities.some((value) => typeof value !== "string") ||
         new Set(capabilities).size !== capabilities.length ||
         capabilities.some((capability) =>
           !CAPABILITIES.has(capability as WorkerCapability) ||
@@ -160,7 +177,8 @@ export class TrustedWorkerIdentityProvider {
         },
       };
     } catch {
-      // Credential source/verifier outages fail closed; no user-session fallback.
+      // Credential source, verifier, clock, or malformed runtime config
+      // failures are authorization failures; never fall back to user identity.
       return { status: "DENIED" };
     }
   }
