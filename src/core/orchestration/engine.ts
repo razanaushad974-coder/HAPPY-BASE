@@ -748,8 +748,11 @@ contextSummary:
                     },
                     targetReference: task.targetReference,
                     requiresApproval: task.requiresApproval,
-                    approved:
-                        !task.requiresApproval || verifiedApproval,
+                    // Approval is only propagated from the persisted,
+                    // tenant-scoped verifier. Never infer approval from
+                    // requiresApproval=false: sensitive actions are checked
+                    // independently by ExecutionEngine.
+                    approved: verifiedApproval,
                     risk: task.requiresApproval
                         ? "HIGH" as const
                         : "LOW" as const,
