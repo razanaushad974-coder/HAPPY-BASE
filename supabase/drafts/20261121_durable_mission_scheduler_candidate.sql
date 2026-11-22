@@ -577,25 +577,25 @@ end;
 $outcome$;
 
 revoke all on function public.happy_claim_mission_task(uuid,uuid,text,text,text,integer)
-  from public, anon, service_role;
+  from public, anon, authenticated, service_role;
 revoke all on function public.happy_heartbeat_mission_task_lease(uuid,uuid,text,text,uuid,text,bigint,integer)
-  from public, anon, service_role;
+  from public, anon, authenticated, service_role;
 revoke all on function public.happy_claim_dispatch_outbox(uuid,uuid,uuid,uuid,text,bigint)
-  from public, anon, service_role;
+  from public, anon, authenticated, service_role;
 revoke all on function public.happy_record_dispatch_outcome(uuid,uuid,uuid,uuid,text,bigint,text,jsonb)
-  from public, anon, service_role;
+  from public, anon, authenticated, service_role;
 revoke all on function public.happy_enqueue_mission_dispatch(uuid,uuid,text,text,uuid,text,bigint,text,text,text,text,text,jsonb)
   from public, anon, service_role;
-grant execute on function public.happy_claim_mission_task(uuid,uuid,text,text,text,integer)
-  to authenticated;
-grant execute on function public.happy_heartbeat_mission_task_lease(uuid,uuid,text,text,uuid,text,bigint,integer)
-  to authenticated;
-grant execute on function public.happy_claim_dispatch_outbox(uuid,uuid,uuid,uuid,text,bigint)
-  to authenticated;
-grant execute on function public.happy_record_dispatch_outcome(uuid,uuid,uuid,uuid,text,bigint,text,jsonb)
-  to authenticated;
-grant execute on function public.happy_enqueue_mission_dispatch(uuid,uuid,text,text,uuid,text,bigint,text,text,text,text,text,jsonb)
-  to authenticated;
+
+-- WORKER AUTHORIZATION FAIL-CLOSED GATE:
+-- No worker workload identity provider is currently implemented. Therefore
+-- none of the claim, heartbeat, enqueue, outbox-claim, outcome, or
+-- reconciliation-evidence RPCs is executable by authenticated human users,
+-- anon, service_role, or PUBLIC. Do not add grants until a dedicated
+-- server-verified workload identity and least-privilege function-owner model
+-- are implemented and adversarially tested. auth.uid() proves a human Supabase
+-- session, not a worker workload identity; p_owner_id is caller data, not proof.
+-- The functions below remain inert design candidates until that gate is met.
 
 -- LIMITATIONS / REQUIRED FOLLOW-UP:
 -- 1. Claim currently accepts only READY tasks. Retry must be an explicit,
@@ -610,6 +610,8 @@ grant execute on function public.happy_enqueue_mission_dispatch(uuid,uuid,text,t
 --    blindly replay.
 -- 5. Function ownership and the private tenant lock helper's owner privileges
 --    are unresolved. Verify real Supabase JWT/RLS/role behavior before migration.
+-- 6. Authenticated execution grants are intentionally withheld until a trusted
+--    worker identity is connected; a human JWT is not worker authentication.
 -- 6. This is a draft only; no connected database was changed.
 
 
@@ -759,9 +761,7 @@ $append$;
 revoke all on function public.happy_reject_reconciliation_evidence_mutation()
   from public, anon, authenticated, service_role;
 revoke all on function public.happy_append_dispatch_reconciliation_evidence(uuid,uuid,uuid,uuid,text,text,text,timestamptz,jsonb)
-  from public, anon, service_role;
-grant execute on function public.happy_append_dispatch_reconciliation_evidence(uuid,uuid,uuid,uuid,text,text,text,timestamptz,jsonb)
-  to authenticated;
+  from public, anon, authenticated, service_role;
 
 -- Read-only recovery evidence lookup. The caller must present the complete
 -- immutable dispatch identity; the database re-derives auth.uid() and checks
@@ -862,8 +862,6 @@ $read_evidence$;
 
 revoke all on function public.happy_list_dispatch_reconciliation_evidence(uuid,uuid,uuid,text,text,text)
   from public, anon, service_role;
-grant execute on function public.happy_list_dispatch_reconciliation_evidence(uuid,uuid,uuid,text,text,text)
-  to authenticated;
 
 -- Reconciliation limitations / gates:
 -- 1. Provider identity is bound to outcome->>'provider' written by the dispatch
@@ -874,8 +872,8 @@ grant execute on function public.happy_list_dispatch_reconciliation_evidence(uui
 --    retention/erasure policy still require capability-specific review.
 -- 4. This SECURITY DEFINER candidate depends on the same unresolved function
 --    ownership and private tenant-scope helper audit as the scheduler RPCs.
--- 5. The table has no direct API grants; authenticated callers can append and
---    perform exact-binding read-only lookups only through auth.uid()-bound RPCs.
+-- 5. The table has no direct API grants. Reconciliation RPC execution grants
+--    are intentionally withheld until trusted workload identity is implemented.
 -- 6. The trigger blocks ordinary UPDATE/DELETE, but privileged owners can
 --    disable triggers; production ownership and operational controls remain
 --    mandatory.
