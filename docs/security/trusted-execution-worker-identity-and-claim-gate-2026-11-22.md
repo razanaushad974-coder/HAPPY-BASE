@@ -79,3 +79,21 @@ Before enabling any worker route or dispatch:
 - Default execution adapters remain NOT_YET_CONNECTED. No worker or production dispatch is activated.
 
 The next implementation decision depends on the actual worker hosting/runtime identity available for HAPPY. Do not invent a trust source or weaken the boundary merely to create a claim endpoint.
+
+
+## Core workload-identity contract added — 2026-11-22
+
+Added `src/core/mission/trusted-worker-identity.ts` and `src/tests/core/mission/trusted-worker-identity.test.ts`.
+
+The new `TrustedWorkerIdentityProvider` is intentionally an injected boundary, not a concrete hosting-platform integration:
+
+- Credential retrieval is an injected `TrustedWorkerCredentialSource` and must use a hosting-platform-controlled workload identity channel. Request body, query, ordinary user Authorization, and caller-controlled forwarded headers are explicitly prohibited.
+- Cryptographic verification is an injected `WorkerCredentialVerifier`; the core module never decodes JWT payloads or treats unverified claims as identity. The verifier contract requires signature/key rotation, issuer, audience, expiry, not-before, and revocation validation.
+- The core policy additionally pins issuer, audience, environment, exact workload subject allowlist, capability allowlist, bounded token lifetime, and clock skew.
+- Subjects must use the dedicated `workload:` namespace; a human `user:` subject is rejected.
+- Missing source/verifier returns `NOT_CONNECTED`; malformed claims, verifier errors, and policy mismatches return `DENIED`. There is no human-session fallback.
+- Contract tests cover valid identity, missing provider/credential, verifier failure, wrong issuer/audience/environment, human/unapproved subjects, expired/not-yet-valid/future-issued credentials, excessive lifetime, missing token ID, and invalid/duplicate capabilities. The test is added to `test:security`.
+
+### What this does not do
+
+No concrete Vercel/SPIFFE/OIDC credential source, cryptographic JWT verifier, worker registry, token revocation store, request route, database claim binding, or workload-to-tenant authorization is wired. The new contract is not production worker authentication. A platform integration must be selected and independently verified before any claim/dispatch grants are restored. The scheduler RPCs remain fully revoked for authenticated users and the SQL remains design-only.
