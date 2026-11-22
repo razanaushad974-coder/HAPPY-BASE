@@ -9,6 +9,12 @@ export class TaskGraphEngine {
     errors: string[];
   } {
     const errors: string[] = [];
+    if (!Array.isArray(tasks) || tasks.some((task) => !task || typeof task !== "object")) {
+      return {
+        valid: false,
+        errors: ["Task graph must be an array of valid task records."],
+      };
+    }
     const ids = new Set<string>();
 
     const allowedActions = new Set([
