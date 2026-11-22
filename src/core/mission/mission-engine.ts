@@ -67,6 +67,33 @@ export class MissionEngine {
       );
     }
 
+    if (!plan.goal.trim() || plan.steps.length === 0) {
+      throw new Error("Execution plan must have a non-empty goal and at least one step.");
+    }
+
+    const stepOrders = new Set<number>();
+    const approvalRequiredActions = new Set([
+      "POST", "PUT", "PATCH", "DELETE", "DEPLOY", "PUBLISH", "CONTROL",
+      "DB_INSERT", "DB_UPDATE", "DB_DELETE", "DB_TRANSACTION",
+    ]);
+    for (const step of plan.steps) {
+      if (!step.id.trim() || !step.title.trim()) {
+        throw new Error("Every mission plan step must have a non-empty ID and title.");
+      }
+      if (!Number.isInteger(step.order) || step.order < 1 || stepOrders.has(step.order)) {
+        throw new Error("Mission plan step order must contain unique positive integers.");
+      }
+      stepOrders.add(step.order);
+      if (
+        (step.risk !== "LOW" || approvalRequiredActions.has(step.action)) &&
+        !step.requiresApproval
+      ) {
+        throw new Error(
+          `Mission plan step ${step.id} (${step.action}/${step.risk}) must require approval.`,
+        );
+      }
+    }
+
     const taskIds = plan.steps.map(() => crypto.randomUUID());
 
     const tasks: MissionTask[] = plan.steps.map(
