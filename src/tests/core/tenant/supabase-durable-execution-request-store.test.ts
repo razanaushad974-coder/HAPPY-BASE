@@ -61,6 +61,33 @@ async function main(): Promise<void> {
   if (await new SupabaseDurableExecutionRequestStore(erroredClient).getByRequestId("req-1") !== null) {
     throw new Error("RPC failures must fail closed.");
   }
+  const malformedEnvelopeDigestClient: SupabaseExecutionRequestRpcClient = {
+    async rpc() {
+      return { data: [{ ...row, envelope_digest: "not-a-sha256-digest" }], error: null };
+    },
+  };
+  if (await new SupabaseDurableExecutionRequestStore(malformedEnvelopeDigestClient).getByRequestId("req-1") !== null) {
+    throw new Error("A malformed immutable envelope digest must fail closed.");
+  }
+
+  const malformedInputDigestClient: SupabaseExecutionRequestRpcClient = {
+    async rpc() {
+      return { data: [{ ...row, input_digest: "c".repeat(63) }], error: null };
+    },
+  };
+  if (await new SupabaseDurableExecutionRequestStore(malformedInputDigestClient).getByRequestId("req-1") !== null) {
+    throw new Error("A malformed payload digest must fail closed.");
+  }
+
+  const inconsistentApprovalClient: SupabaseExecutionRequestRpcClient = {
+    async rpc() {
+      return { data: [{ ...row, approval_status: "APPROVED", status: "WAITING_APPROVAL" }], error: null };
+    },
+  };
+  if (await new SupabaseDurableExecutionRequestStore(inconsistentApprovalClient).getByRequestId("req-1") !== null) {
+    throw new Error("Approval and execution lifecycle states must remain consistent.");
+  }
+
   console.log("Supabase durable execution request store: PASS");
 }
 
