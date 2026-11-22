@@ -198,7 +198,16 @@ $least_privilege$;
 SQL
 
 "${psql[@]}" <<'SQL'
+select 'registry-precheck' as check_name, db_login_role, enabled,
+       activated_at is not null as activated, revoked_at,
+       capabilities
+  from private.happy_worker_principal_registry
+ where db_login_role = 'happy_worker_dispatch';
+
 set session authorization happy_worker_dispatch;
+select 'worker-session-diagnostic' as check_name,
+       session_user::text as session_user,
+       current_user::text as current_user;
 
 do $worker_identity$
 declare
