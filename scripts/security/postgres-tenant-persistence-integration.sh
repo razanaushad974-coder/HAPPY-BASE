@@ -673,7 +673,7 @@ begin
   v_duplicate := public.happy_enqueue_mission_dispatch(
     '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
     'mission-scheduler','task-scheduler-root',v_claim.lease_id,'worker-a',v_claim.fencing_token,
-    'request-scheduler-1','tenant-attempt-key-1','API','POST',
+    'request-scheduler-1',v_dispatch_idempotency_key,'API','POST',
     v_payload_digest,v_payload
   );
   if v_duplicate.outbox_id <> v_outbox.outbox_id then
@@ -749,7 +749,7 @@ begin
     perform public.happy_enqueue_mission_dispatch(
       '10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000002',
       'mission-scheduler','task-scheduler-root',v_claim.lease_id,'worker-a',v_claim.fencing_token,
-      'request-scheduler-1','tenant-attempt-key-1','API','POST',
+      'request-scheduler-1',v_dispatch_idempotency_key,'API','POST',
       'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
       jsonb_set(v_payload,'{input,value}','2'::jsonb)
     );
