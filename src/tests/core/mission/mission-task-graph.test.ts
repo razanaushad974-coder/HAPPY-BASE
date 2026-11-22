@@ -320,6 +320,18 @@ for (const blockedMissionStatus of [
   }
 }
 
+const malformedRuntimeTaskRecords: unknown[] = [
+  { ...firstTask, id: " ", missionId: " " },
+  { ...firstTask, dependencyIds: null },
+  { ...firstTask, retryCount: -1 },
+  { ...firstTask, status: "UNKNOWN" },
+];
+for (const malformedRecord of malformedRuntimeTaskRecords) {
+  if (graphEngine.validate([malformedRecord as MissionTask]).valid) {
+    throw new Error("TaskGraphEngine accepted a malformed runtime task record.");
+  }
+}
+
 const readyTasks = graphEngine.getReadyTasks(
   readySnapshot.graph,
 );
