@@ -59,31 +59,31 @@ function createAuthorizedBroker(
   authorize: WorkerAuthorizationCheck,
 ): WorkerDatabaseBroker {
   return Object.freeze({
-    claimTask: async (input) => {
+    claimTask: async (input: Parameters<WorkerDatabaseBroker["claimTask"]>[0]) => {
       await authorize("claim_task");
       return rawBroker.claimTask(input);
     },
-    heartbeatLease: async (input) => {
+    heartbeatLease: async (input: Parameters<WorkerDatabaseBroker["heartbeatLease"]>[0]) => {
       await authorize("claim_task");
       return rawBroker.heartbeatLease(input);
     },
-    enqueueDispatch: async (input) => {
+    enqueueDispatch: async (input: Parameters<WorkerDatabaseBroker["enqueueDispatch"]>[0]) => {
       await authorize("enqueue_dispatch");
       return rawBroker.enqueueDispatch(input);
     },
-    claimDispatch: async (input) => {
+    claimDispatch: async (input: Parameters<WorkerDatabaseBroker["claimDispatch"]>[0]) => {
       await authorize("claim_task");
       return rawBroker.claimDispatch(input);
     },
-    recordDispatchOutcome: async (input) => {
+    recordDispatchOutcome: async (input: Parameters<WorkerDatabaseBroker["recordDispatchOutcome"]>[0]) => {
       await authorize("record_dispatch_outcome");
       return rawBroker.recordDispatchOutcome(input);
     },
-    appendReconciliationEvidence: async (input) => {
+    appendReconciliationEvidence: async (input: Parameters<WorkerDatabaseBroker["appendReconciliationEvidence"]>[0]) => {
       await authorize("append_reconciliation_evidence");
       return rawBroker.appendReconciliationEvidence(input);
     },
-    listReconciliationEvidence: async (input) => {
+    listReconciliationEvidence: async (input: Parameters<WorkerDatabaseBroker["listReconciliationEvidence"]>[0]) => {
       await authorize("list_reconciliation_evidence");
       return rawBroker.listReconciliationEvidence(input);
     },
