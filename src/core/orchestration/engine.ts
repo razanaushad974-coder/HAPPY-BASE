@@ -181,6 +181,18 @@ export class HappyOrchestrationEngine {
         return this.mission.runMissionTaskDispatch(input);
     }
 
+    runNextReadyMissionTaskDispatch(
+        input: Omit<Parameters<MissionOrchestrator["runNextReadyMissionTaskDispatch"]>[0], "persistence">,
+    ): ReturnType<MissionOrchestrator["runNextReadyMissionTaskDispatch"]> {
+        if (!this.tenantPersistence) {
+            return Promise.resolve({ status: "NO_READY_TASK" });
+        }
+        return this.mission.runNextReadyMissionTaskDispatch({
+            ...input,
+            persistence: this.tenantPersistence,
+        });
+    }
+
     async run(
         request: HappyPipelineRequest,
         trustedContext?: TrustedPipelineExecutionContext,

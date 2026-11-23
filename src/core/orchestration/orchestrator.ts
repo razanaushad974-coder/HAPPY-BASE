@@ -37,6 +37,12 @@ export class HappyOrchestrator {
         return this.engine.runMissionTaskDispatch(input);
     }
 
+    runNextReadyMissionTaskDispatch(
+        input: Parameters<HappyOrchestrationEngine["runNextReadyMissionTaskDispatch"]>[0],
+    ): ReturnType<HappyOrchestrationEngine["runNextReadyMissionTaskDispatch"]> {
+        return this.engine.runNextReadyMissionTaskDispatch(input);
+    }
+
     run(
         request: HappyPipelineRequest,
         trustedContext?: TrustedPipelineExecutionContext,

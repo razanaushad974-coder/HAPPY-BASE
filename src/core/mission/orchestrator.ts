@@ -29,6 +29,7 @@ import {
 } from "./durable-dispatch-worker-contract";
 import type { ProviderStatusReader } from "./provider-dispatch-reconciliation";
 import type { TenantScope } from "../state/types";
+import { requireCompleteScope, type AsyncTenantPersistenceAdapter } from "../persistence/async-tenant-repository";
 import type { VerificationRequest, VerificationResult } from "../verification/types";
 import type { Evidence } from "../evidence/types";
 import {
@@ -140,6 +141,76 @@ export class MissionOrchestrator {
       leaseMilliseconds: input.leaseMilliseconds,
       provider: input.provider,
       claimedOutbox: enqueue.outbox,
+      ...(input.reconciliationProvider ? { reconciliationProvider: input.reconciliationProvider } : {}),
+      ...(input.now ? { now: input.now } : {}),
+    });
+  }
+
+  /**
+   * Finds the next dependency-ready task from the caller's tenant-scoped
+   * durable mission/task records and executes exactly one bounded worker
+   * iteration. The database claim remains authoritative for approval, lease,
+   * capability, and tenant checks; this scan is scheduling, not authorization.
+   */
+  async runNextReadyMissionTaskDispatch(input: {
+    persistence: AsyncTenantPersistenceAdapter;
+    scope: TenantScope;
+    tenantScope: WorkerTenantScope;
+    ownerId: string;
+    leaseMilliseconds: number;
+    provider: IdempotentDispatchProvider;
+    reconciliationProvider?: ProviderStatusReader;
+    now?: () => number;
+  }): Promise<WorkerRuntimeComposition | ApprovedTaskEnqueueResult | DurableDispatchPollResult | { status: "NO_READY_TASK" }> {
+    requireCompleteScope(input.scope);
+    if (
+      input.scope.organizationId !== input.tenantScope.organizationId ||
+      input.scope.workspaceId !== input.tenantScope.workspaceId ||
+      input.scope.userId !== input.tenantScope.userId
+    ) {
+      throw new TenantPersistenceError("INVALID_TENANT_SCOPE", "Scheduler scan and worker claim must use the same tenant scope.");
+    }
+
+    const [missions, tasks] = await Promise.all([
+      input.persistence.list<Mission>(input.scope, { entityType: "MISSION", limit: 200 }),
+      input.persistence.list<MissionTask>(input.scope, { entityType: "TASK", limit: 1000 }),
+    ]);
+    const tasksByMission = new Map<string, MissionTask[]>();
+    for (const record of tasks) {
+      const task = record.data;
+      const group = tasksByMission.get(task.missionId) ?? [];
+      group.push(task);
+      tasksByMission.set(task.missionId, group);
+    }
+
+    const candidates = missions
+      .filter((record) => record.data.status === "READY" || record.data.status === "RUNNING")
+      .flatMap((record) => {
+        const missionTasks = tasksByMission.get(record.data.id) ?? [];
+        const byId = new Map(missionTasks.map((task) => [task.id, task]));
+        return missionTasks
+          .filter((task) =>
+            (task.status === "PENDING" || task.status === "READY") &&
+            task.dependencyIds.every((dependencyId) => byId.get(dependencyId)?.status === "COMPLETED")
+          )
+          .map((task) => ({ mission: record.data, task }));
+      })
+      .sort((left, right) =>
+        left.mission.createdAt.localeCompare(right.mission.createdAt) ||
+        left.task.order - right.task.order ||
+        left.task.id.localeCompare(right.task.id)
+      );
+
+    const candidate = candidates[0];
+    if (!candidate) return { status: "NO_READY_TASK" };
+
+    return this.runMissionTaskDispatch({
+      tenantScope: input.tenantScope,
+      missionId: candidate.mission.id,
+      taskId: candidate.task.id,
+      ownerId: input.ownerId,
+      leaseMilliseconds: input.leaseMilliseconds,
+      provider: input.provider,
       ...(input.reconciliationProvider ? { reconciliationProvider: input.reconciliationProvider } : {}),
       ...(input.now ? { now: input.now } : {}),
     });

@@ -38,6 +38,29 @@ async function main(): Promise<void> {
   }
   if (!missingPrincipalDenied) throw new Error("Durable mission creation accepted a missing user principal.");
 
+  const scheduled = await orchestrator.runNextReadyMissionTaskDispatch({
+    persistence,
+    scope,
+    tenantScope: {
+      workerPrincipalId: "worker-principal-not-connected",
+      organizationId: scope.organizationId,
+      workspaceId: scope.workspaceId,
+      userId: scope.userId,
+    },
+    ownerId: "worker-instance-not-connected",
+    leaseMilliseconds: 30_000,
+    provider: {
+      providerId: "must-not-run-without-worker-identity",
+      supportsIdempotencyKeys: true,
+      async dispatch() {
+        throw new Error("provider must not run before trusted worker identity is connected");
+      },
+    },
+  });
+  if (scheduled.status !== "NOT_CONNECTED" || scheduled.missing !== "IDENTITY_PROVIDER") {
+    throw new Error("Durable scheduler did not select a dependency-ready task and fail closed at the trusted worker gate.");
+  }
+
   const rootTaskId = snapshot.graph.roots[0];
   if (!rootTaskId) throw new Error("Durable mission did not persist a root task.");
   const running = await orchestrator.transitionTaskDurable({
@@ -155,6 +178,8 @@ async function main(): Promise<void> {
   console.log({
     missionPersisted: true,
     completeTaskGraphPersisted: true,
+    tenantScopedReadyTaskScheduler: true,
+    schedulerFailsClosedWithoutTrustedWorkerIdentity: true,
     versionedTaskAndMissionTransitions: true,
     dependencyGatePreserved: true,
     persistedVerificationRequiredBeforeCompletion: true,
