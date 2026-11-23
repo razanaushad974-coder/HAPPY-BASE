@@ -38,7 +38,8 @@ export type WorkerBrokerOperation =
   | "enqueue_dispatch"
   | "record_dispatch_outcome"
   | "append_reconciliation_evidence"
-  | "list_reconciliation_evidence";
+  | "list_reconciliation_evidence"
+  | "claim_next_dispatch";
 
 const OPERATION_CAPABILITY: Readonly<Record<WorkerBrokerOperation, WorkerCapability>> = {
   claim_task: "CONTROL",
@@ -46,6 +47,7 @@ const OPERATION_CAPABILITY: Readonly<Record<WorkerBrokerOperation, WorkerCapabil
   record_dispatch_outcome: "CONTROL",
   append_reconciliation_evidence: "VERIFY",
   list_reconciliation_evidence: "VERIFY",
+  claim_next_dispatch: "CONTROL",
 };
 
 export type WorkerBrokerAuthorization =
@@ -210,6 +212,11 @@ export interface WorkerDatabaseBroker {
     action: string;
     payloadDigest: string;
     payload: Readonly<Record<string, unknown>>;
+  }): Promise<WorkerDispatchOutbox>;
+
+  /** Atomically selects the next eligible PENDING outbox row under a live fenced lease. */
+  claimNextDispatch(input: {
+    tenantScope: WorkerTenantScope;
   }): Promise<WorkerDispatchOutbox>;
 
   claimDispatch(input: {
