@@ -1,5 +1,10 @@
 import { isVerifiedWorkerIdentity, type WorkerCapability, type WorkerIdentityResolution } from "./trusted-worker-identity";
-import type { ExecutionRequest } from "../execution/types";
+import type { ExecutionRequest, ExecutionRisk } from "../execution/types";
+import type {
+  WorkerDatabaseBroker,
+  WorkerDispatchOutbox,
+  WorkerTenantScope,
+} from "./worker-database-broker";
 
 export type ProviderDispatchObservation =
   | { kind: "ACKNOWLEDGED"; provider: string; providerRequestId: string; response: unknown }
@@ -44,6 +49,165 @@ export type DispatchWorkerResult =
 export interface TrustedWorkerIdentityResolver {
   /** Must perform a fresh server-side credential read and cryptographic verification. */
   getVerifiedWorkerIdentity(): Promise<WorkerIdentityResolution>;
+}
+
+export type DurableDispatchPollResult =
+  | { status: "NO_PENDING_DISPATCH" }
+  | { status: "CLAIM_FAILED" | "LEASE_RENEWAL_FAILED" | "OUTCOME_PERSISTENCE_FAILED"; outboxId?: string }
+  | { status: "PROCESSED"; outboxId: string; result: DispatchWorkerResult };
+
+function decodePersistedExecutionRequest(outbox: WorkerDispatchOutbox): ExecutionRequest | null {
+  const payload = outbox.payload;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const risk = payload.risk;
+  const validRisk = risk === "LOW" || risk === "MEDIUM" || risk === "HIGH" || risk === "CRITICAL";
+  if (
+    payload.id !== outbox.executionRequestId ||
+    payload.missionId !== outbox.missionId ||
+    payload.taskId !== outbox.taskId ||
+    payload.capability !== outbox.capability ||
+    payload.action !== outbox.action ||
+    typeof payload.requiresApproval !== "boolean" ||
+    typeof payload.approved !== "boolean" ||
+    !validRisk ||
+    typeof payload.createdAt !== "string" ||
+    !Number.isFinite(Date.parse(payload.createdAt)) ||
+    !("input" in payload)
+  ) return null;
+
+  return Object.freeze({
+    id: payload.id,
+    requestId: payload.id,
+    missionId: payload.missionId,
+    taskId: payload.taskId,
+    capability: payload.capability,
+    action: payload.action,
+    input: payload.input,
+    ...(payload.targetReference === undefined ? {} : { targetReference: payload.targetReference }),
+    requiresApproval: payload.requiresApproval,
+    approved: payload.approved,
+    risk: risk as ExecutionRisk,
+    createdAt: payload.createdAt,
+  }) as ExecutionRequest;
+}
+
+/**
+ * Single-iteration durable worker entry point. The server supplies a
+ * server-generated ownerId; the database only returns pending outbox work
+ * whose live lease is already assigned to that exact worker instance.
+ *
+ * This function deliberately does not poll forever. A hosting scheduler may
+ * invoke it repeatedly with bounded concurrency and its own shutdown policy.
+ */
+export async function runNextDurableDispatch(input: {
+  broker: Pick<WorkerDatabaseBroker, "claimNextDispatch" | "heartbeatLease" | "recordDispatchOutcome">;
+  tenantScope: WorkerTenantScope;
+  ownerId: string;
+  leaseMilliseconds: number;
+  identityProvider: TrustedWorkerIdentityResolver;
+  provider: IdempotentDispatchProvider;
+  now?: () => number;
+}): Promise<DurableDispatchPollResult> {
+  if (
+    typeof input.ownerId !== "string" || !input.ownerId.trim() ||
+    !Number.isSafeInteger(input.leaseMilliseconds) ||
+    input.leaseMilliseconds < 5_000 || input.leaseMilliseconds > 300_000
+  ) return { status: "CLAIM_FAILED" };
+
+  let outbox: WorkerDispatchOutbox | null;
+  try {
+    outbox = await input.broker.claimNextDispatch({
+      tenantScope: input.tenantScope,
+      ownerId: input.ownerId,
+    });
+  } catch {
+    return { status: "CLAIM_FAILED" };
+  }
+  if (!outbox) return { status: "NO_PENDING_DISPATCH" };
+
+  const request = decodePersistedExecutionRequest(outbox);
+  if (!request || outbox.status !== "DISPATCHED") {
+    try {
+      await input.broker.recordDispatchOutcome({
+        tenantScope: input.tenantScope,
+        outboxId: outbox.outboxId,
+        leaseId: outbox.leaseId,
+        ownerId: input.ownerId,
+        fencingToken: outbox.fencingToken,
+        status: "RECONCILIATION_REQUIRED",
+        outcome: { reason: "PERSISTED_EXECUTION_REQUEST_INVALID" },
+      });
+      return {
+        status: "PROCESSED",
+        outboxId: outbox.outboxId,
+        result: { status: "RECONCILIATION_REQUIRED", reason: "PERSISTED_EXECUTION_REQUEST_INVALID" },
+      };
+    } catch {
+      return { status: "OUTCOME_PERSISTENCE_FAILED", outboxId: outbox.outboxId };
+    }
+  }
+
+  try {
+    await input.broker.heartbeatLease({
+      tenantScope: input.tenantScope,
+      missionId: outbox.missionId,
+      taskId: outbox.taskId,
+      leaseId: outbox.leaseId,
+      ownerId: input.ownerId,
+      fencingToken: outbox.fencingToken,
+      leaseMilliseconds: input.leaseMilliseconds,
+    });
+  } catch {
+    try {
+      await input.broker.recordDispatchOutcome({
+        tenantScope: input.tenantScope,
+        outboxId: outbox.outboxId,
+        leaseId: outbox.leaseId,
+        ownerId: input.ownerId,
+        fencingToken: outbox.fencingToken,
+        status: "RECONCILIATION_REQUIRED",
+        outcome: { reason: "LEASE_RENEWAL_FAILED_BEFORE_PROVIDER_CALL" },
+      });
+      return {
+        status: "PROCESSED",
+        outboxId: outbox.outboxId,
+        result: { status: "RECONCILIATION_REQUIRED", reason: "LEASE_RENEWAL_FAILED_BEFORE_PROVIDER_CALL" },
+      };
+    } catch {
+      return { status: "LEASE_RENEWAL_FAILED", outboxId: outbox.outboxId };
+    }
+  }
+
+  const dispatch: ClaimedDispatch = {
+    outboxId: outbox.outboxId,
+    idempotencyKey: outbox.idempotencyKey,
+    executionRequestId: outbox.executionRequestId,
+    leaseId: outbox.leaseId,
+    ownerId: input.ownerId,
+    fencingToken: outbox.fencingToken,
+    request,
+  };
+  const recorder: DispatchOutcomeRecorder = {
+    async recordOnce(item, outcome) {
+      await input.broker.recordDispatchOutcome({
+        tenantScope: input.tenantScope,
+        outboxId: item.outboxId,
+        leaseId: item.leaseId,
+        ownerId: item.ownerId,
+        fencingToken: item.fencingToken,
+        status: outcome.status,
+        outcome: outcome.outcome,
+      });
+    },
+  };
+  const result = await dispatchWithTrustedWorkerIdentity(
+    input.identityProvider,
+    dispatch,
+    input.provider,
+    recorder,
+    input.now,
+  );
+  return { status: "PROCESSED", outboxId: outbox.outboxId, result };
 }
 
 /**
@@ -96,7 +260,6 @@ export async function dispatchClaimedOutboxItem(
     !Array.isArray(workerIdentity.identity.capabilities) ||
     !dispatch.request || typeof dispatch.request !== "object" ||
     typeof dispatch.request.capability !== "string" ||
-    workerIdentity.identity.principal !== dispatch.ownerId ||
     !workerIdentity.identity.capabilities.includes(dispatch.request.capability as WorkerCapability)
   ) {
     return { status: "RECONCILIATION_REQUIRED", reason: "TRUSTED_WORKER_IDENTITY_OR_CAPABILITY_MISMATCH" };
