@@ -46,6 +46,52 @@ GRANT UPDATE (status)
 GRANT UPDATE (status)
   ON private.workspace_memberships TO happy_worker_registry_owner;
 
+-- RLS predicate for scheduler-owned tables. It derives the worker from
+-- PostgreSQL session_user, then rechecks the live worker->tenant grant and
+-- canonical membership on every policy evaluation. Exceptions fail closed.
+CREATE OR REPLACE FUNCTION private.happy_worker_tenant_scope_policy(
+  p_organization_id uuid,
+  p_workspace_id uuid,
+  p_user_id uuid,
+  p_required_capability text
+)
+RETURNS boolean
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+SET search_path = pg_catalog
+AS $worker_scope_policy$
+DECLARE
+  v_worker_principal_id uuid;
+  v_actor_id uuid;
+BEGIN
+  IF p_organization_id IS NULL OR p_workspace_id IS NULL
+     OR p_user_id IS NULL OR p_required_capability IS NULL THEN
+    RETURN false;
+  END IF;
+
+  SELECT principal.worker_principal_id
+    INTO v_worker_principal_id
+    FROM private.happy_require_worker_principal(p_required_capability) principal
+   LIMIT 1;
+
+  IF NOT FOUND THEN RETURN false; END IF;
+
+  v_actor_id := private.happy_require_worker_tenant_scope(
+    v_worker_principal_id,
+    p_organization_id,
+    p_workspace_id,
+    p_user_id,
+    p_required_capability
+  );
+
+  RETURN v_actor_id IS NOT NULL AND v_actor_id = p_user_id;
+EXCEPTION
+  WHEN OTHERS THEN
+    RETURN false;
+END
+$worker_scope_policy$;
+
 -- The role must be able to become owner of functions in private. CREATE is
 -- temporary and revoked immediately after ownership transfer.
 GRANT CREATE ON SCHEMA private TO happy_worker_registry_owner;
@@ -54,8 +100,15 @@ ALTER FUNCTION private.happy_require_worker_principal(text)
   OWNER TO happy_worker_registry_owner;
 ALTER FUNCTION private.happy_require_worker_tenant_scope(uuid,uuid,uuid,uuid,text)
   OWNER TO happy_worker_registry_owner;
+ALTER FUNCTION private.happy_worker_tenant_scope_policy(uuid,uuid,uuid,text)
+  OWNER TO happy_worker_registry_owner;
 
 REVOKE CREATE ON SCHEMA private FROM happy_worker_registry_owner;
+
+REVOKE ALL ON FUNCTION private.happy_worker_tenant_scope_policy(uuid,uuid,uuid,text)
+  FROM public, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION private.happy_worker_tenant_scope_policy(uuid,uuid,uuid,text)
+  TO happy_worker_scheduler_rpc_owner;
 
 -- Keep helper functions private; no API role or worker LOGIN gets EXECUTE.
 REVOKE ALL ON FUNCTION private.happy_require_worker_principal(text)
