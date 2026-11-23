@@ -33,7 +33,7 @@ as $capability_check$
   select p_capabilities is not null
      and cardinality(p_capabilities) > 0
      and array_position(p_capabilities, null) is null
-     and p_capabilities <@ array['API','BROWSER','FILE','DATABASE','DEPLOY','PUBLISH','CONTROL','VERIFY']::text[]
+     and p_capabilities <@ array['CODE','FILE','API','BROWSER','SHELL','DATABASE','AI','DEPLOYMENT','PUBLISH','AUTOMATION','DEPLOY','CONTROL','VERIFY']::text[]
      and cardinality(p_capabilities) = (
        select count(distinct capability)::integer
          from unnest(p_capabilities) as capability
@@ -203,7 +203,7 @@ declare
   v_role record;
 begin
   if p_required_capability is null
-     or p_required_capability not in ('API','BROWSER','FILE','DATABASE','DEPLOY','PUBLISH','CONTROL','VERIFY') then
+     or p_required_capability not in ('CODE','FILE','API','BROWSER','SHELL','DATABASE','AI','DEPLOYMENT','PUBLISH','AUTOMATION','DEPLOY','CONTROL','VERIFY') then
     raise exception 'INVALID_WORKER_CAPABILITY' using errcode = '22023';
   end if;
 
