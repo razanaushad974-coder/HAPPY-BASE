@@ -87,6 +87,40 @@ SQL
 # Apply the exact isolated design drafts used by the staging dependency plan.
 # This is a disposable PostgreSQL CI database, not the hosted staging project.
 "${psql_base[@]}" -f "$IDENTITY_BASELINE_FILE"
+
+"${psql_base[@]}" <<'SQL'
+DO $identity_baseline$
+DECLARE
+  v_table text;
+BEGIN
+  FOREACH v_table IN ARRAY ARRAY[
+    'private.organizations',
+    'private.workspaces',
+    'private.organization_memberships',
+    'private.workspace_memberships'
+  ] LOOP
+    IF NOT (SELECT c.relrowsecurity FROM pg_catalog.pg_class c
+             WHERE c.oid = v_table::regclass) THEN
+      RAISE EXCEPTION 'RLS is not enabled on %',v_table;
+    END IF;
+    IF has_table_privilege('service_role',v_table,'SELECT')
+       OR has_table_privilege('service_role',v_table,'INSERT')
+       OR has_table_privilege('service_role',v_table,'UPDATE')
+       OR has_table_privilege('service_role',v_table,'DELETE')
+       OR has_table_privilege('authenticated',v_table,'SELECT')
+       OR has_table_privilege('anon',v_table,'SELECT') THEN
+      RAISE EXCEPTION 'API role has direct table privileges on %',v_table;
+    END IF;
+  END LOOP;
+  IF has_schema_privilege('service_role','private','USAGE')
+     OR has_schema_privilege('authenticated','private','USAGE')
+     OR has_schema_privilege('anon','private','USAGE') THEN
+    RAISE EXCEPTION 'API role has private schema USAGE';
+  END IF;
+END
+$identity_baseline$;
+SQL
+
 "${psql_base[@]}" -f "$EXECUTION_REQUEST_BASE_FILE"
 
 "${psql_base[@]}" <<'SQL'
