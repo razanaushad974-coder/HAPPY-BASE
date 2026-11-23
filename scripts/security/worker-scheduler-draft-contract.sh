@@ -175,12 +175,33 @@ rpc_signatures=(
 for i in "${!rpc_names[@]}"; do
   rpc="${rpc_names[$i]}"
   signature="${rpc_signatures[$i]}"
-  definition="createorreplacefunctionprivate.$rpc($signature)"
-  grant="grantexecuteonfunctionprivate.$rpc($signature)"
-  if [[ "$normalized_sql" != *"$definition"* ]]; then
-    echo "SQL function signature does not match the reviewed contract: $rpc($signature)" >&2
+  # SQL declarations include parameter names while GRANT signatures do not.
+  # Extract only the declared argument types before comparing PostgreSQL overloads.
+  declared_signature="$(perl -0777 -e '
+    my ($fn, $file) = @ARGV;
+    local $/;
+    open my $fh, "<", $file or die $!;
+    my $sql = <$fh>;
+    if ($sql !~ /create\\s+or\\s+replace\\s+function\\s+private\\.\\Q$fn\\E\\s*\\((.*?)\\)/is) {
+      exit 2;
+    }
+    my @args = split /,/, $1;
+    for (@args) {
+      s/^\\s*p_[a-z0-9_]+\\s+//i;
+      s/\\s+/ /g;
+      s/^\\s+|\\s+$//g;
+      $_ = lc $_;
+    }
+    print join(",", @args);
+  ' "$rpc" "$SQL_FILE")" || {
+    echo "Unable to extract SQL function signature: $rpc" >&2
+    exit 1
+  }
+  if [[ "$declared_signature" != "$signature" ]]; then
+    echo "SQL function signature mismatch for $rpc: expected ($signature), found ($declared_signature)" >&2
     exit 1
   fi
+  grant="grantexecuteonfunctionprivate.$rpc($signature)"
   if [[ "$normalized_grants" != *"$grant"* ]]; then
     echo "EXECUTE grant signature does not match SQL function: $rpc($signature)" >&2
     exit 1
