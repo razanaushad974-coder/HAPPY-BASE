@@ -368,6 +368,7 @@ async function run(): Promise<void> {
       async claimNextDispatch() { return null; },
       async heartbeatLease() { throw new Error("must not heartbeat an empty queue"); },
       async recordDispatchOutcome() { throw new Error("must not record an empty queue"); },
+      async appendReconciliationEvidence() { throw new Error("must not reconcile an empty queue"); },
     },
     tenantScope,
     ownerId: "worker-instance-42",
