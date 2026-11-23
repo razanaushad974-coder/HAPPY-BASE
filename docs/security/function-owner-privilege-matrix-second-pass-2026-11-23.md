@@ -87,9 +87,7 @@ Owns the eight worker-only scheduler RPCs. The static body scan found these writ
 
 This role also calls `happy_require_worker_tenant_scope`, canonical JSON/digest helpers, and related internal functions. The scheduler privilege candidate already defines per-table column grants and CONTROL/VERIFY RLS policies. Its synthetic matrix script exists, but the corrected full-batch SQL run disconnected before returning a result and is explicitly not counted as passed. Do not promote the scheduler candidate until that complete script passes and every policy/column grant is reviewed against the current eight RPC bodies.
 
-**Cross-domain concern:** the scheduler currently updates `private.execution_requests` directly. This couples the worker scheduler owner to approval-request storage and its RLS/ownership boundary. Before finalizing grants, choose and document one of:
-- split request-status reconciliation into a narrowly scoped internal RPC owned by the execution-request lifecycle boundary; or
-- explicitly accept the scheduler owner as a cross-domain writer and prove its exact status-column-only privilege, tenant/request binding, approval immutability, and concurrency behavior.
+**Cross-domain concern:** the scheduler currently updates `private.execution_requests` directly. The current privilege candidate chooses the constrained-writer option: `UPDATE(status)` only; SELECT/UPDATE RLS requires the same live CONTROL tenant scope, self-executed request, persisted founder approval, and an allowed lifecycle state; approval fields such as `approval_status`, `decided_by`, and `decision_reason` are not writable. This is materially narrower than broad request ownership, but the full scheduler matrix test has not passed yet. Keep the option to split status reconciliation into a dedicated internal RPC open if full tests expose coupling or concurrency defects.
 
 Worker RPC capability split remains: six CONTROL functions and two VERIFY evidence functions. Grant EXECUTE only to the dedicated active worker LOGIN roles with the matching registered capability. Do not grant the functions to API roles or PUBLIC.
 
@@ -105,7 +103,7 @@ Worker RPC capability split remains: six CONTROL functions and two VERIFY eviden
 1. Resolve scheduler-to-`private.execution_requests` coupling (split RPC or documented cross-domain status-only writer).
 2. Define exact column-level grants from every SQL statement, including INSERT column lists, UPDATE SET targets, SELECT predicates/joins, RETURNING clauses, and row-locks.
 3. Define SELECT and lock-only RLS policies for each owner/table. Verify lock-anchor UPDATE privilege does not create a mutation path.
-4. Decide whether to add dedicated lock-anchor columns to the four identity tables and request table, or use existing non-business columns after proof.
+4. Preserve the existing lock-only pattern (`UPDATE(status)` / `UPDATE(enabled)` plus `USING (true) WITH CHECK (false)`) for `FOR SHARE` rows; do not introduce lock-anchor columns unless an actual schema/trigger constraint requires them.
 5. Verify all five owner roles have no privileged role memberships and all forbidden role attributes are false.
 6. Test SECURITY DEFINER ownership and RLS behavior as the actual owner roles (not as `postgres`), including positive and negative tenant visibility, no-row update behavior, and exact function EXECUTE grants.
 7. Test concurrent membership revocation versus tenant write/approval decision; preserve deterministic lock ordering.
@@ -139,3 +137,10 @@ Relevant result reports:
 The existing role scripts grant the NOLOGIN owner role to hosted `postgres` for function-owner transfer. The synthetic probes show this is required in the hosted Supabase environment because `postgres` is not a superuser and cannot otherwise assume an arbitrary owner role. This membership must remain confined to the trusted migration executor and be rechecked after deployment; it must never extend to API roles or worker LOGIN roles.
 
 **Updated disposition:** the four non-scheduler owner patterns have synthetic PostgreSQL 17.12 evidence, but none has been tested against the actual HAPPY table definitions because staging is deliberately empty. The scheduler has a focused VERIFY lock-only PASS, while its full matrix remains unverified. The five-owner design remains **BLOCKED — DESIGN REVIEW REQUIRED**; no candidate is promoted to a migration.
+
+
+### Additional static confirmation: scheduler request lifecycle boundary
+
+The current scheduler policy candidate permits the worker scheduler owner to update only `private.execution_requests.status`. Its SELECT/UPDATE policies bind the row to the active CONTROL worker tenant scope and to a self-executed request with persisted founder approval (`approval_status='APPROVED'`, required FOUNDER approval, distinct founder decider, and non-null decision timestamp). The `WITH CHECK` state list permits only `RUNNING`, `FAILED`, or `BLOCKED`; approval metadata and requester/executor identity columns are not writable. This is the accepted narrow coupling in the current candidate, not a general approval decision privilege.
+
+The scheduler RPC leaves the execution request in `RUNNING` after an `ACKNOWLEDGED` provider response while the task becomes `VERIFYING`; it changes the request to `FAILED` or `BLOCKED` for failed/ambiguous outcomes. The full scheduler matrix still must be executed successfully to verify this lifecycle under the candidate RLS policies.
