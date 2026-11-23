@@ -61,6 +61,21 @@ as $uid$
 $uid$;
 grant execute on function auth.uid() to authenticated, anon, service_role;
 
+-- The current tenant persistence schema references the canonical JWT-subject
+-- accessor. In hosted Supabase this accessor is provisioned by the separate
+-- tenant-scope owner candidate; create the minimal equivalent in this
+-- disposable PostgreSQL fixture so schema compilation exercises the same
+-- function dependency without pretending the hosted owner/grant model passed.
+create or replace function private.happy_current_authenticated_user_id()
+returns uuid
+language sql
+stable
+security definer
+set search_path = pg_catalog
+as $current_user$
+  select auth.uid();
+$current_user$;
+
 create table private.organizations (
   organization_id uuid primary key,
   status text not null check (status in ('ACTIVE','SUSPENDED','REVOKED'))
