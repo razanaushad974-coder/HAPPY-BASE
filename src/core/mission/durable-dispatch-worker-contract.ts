@@ -67,8 +67,9 @@ function decodePersistedExecutionRequest(outbox: WorkerDispatchOutbox): Executio
     payload.taskId !== outbox.taskId ||
     payload.capability !== outbox.capability ||
     payload.action !== outbox.action ||
-    typeof payload.requiresApproval !== "boolean" ||
-    typeof payload.approved !== "boolean" ||
+    payload.requiresApproval !== true ||
+    payload.approved !== true ||
+    risk !== "HIGH" ||
     !validRisk ||
     typeof payload.createdAt !== "string" ||
     !Number.isFinite(Date.parse(payload.createdAt)) ||
@@ -199,13 +200,37 @@ export async function runNextDurableDispatch(input: {
       });
     },
   };
-  const result = await dispatchWithTrustedWorkerIdentity(
-    input.identityProvider,
-    dispatch,
-    input.provider,
-    recorder,
-    input.now,
-  );
+  let result: DispatchWorkerResult;
+  try {
+    result = await dispatchWithTrustedWorkerIdentity(
+      input.identityProvider,
+      dispatch,
+      input.provider,
+      recorder,
+      input.now,
+    );
+  } catch {
+    result = { status: "RECONCILIATION_REQUIRED", reason: "WORKER_DISPATCH_RUNTIME_FAILED" };
+  }
+
+  // Identity/capability/provider-contract rejection happens before a provider
+  // call. Persist that terminal routing decision so DISPATCHED rows do not
+  // remain indefinitely ambiguous merely because the worker could not start.
+  if (result.status === "RECONCILIATION_REQUIRED") {
+    try {
+      await input.broker.recordDispatchOutcome({
+        tenantScope: input.tenantScope,
+        outboxId: outbox.outboxId,
+        leaseId: outbox.leaseId,
+        ownerId: input.ownerId,
+        fencingToken: outbox.fencingToken,
+        status: "RECONCILIATION_REQUIRED",
+        outcome: { reason: result.reason },
+      });
+    } catch {
+      return { status: "OUTCOME_PERSISTENCE_FAILED", outboxId: outbox.outboxId };
+    }
+  }
   return { status: "PROCESSED", outboxId: outbox.outboxId, result };
 }
 
