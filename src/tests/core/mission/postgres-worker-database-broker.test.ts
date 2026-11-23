@@ -92,6 +92,10 @@ async function run() {
   assert(dispatch.outboxId === "outbox-1" && Object.isFrozen(dispatch.payload),
     "enqueueDispatch must return an immutable typed outbox snapshot");
 
+  const nextDispatch = await broker.claimNextDispatch({ tenantScope });
+  assert(nextDispatch.outboxId === "outbox-1",
+    "claimNextDispatch must atomically return the next eligible outbox row");
+
   const claimed = await broker.claimDispatch({
     tenantScope, outboxId: "outbox-1", leaseId: "lease-1",
     ownerId: "worker-instance-1", fencingToken: 4,
@@ -120,7 +124,7 @@ async function run() {
   assert(evidence.length === 1 && evidence[0].evidenceId === "evidence-1",
     "list evidence must map the scoped evidence rows");
 
-  assert(transactionCount === 7 && calls.length === 7,
+  assert(transactionCount === 8 && calls.length === 8,
     "every fixed broker operation must execute in its own worker transaction");
   for (const call of calls) {
     const placeholders = [...call.sql.matchAll(/\$(\d+)/g)].map((match) => Number(match[1]));
@@ -140,7 +144,7 @@ async function run() {
   } catch {
     rejected = true;
   }
-  assert(rejected && transactionCount === 7,
+  assert(rejected && transactionCount === 8,
     "invalid scope selectors must fail before opening a database transaction");
 
   console.log("PostgreSQL worker database broker contract: PASS");
