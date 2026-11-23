@@ -265,7 +265,7 @@ async function run(): Promise<void> {
   };
   let heartbeatCalls = 0;
   let outcomeCalls = 0;
-  const durableBroker: Pick<WorkerDatabaseBroker, "claimNextDispatch" | "heartbeatLease" | "recordDispatchOutcome"> = {
+  const durableBroker: Pick<WorkerDatabaseBroker, "claimNextDispatch" | "heartbeatLease" | "recordDispatchOutcome" | "appendReconciliationEvidence"> = {
     async claimNextDispatch(input: { tenantScope: WorkerTenantScope; ownerId: string }) {
       assert(input.ownerId === "worker-instance-42", "queue claim must use the server-owned worker instance ID");
       return queuedOutbox;
