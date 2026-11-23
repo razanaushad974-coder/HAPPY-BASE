@@ -558,6 +558,103 @@ begin
 end;
 $dispatch$;
 
+-- Atomically claims the next eligible PENDING outbox row for this tenant.
+-- Lock order is lease -> outbox, matching the other worker scheduler RPCs.
+create or replace function private.happy_worker_claim_next_dispatch_outbox(
+  p_worker_principal_id uuid,
+  p_organization_id uuid,
+  p_workspace_id uuid,
+  p_user_id uuid
+)
+returns setof public.happy_execution_dispatch_outbox
+language plpgsql
+security definer
+set search_path = pg_catalog
+as $claim_next$
+declare
+  v_actor uuid;
+  v_lease public.happy_mission_task_leases%rowtype;
+  v_outbox public.happy_execution_dispatch_outbox%rowtype;
+begin
+  v_actor := private.happy_require_worker_tenant_scope(
+    p_worker_principal_id, p_organization_id, p_workspace_id, p_user_id,
+    'CONTROL'
+  );
+  if v_actor is null then
+    raise exception 'WORKER_TENANT_SCOPE_REQUIRED' using errcode = '42501';
+  end if;
+
+  -- Lock one eligible lease first. SKIP LOCKED lets concurrent workers safely
+  -- compete without selecting a lease another worker is currently claiming.
+  select l.* into v_lease
+    from public.happy_mission_task_leases l
+   where l.organization_id = p_organization_id
+     and l.workspace_id = p_workspace_id
+     and l.user_id = v_actor
+     and l.expires_at > clock_timestamp()
+     and l.fencing_token > 0
+     and exists (
+       select 1
+         from public.happy_execution_dispatch_outbox o
+        where o.organization_id = l.organization_id
+          and o.workspace_id = l.workspace_id
+          and o.user_id = l.user_id
+          and o.lease_id = l.lease_id
+          and o.fencing_token = l.fencing_token
+          and o.status = 'PENDING'
+     )
+   order by l.updated_at, l.lease_id
+   limit 1
+   for update of l skip locked;
+
+  if not found then
+    return;
+  end if;
+
+  -- Preserve the common lease -> outbox lock order and re-check all bindings
+  -- after acquiring the outbox lock.
+  select o.* into v_outbox
+    from public.happy_execution_dispatch_outbox o
+   where o.organization_id = p_organization_id
+     and o.workspace_id = p_workspace_id
+     and o.user_id = v_actor
+     and o.lease_id = v_lease.lease_id
+     and o.fencing_token = v_lease.fencing_token
+     and o.status = 'PENDING'
+   order by o.created_at, o.outbox_id
+   limit 1
+   for update;
+
+  if not found then
+    return;
+  end if;
+
+  if v_lease.expires_at <= clock_timestamp()
+     or v_lease.owner_id is null or length(btrim(v_lease.owner_id)) = 0
+     or v_outbox.lease_id <> v_lease.lease_id
+     or v_outbox.fencing_token <> v_lease.fencing_token then
+    raise exception 'STALE_OR_EXPIRED_DISPATCH_LEASE' using errcode = '55000';
+  end if;
+
+  update public.happy_execution_dispatch_outbox
+     set status = 'DISPATCHED',
+         updated_at = clock_timestamp()
+   where outbox_id = v_outbox.outbox_id
+     and organization_id = p_organization_id
+     and workspace_id = p_workspace_id
+     and user_id = v_actor
+     and status = 'PENDING'
+  returning * into v_outbox;
+
+  if not found then
+    raise exception 'OUTBOX_ALREADY_CLAIMED' using errcode = '55000';
+  end if;
+
+  return next v_outbox;
+  return;
+end;
+$claim_next$;
+
 -- Worker-only twin of happy_record_dispatch_outcome; uses DB-derived identity and a
 -- transactionally locked worker-to-user tenant scope.
 create or replace function private.happy_worker_record_dispatch_outcome(
@@ -846,6 +943,9 @@ revoke all on function private.happy_worker_heartbeat_mission_task_lease(uuid,uu
   from public, anon, authenticated, service_role;
 
 revoke all on function private.happy_worker_claim_dispatch_outbox(uuid,uuid,uuid,uuid,uuid,uuid,text,bigint)
+  from public, anon, authenticated, service_role;
+
+revoke all on function private.happy_worker_claim_next_dispatch_outbox(uuid,uuid,uuid,uuid)
   from public, anon, authenticated, service_role;
 
 revoke all on function private.happy_worker_record_dispatch_outcome(uuid,uuid,uuid,uuid,uuid,uuid,text,bigint,text,jsonb)
