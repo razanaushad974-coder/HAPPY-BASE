@@ -171,7 +171,13 @@ async function run(): Promise<void> {
   const differentInstanceOwner = await dispatchClaimedOutboxItem(
     { ...dispatch, ownerId: "worker-instance-99" },
     workerIdentity,
-    provider,
+    {
+      providerId: "provider-instance-test",
+      supportsIdempotencyKeys: true,
+      async dispatch() {
+        return { kind: "ACKNOWLEDGED" as const, provider: "provider-instance-test", providerRequestId: "instance-test", response: {} };
+      },
+    },
     recorderFor(async () => {}),
   );
   assert(differentInstanceOwner.status === "RECORDED",
