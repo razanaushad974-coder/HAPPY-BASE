@@ -44,3 +44,18 @@ This harness uses isolated PostgreSQL roles and is not proof of hosted Supabase 
 - No migration has been applied; no hosted Supabase resource, role, credential, grant, or deployment has been changed.
 
 Status: database identity registry and tenant-scope resolution are draft-only; production worker authorization remains `NOT_YET_CONNECTED`.
+
+
+## Runtime adapter follow-up — 2026-11-23
+
+Code-only integration now includes:
+
+- `src/core/mission/postgres-worker-principal-registry.ts`: queries only `private.happy_require_worker_principal('CONTROL')` through the dedicated worker PostgreSQL session provider. It compares the returned session_user-derived issuer, subject, and environment with the verified Vercel OIDC identity; malformed rows, mismatches, and DB errors fail closed.
+- `src/core/mission/vercel-postgres-worker-runtime.ts`: composes the fresh Vercel OIDC credential reader, strict JWKS verifier, trusted identity provider, dedicated PostgreSQL session provider, principal registry adapter, and fixed-operation worker broker. It requires CONTROL and VERIFY capability grants and a `happy_worker_*` LOGIN role.
+- Contract tests cover registry mismatch/failure and runtime composition. CI validates these contracts, typecheck, lint, audit, and production build.
+
+The runtime factory deliberately accepts the official `getVercelOidcToken` function and a real `pg.Pool` by injection. The repository currently has no `@vercel/oidc` or `pg` dependency, no dedicated worker Vercel project, and no production worker runtime composition. Those must be provisioned in the dedicated worker environment before this factory can be treated as live.
+
+The registry helper has no EXECUTE grant in the base registry candidate. `supabase/drafts/20261123_worker_registry_helper_grant_candidate.sql` is a separate operator-reviewed draft that grants only schema USAGE and EXECUTE on the self-derived identity helper to registered dedicated worker LOGIN roles. It does not grant scheduler RPCs or table access. It has not been applied.
+
+No hosted database, Vercel project, deployment, environment variable, credential, or grant was changed.
