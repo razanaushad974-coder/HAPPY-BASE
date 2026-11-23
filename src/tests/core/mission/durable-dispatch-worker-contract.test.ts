@@ -1,7 +1,9 @@
 import type { ExecutionRequest } from "../../../core/execution/types";
+import type { WorkerDispatchOutbox, WorkerTenantScope } from "../../../core/mission/worker-database-broker";
 import {
   dispatchClaimedOutboxItem,
   dispatchWithTrustedWorkerIdentity,
+  runNextDurableDispatch,
   type ClaimedDispatch,
   type DispatchOutcomeRecorder,
   type IdempotentDispatchProvider,
@@ -218,6 +220,108 @@ async function run(): Promise<void> {
   );
   assert(forgedResult.status === "RECONCILIATION_REQUIRED" && getProviderCallCount() === 2,
     "structurally forged identity object reached provider");
+
+  const tenantScope: WorkerTenantScope = {
+    workerPrincipalId: "worker-principal-1",
+    organizationId: "org-1",
+    workspaceId: "workspace-1",
+    userId: "user-1",
+  };
+  const queuedOutbox: WorkerDispatchOutbox = {
+    outboxId: "outbox-durable-1",
+    organizationId: tenantScope.organizationId,
+    workspaceId: tenantScope.workspaceId,
+    userId: tenantScope.userId,
+    missionId: "mission-durable-1",
+    taskId: "task-durable-1",
+    leaseId: "lease-durable-1",
+    fencingToken: 9,
+    attempt: 1,
+    executionRequestId: "request-durable-1",
+    idempotencyKey: "durable-idempotency-1",
+    capability: "API",
+    action: "POST",
+    payloadDigest: "sha256:" + "b".repeat(64),
+    payload: {
+      id: "request-durable-1",
+      missionId: "mission-durable-1",
+      taskId: "task-durable-1",
+      capability: "API",
+      action: "POST",
+      input: { value: "approved" },
+      requiresApproval: true,
+      approved: true,
+      risk: "HIGH",
+      createdAt: "2026-11-21T10:00:00.000Z",
+    },
+    outcome: {},
+    status: "DISPATCHED",
+    createdAt: "2026-11-21T10:00:00.000Z",
+    updatedAt: "2026-11-21T10:00:01.000Z",
+  };
+  let heartbeatCalls = 0;
+  let outcomeCalls = 0;
+  const durableBroker = {
+    async claimNextDispatch(input: { tenantScope: WorkerTenantScope; ownerId: string }) {
+      assert(input.ownerId === "worker-instance-42", "queue claim must use the server-owned worker instance ID");
+      return queuedOutbox;
+    },
+    async heartbeatLease() {
+      heartbeatCalls += 1;
+      return "2026-11-21T10:05:00.000Z";
+    },
+    async recordDispatchOutcome(input: { status: string; outcome: Record<string, unknown> }) {
+      outcomeCalls += 1;
+      return { ...queuedOutbox, status: input.status, outcome: input.outcome };
+    },
+  };
+  let durableProviderCalls = 0;
+  const durableResult = await runNextDurableDispatch({
+    broker: durableBroker,
+    tenantScope,
+    ownerId: "worker-instance-42",
+    leaseMilliseconds: 30_000,
+    identityProvider: { async getVerifiedWorkerIdentity() { return workerIdentity; } },
+    provider: {
+      providerId: "durable-provider",
+      supportsIdempotencyKeys: true,
+      async dispatch(_request, options) {
+        durableProviderCalls += 1;
+        assert(options.idempotencyKey === queuedOutbox.idempotencyKey,
+          "durable worker must preserve the persisted idempotency key");
+        return {
+          kind: "ACKNOWLEDGED",
+          provider: "durable-provider",
+          providerRequestId: "durable-remote-1",
+          response: { accepted: true },
+        };
+      },
+    },
+    now: () => workerNow * 1000,
+  });
+  assert(
+    durableResult.status === "PROCESSED" &&
+    durableResult.result.status === "RECORDED" &&
+    durableResult.result.outcome === "ACKNOWLEDGED",
+    "durable worker must claim, renew, execute and persist an acknowledged result",
+  );
+  assert(heartbeatCalls === 1 && outcomeCalls === 1 && durableProviderCalls === 1,
+    "durable worker lifecycle must heartbeat and persist exactly once");
+
+  const emptyQueueResult = await runNextDurableDispatch({
+    broker: {
+      async claimNextDispatch() { return null; },
+      async heartbeatLease() { throw new Error("must not heartbeat an empty queue"); },
+      async recordDispatchOutcome() { throw new Error("must not record an empty queue"); },
+    },
+    tenantScope,
+    ownerId: "worker-instance-42",
+    leaseMilliseconds: 30_000,
+    identityProvider: { async getVerifiedWorkerIdentity() { return workerIdentity; } },
+    provider,
+  });
+  assert(emptyQueueResult.status === "NO_PENDING_DISPATCH",
+    "durable worker must report an empty queue without executing a provider");
 
   console.log("Durable dispatch worker contract tests: PASS");
 }
