@@ -137,7 +137,10 @@ export async function composeTrustedWorkerRuntime(input: {
     if (authorization.status !== "AUTHORIZED") {
       throw new WorkerBrokerAuthorizationError("PRINCIPAL_NOT_AUTHORIZED");
     }
-    return authorization.registration;
+    return Object.freeze({
+      identity: resolution.identity,
+      registration: authorization.registration,
+    });
   };
 
   let initialAuthorization: WorkerAuthorizationSnapshot;
