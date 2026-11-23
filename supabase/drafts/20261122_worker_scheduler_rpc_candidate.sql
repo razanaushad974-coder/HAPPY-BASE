@@ -564,7 +564,8 @@ create or replace function private.happy_worker_claim_next_dispatch_outbox(
   p_worker_principal_id uuid,
   p_organization_id uuid,
   p_workspace_id uuid,
-  p_user_id uuid
+  p_user_id uuid,
+  p_owner_id text
 )
 returns setof public.happy_execution_dispatch_outbox
 language plpgsql
@@ -580,7 +581,7 @@ begin
     p_worker_principal_id, p_organization_id, p_workspace_id, p_user_id,
     'CONTROL'
   );
-  if v_actor is null then
+  if v_actor is null or p_owner_id is null or length(btrim(p_owner_id)) = 0 then
     raise exception 'WORKER_TENANT_SCOPE_REQUIRED' using errcode = '42501';
   end if;
 
@@ -591,6 +592,7 @@ begin
    where l.organization_id = p_organization_id
      and l.workspace_id = p_workspace_id
      and l.user_id = v_actor
+     and l.owner_id = p_owner_id
      and l.expires_at > clock_timestamp()
      and l.fencing_token > 0
      and exists (
@@ -945,7 +947,7 @@ revoke all on function private.happy_worker_heartbeat_mission_task_lease(uuid,uu
 revoke all on function private.happy_worker_claim_dispatch_outbox(uuid,uuid,uuid,uuid,uuid,uuid,text,bigint)
   from public, anon, authenticated, service_role;
 
-revoke all on function private.happy_worker_claim_next_dispatch_outbox(uuid,uuid,uuid,uuid)
+revoke all on function private.happy_worker_claim_next_dispatch_outbox(uuid,uuid,uuid,uuid,text)
   from public, anon, authenticated, service_role;
 
 revoke all on function private.happy_worker_record_dispatch_outcome(uuid,uuid,uuid,uuid,uuid,uuid,text,bigint,text,jsonb)
