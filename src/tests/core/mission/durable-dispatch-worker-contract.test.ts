@@ -1,5 +1,9 @@
 import type { ExecutionRequest } from "../../../core/execution/types";
-import type { WorkerDispatchOutbox, WorkerTenantScope } from "../../../core/mission/worker-database-broker";
+import type {
+  WorkerDatabaseBroker,
+  WorkerDispatchOutbox,
+  WorkerTenantScope,
+} from "../../../core/mission/worker-database-broker";
 import {
   dispatchClaimedOutboxItem,
   dispatchWithTrustedWorkerIdentity,
@@ -261,7 +265,7 @@ async function run(): Promise<void> {
   };
   let heartbeatCalls = 0;
   let outcomeCalls = 0;
-  const durableBroker = {
+  const durableBroker: Pick<WorkerDatabaseBroker, "claimNextDispatch" | "heartbeatLease" | "recordDispatchOutcome"> = {
     async claimNextDispatch(input: { tenantScope: WorkerTenantScope; ownerId: string }) {
       assert(input.ownerId === "worker-instance-42", "queue claim must use the server-owned worker instance ID");
       return queuedOutbox;
