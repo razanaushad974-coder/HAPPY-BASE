@@ -230,10 +230,11 @@ export class PostgresWorkerDatabaseBroker implements WorkerDatabaseBroker {
 
   async claimNextDispatch(input: Parameters<WorkerDatabaseBroker["claimNextDispatch"]>[0]): Promise<WorkerDispatchOutbox | null> {
     const scope = scopeValues(input.tenantScope);
+    nonEmpty(input.ownerId, "ownerId");
     return this.sessions.withTransaction(async (client) => {
       const result = await client.query<OutboxRow>(
-        "select * from private.happy_worker_claim_next_dispatch_outbox($1,$2,$3,$4)",
-        scope,
+        "select * from private.happy_worker_claim_next_dispatch_outbox($1,$2,$3,$4,$5)",
+        [...scope, input.ownerId],
       );
       if (result.rows.length === 0) return null;
       return mapOutbox(one(result.rows));
