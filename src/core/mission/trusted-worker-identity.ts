@@ -7,9 +7,11 @@
  * source and a verifier that validates signature, JWKS/key rotation, issuer,
  * audience, expiry, not-before, and revocation before returning claims.
  */
+/** Exact execution capabilities plus the worker's control-plane permissions. */
 export type WorkerCapability =
-  | "API" | "BROWSER" | "FILE" | "DATABASE" | "DEPLOY" | "PUBLISH"
-  | "CONTROL" | "VERIFY";
+  | "CODE" | "FILE" | "API" | "BROWSER" | "SHELL" | "DATABASE" | "AI"
+  | "DEPLOYMENT" | "PUBLISH" | "AUTOMATION"
+  | "DEPLOY" | "CONTROL" | "VERIFY";
 
 export interface VerifiedWorkerCredentialClaims {
   issuer: string;
@@ -78,8 +80,8 @@ export function isVerifiedWorkerIdentity(value: unknown): value is VerifiedWorke
 }
 
 const CAPABILITIES = new Set<WorkerCapability>([
-  "API", "BROWSER", "FILE", "DATABASE", "DEPLOY", "PUBLISH",
-  "CONTROL", "VERIFY",
+  "CODE", "FILE", "API", "BROWSER", "SHELL", "DATABASE", "AI",
+  "DEPLOYMENT", "PUBLISH", "AUTOMATION", "DEPLOY", "CONTROL", "VERIFY",
 ]);
 
 function isFiniteInteger(value: unknown): value is number {
