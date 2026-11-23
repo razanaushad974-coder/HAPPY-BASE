@@ -67,7 +67,7 @@ export class JwksOidcWorkerCredentialVerifier implements WorkerCredentialVerifie
           (!Number.isSafeInteger(this.config.jwksFetchTimeoutMs) || this.config.jwksFetchTimeoutMs < 1 || this.config.jwksFetchTimeoutMs > 30_000)) ||
         !Array.isArray(this.config.capabilities) || this.config.capabilities.length === 0 ||
         this.config.capabilities.some((capability) =>
-          !["API", "BROWSER", "FILE", "DATABASE", "DEPLOY", "PUBLISH", "CONTROL", "VERIFY"].includes(capability)
+          !["CODE", "FILE", "API", "BROWSER", "SHELL", "DATABASE", "AI", "DEPLOYMENT", "PUBLISH", "AUTOMATION", "DEPLOY", "CONTROL", "VERIFY"].includes(capability)
         )
       ) return null;
 
