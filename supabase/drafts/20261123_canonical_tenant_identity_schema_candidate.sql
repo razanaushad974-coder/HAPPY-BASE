@@ -66,6 +66,10 @@ ALTER TABLE private.workspaces ENABLE ROW LEVEL SECURITY;
 ALTER TABLE private.organization_memberships ENABLE ROW LEVEL SECURITY;
 ALTER TABLE private.workspace_memberships ENABLE ROW LEVEL SECURITY;
 
+-- The private schema is not an API surface. Later SECURITY DEFINER owners
+-- receive USAGE explicitly in their own privilege candidates.
+REVOKE ALL ON SCHEMA private FROM PUBLIC,anon,authenticated,service_role;
+
 REVOKE ALL ON TABLE
   private.organizations,
   private.workspaces,
