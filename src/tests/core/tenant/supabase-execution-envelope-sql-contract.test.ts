@@ -75,9 +75,9 @@ assert(/v_approver_org_role <> 'FOUNDER'/i.test(sql),
 assert(/create table if not exists private\.execution_request_approval_events/i.test(sql) &&
   /before update or delete on private\.execution_request_approval_events/i.test(sql),
   "Approval decision evidence must be append-only.");
-assert(/revoke all on function public\.create_authenticated_execution_request[\s\S]*from public,anon,service_role/i.test(sql) &&
-  /grant execute on function public\.create_authenticated_execution_request[\s\S]*to authenticated/i.test(sql),
-  "Request creation RPC must be authenticated-only, not service-role callable.");
+assert(/revoke all on function public\.create_authenticated_execution_request[\s\S]*from public,\s*anon,\s*authenticated,\s*service_role/i.test(sql) &&
+  /grant execute on function public\.create_authenticated_execution_request[\s\S]*to authenticated/i.test(createOwnerSql),
+  "Request creation RPC must revoke API defaults in the envelope candidate and grant authenticated only in the reviewed owner-privilege candidate.");
 assert(/create role happy_execution_request_create_rpc_owner[\s\S]*nologin noinherit nosuperuser nocreatedb nocreaterole[\s\S]*noreplication nobypassrls/i.test(createOwnerRoleSql) &&
   /create role happy_execution_request_decision_rpc_owner[\s\S]*nologin noinherit nosuperuser nocreatedb nocreaterole[\s\S]*noreplication nobypassrls/i.test(decisionOwnerRoleSql),
   "Execution-request RPC owners must be dedicated NOLOGIN, NOINHERIT, NOBYPASSRLS roles.");
