@@ -124,6 +124,25 @@ SQL
 "${psql_base[@]}" -f "$EXECUTION_REQUEST_BASE_FILE"
 
 "${psql_base[@]}" <<'SQL'
+DO $request_baseline$
+BEGIN
+  IF NOT (SELECT c.relrowsecurity FROM pg_catalog.pg_class c
+           WHERE c.oid='private.execution_requests'::regclass) THEN
+    RAISE EXCEPTION 'RLS is not enabled on private.execution_requests';
+  END IF;
+  IF has_table_privilege('service_role','private.execution_requests','SELECT')
+     OR has_table_privilege('service_role','private.execution_requests','INSERT')
+     OR has_table_privilege('service_role','private.execution_requests','UPDATE')
+     OR has_table_privilege('service_role','private.execution_requests','DELETE')
+     OR has_table_privilege('authenticated','private.execution_requests','SELECT')
+     OR has_table_privilege('anon','private.execution_requests','SELECT') THEN
+    RAISE EXCEPTION 'API role has direct execution request table privileges';
+  END IF;
+END
+$request_baseline$;
+SQL
+
+"${psql_base[@]}" <<'SQL'
 insert into auth.users(id) values
   ('30000000-0000-4000-8000-000000000003'),
   ('40000000-0000-4000-8000-000000000004'),
