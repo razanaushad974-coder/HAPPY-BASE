@@ -12,11 +12,15 @@ SCHEMA_FILE="$ROOT_DIR/supabase/drafts/20261119_async_tenant_persistence_schema_
 SCHEDULER_SCHEMA_FILE="$ROOT_DIR/supabase/drafts/20261121_durable_mission_scheduler_candidate.sql"
 TENANT_SCOPE_OWNER_ROLE_FILE="$ROOT_DIR/supabase/drafts/20261123_tenant_scope_rpc_owner_role_candidate.sql"
 TENANT_SCOPE_OWNER_PRIVILEGE_FILE="$ROOT_DIR/supabase/drafts/20261123_tenant_scope_rpc_owner_privilege_candidate.sql"
+EXECUTION_CREATE_OWNER_ROLE_FILE="$ROOT_DIR/supabase/drafts/20261123_execution_request_create_owner_role_candidate.sql"
+EXECUTION_CREATE_OWNER_PRIVILEGE_FILE="$ROOT_DIR/supabase/drafts/20261123_execution_request_create_owner_privilege_candidate.sql"
+EXECUTION_DECISION_OWNER_ROLE_FILE="$ROOT_DIR/supabase/drafts/20261123_execution_request_decision_owner_role_candidate.sql"
+EXECUTION_DECISION_OWNER_PRIVILEGE_FILE="$ROOT_DIR/supabase/drafts/20261123_execution_request_decision_owner_privilege_candidate.sql"
 EXECUTION_REQUEST_RPC_FILE="$ROOT_DIR/supabase/drafts/20261121_authenticated_execution_request_rpc_candidate.sql"
 EXECUTION_ENVELOPE_FILE="$ROOT_DIR/supabase/drafts/20261121_authenticated_execution_envelope_candidate.sql"
 RACE_SCRIPT="$ROOT_DIR/scripts/security/postgres-tenant-cas-concurrency.sh"
 RECONCILIATION_RACE_SCRIPT="$ROOT_DIR/scripts/security/postgres-reconciliation-evidence-concurrency.sh"
-for required_file in "$SCHEMA_FILE" "$SCHEDULER_SCHEMA_FILE" "$TENANT_SCOPE_OWNER_ROLE_FILE" "$TENANT_SCOPE_OWNER_PRIVILEGE_FILE" "$EXECUTION_REQUEST_RPC_FILE" "$EXECUTION_ENVELOPE_FILE" "$RACE_SCRIPT" "$RECONCILIATION_RACE_SCRIPT"; do
+for required_file in "$SCHEMA_FILE" "$SCHEDULER_SCHEMA_FILE" "$TENANT_SCOPE_OWNER_ROLE_FILE" "$TENANT_SCOPE_OWNER_PRIVILEGE_FILE" "$EXECUTION_CREATE_OWNER_ROLE_FILE" "$EXECUTION_CREATE_OWNER_PRIVILEGE_FILE" "$EXECUTION_DECISION_OWNER_ROLE_FILE" "$EXECUTION_DECISION_OWNER_PRIVILEGE_FILE" "$EXECUTION_REQUEST_RPC_FILE" "$EXECUTION_ENVELOPE_FILE" "$RACE_SCRIPT" "$RECONCILIATION_RACE_SCRIPT"; do
   if [[ ! -f "$required_file" ]]; then
     echo "Required tenant persistence test file not found: $required_file" >&2
     exit 1
@@ -176,26 +180,75 @@ SQL
 "${psql_base[@]}" -f "$SCHEDULER_SCHEMA_FILE"
 "${psql_base[@]}" -f "$EXECUTION_REQUEST_RPC_FILE"
 "${psql_base[@]}" -f "$EXECUTION_ENVELOPE_FILE"
+"${psql_base[@]}" -f "$EXECUTION_CREATE_OWNER_ROLE_FILE"
+"${psql_base[@]}" -f "$EXECUTION_DECISION_OWNER_ROLE_FILE"
 "${psql_base[@]}" -f "$TENANT_SCOPE_OWNER_ROLE_FILE"
 "${psql_base[@]}" -f "$TENANT_SCOPE_OWNER_PRIVILEGE_FILE"
+"${psql_base[@]}" -f "$EXECUTION_CREATE_OWNER_PRIVILEGE_FILE"
+"${psql_base[@]}" -f "$EXECUTION_DECISION_OWNER_PRIVILEGE_FILE"
 
 # Tenant-scope SECURITY DEFINER functions use the current NOLOGIN,
 # NOBYPASSRLS owner role and its separately tested least-privilege policies.
 "${psql_base[@]}" <<'SQL'
 do $execution_owner_privileges$
+declare
+  v_role record;
 begin
-  if not has_table_privilege('happy_execution_request_rpc_owner',
+  for v_role in
+    select rolname, rolcanlogin, rolinherit, rolsuper, rolcreatedb,
+           rolcreaterole, rolreplication, rolbypassrls
+      from pg_catalog.pg_roles
+     where rolname in (
+       'happy_execution_request_create_rpc_owner',
+       'happy_execution_request_decision_rpc_owner'
+     )
+  loop
+    if v_role.rolcanlogin or v_role.rolinherit or v_role.rolsuper
+       or v_role.rolcreatedb or v_role.rolcreaterole
+       or v_role.rolreplication or v_role.rolbypassrls then
+      raise exception 'execution request owner role has unsafe attributes: %', v_role.rolname;
+    end if;
+  end loop;
+
+  if not exists (select 1 from pg_catalog.pg_roles where rolname='happy_execution_request_create_rpc_owner')
+     or not exists (select 1 from pg_catalog.pg_roles where rolname='happy_execution_request_decision_rpc_owner') then
+    raise exception 'execution request owner role provisioning incomplete';
+  end if;
+
+  if not has_table_privilege('happy_execution_request_create_rpc_owner',
       'private.execution_requests', 'SELECT')
-     or has_table_privilege('happy_execution_request_rpc_owner',
-      'private.execution_requests', 'INSERT,UPDATE,DELETE') then
-    raise exception 'execution request RPC owner privileges are not SELECT-only';
+     or not has_table_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests', 'INSERT')
+     or has_table_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests', 'UPDATE,DELETE') then
+    raise exception 'execution request create owner table privileges are not least-privilege';
+  end if;
+  if not has_table_privilege('happy_execution_request_decision_rpc_owner',
+      'private.execution_requests', 'SELECT')
+     or has_table_privilege('happy_execution_request_decision_rpc_owner',
+      'private.execution_requests', 'INSERT,DELETE') then
+    raise exception 'execution request decision owner table privileges are not least-privilege';
+  end if;
+  if not has_column_privilege('happy_execution_request_decision_rpc_owner',
+      'private.execution_requests','approval_status','UPDATE')
+     or not has_column_privilege('happy_execution_request_decision_rpc_owner',
+      'private.execution_requests','status','UPDATE')
+     or has_column_privilege('happy_execution_request_decision_rpc_owner',
+      'private.execution_requests','request_id','UPDATE') then
+    raise exception 'execution request decision owner UPDATE columns are not exact';
   end if;
   if not has_function_privilege('authenticated',
       'public.resolve_authenticated_execution_request(text)', 'EXECUTE')
      or has_function_privilege('anon',
       'public.resolve_authenticated_execution_request(text)', 'EXECUTE')
      or has_function_privilege('service_role',
-      'public.resolve_authenticated_execution_request(text)', 'EXECUTE') then
+      'public.resolve_authenticated_execution_request(text)', 'EXECUTE')
+     or not has_function_privilege('authenticated',
+      'public.decide_authenticated_execution_request(text,text,text)', 'EXECUTE')
+     or has_function_privilege('anon',
+      'public.decide_authenticated_execution_request(text,text,text)', 'EXECUTE')
+     or has_function_privilege('service_role',
+      'public.decide_authenticated_execution_request(text,text,text)', 'EXECUTE') then
     raise exception 'execution request RPC grants are not least-privilege';
   end if;
 end
