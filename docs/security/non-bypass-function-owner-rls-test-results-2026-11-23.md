@@ -16,9 +16,9 @@
 1. Function owner was `NOLOGIN`, `NOINHERIT`, `NOSUPERUSER`, `NOCREATEROLE`, `NOCREATEDB`, `NOREPLICATION`, and `NOBYPASSRLS`.
 2. The SECURITY DEFINER function owner was explicitly assigned and used fixed `search_path = pg_catalog`.
 3. The authenticated caller could invoke only the explicitly granted function; it was not a member of the owner role.
-4. Owner role had SELECT policy and SELECT privilege, plus column-level `UPDATE(lock_marker)`.
-5. Owner role successfully executed `SELECT ... FOR SHARE`.
-6. There was no UPDATE RLS policy. An UPDATE attempt affected zero rows and the stored marker remained false.
+4. Owner role had a SELECT policy and a lock-only UPDATE policy (`USING (tenant_id = 'tenant-a') WITH CHECK (false)`), plus SELECT and column-level `UPDATE(lock_marker)` privileges.
+5. Owner role successfully executed `SELECT ... FOR SHARE` and the function explicitly asserted `FOUND = true`.
+6. An UPDATE attempt was rejected by the false `WITH CHECK` expression; the stored marker remained false.
 7. No `anon`, `authenticated`, `service_role`, or `authenticator` role was a member of the function owner.
 
 The SQL assertions completed without exception. The MCP SQL response does not expose PostgreSQL NOTICE output; pass is based on successful completion of the assertion blocks and explicit post-rollback catalog verification.
@@ -31,15 +31,13 @@ A production migration must use a deliberate owner-assignment path available to 
 
 ## Important correction to worker registry RLS design
 
-The PostgreSQL 17.12 row-lock probe established:
+The corrected PostgreSQL 17.12 probe established:
 
-- `SELECT ... FOR SHARE` requires SELECT plus an UPDATE SQL privilege.
-- It does **not** require an UPDATE RLS policy.
-- With a column-level UPDATE privilege but no UPDATE policy, the row lock succeeds and UPDATE affects zero rows.
+- `SELECT ... FOR SHARE` requires SELECT plus an UPDATE SQL privilege and an UPDATE RLS policy whose `USING` expression admits the row.
+- With no UPDATE policy, the locking SELECT can silently return zero rows; checking only for an exception is insufficient.
+- A lock-only policy (`USING (true) WITH CHECK (false)`) permits the row lock but rejects all attempted row mutations.
 
-The worker registry candidate previously created six UPDATE policies with `USING (true) WITH CHECK (true)` for `happy_worker_registry_owner`, describing them as necessary for `FOR SHARE`. That is incorrect and unnecessarily creates a row-mutation authorization path.
-
-Those six UPDATE policies have now been removed from `supabase/drafts/20261122_worker_principal_registry_candidate.sql`. The candidate now documents that a narrow column-level UPDATE privilege may be required for row-lock syntax, but UPDATE policies must remain absent for these owner roles. The exact columns and grants are still to be designed and tested against the real table definitions.
+The first probe did not assert `FOUND` and its initial interpretation was wrong. The corrected tests now assert the row was actually returned/locked and verify the mutation is rejected. The six worker-registry UPDATE policies are now lock-only (`USING (true) WITH CHECK (false)`), not absent and not `WITH CHECK (true)`. A six-table synthetic fixture has passed with the exact proposed SELECT columns and column-level UPDATE grants.
 
 ## Remaining blockers — not resolved by this probe
 
@@ -59,4 +57,4 @@ Those six UPDATE policies have now been removed from `supabase/drafts/20261122_w
 - No worker role/password or registry record was provisioned.
 - No production project was accessed or changed.
 
-**Disposition: PARTIAL PASS — non-bypass SECURITY DEFINER owner mechanics and row-lock/RLS semantics are verified in an isolated rollback-only fixture. Exact HAPPY table grants and owner policies remain BLOCKED.**
+**Disposition: PARTIAL PASS — non-bypass SECURITY DEFINER owner mechanics and the corrected lock-only RLS pattern passed rollback-only PostgreSQL 17.12 probes, including a six-table synthetic registry fixture. Exact grants on the real HAPPY tables, scheduler write policies, and concurrent revocation tests remain BLOCKED.**
