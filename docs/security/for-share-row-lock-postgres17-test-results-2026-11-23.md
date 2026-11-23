@@ -1,46 +1,61 @@
-# PostgreSQL 17 row-lock privilege probe — 2026-11-23
+# PostgreSQL 17.12 row-lock / RLS semantics — corrected test result (2026-11-23)
 
-## Result
+## Corrected conclusion
 
-**PASS — disposable transaction probe completed on the empty `happy-worker-staging` Supabase project.**
+**A row-locking SELECT needs both an UPDATE SQL privilege and an UPDATE RLS policy whose `USING` expression admits the row.** A SELECT policy alone is insufficient: `SELECT ... FOR SHARE` can silently return zero rows under RLS rather than raising an error.
+
+A lock-only UPDATE policy using `USING (true) WITH CHECK (false)` allows the row to be selected and locked, while rejecting every UPDATE mutation.
+
+## Why the first probe was insufficient
+
+The initial probe checked that `SELECT ... FOR SHARE` did not throw, but it did not assert that a row was actually returned/locked. It therefore incorrectly treated a zero-row result as success. The first report's conclusion that an UPDATE RLS policy was unnecessary was wrong and has been superseded.
+
+The test script was corrected to assert `FOUND` after the locking SELECT and to verify that a mutation attempt is rejected.
+
+## Verified on staging
 
 - Project ref: `kcbbfwtvkjepvtbmbrse`
 - Database: `postgres`
-- PostgreSQL version: `17.12` (verified before this probe)
-- Probe ran inside one explicit transaction and ended with `ROLLBACK`.
-- Post-run verification confirmed both `happy_for_share_probe` schema and `happy_for_share_probe.scope_rows` table were absent.
+- PostgreSQL: `17.12`
+- Updated script: `scripts/security/test-for-share-row-lock-privileges.sql`
+- Script blob SHA: `7b8e04a20dc16faaaf7a13bb9d32f25e56f5c1a5`
+- Execution: successful; all assertions completed in a transaction ending with `ROLLBACK`.
 
-## Observed behavior
+### Probe A — SELECT policy only
 
-The probe used the built-in `authenticated` role because the hosted `postgres` role can `SET ROLE authenticated`, while it cannot set role to an ad-hoc role created in the same transaction without membership.
+- SELECT privilege and SELECT RLS policy were present.
+- Column-level UPDATE privilege was present.
+- No UPDATE RLS policy existed.
+- `SELECT ... FOR SHARE` returned no row (`FOUND = false`).
+- This is not a successful lock.
 
-1. **SELECT-only case:** role had schema USAGE, table SELECT, and a matching SELECT RLS policy, but no UPDATE privilege. `SELECT ... FOR SHARE` raised `insufficient_privilege`, as expected.
-2. **Column-grant case:** after granting `UPDATE (lock_marker)` only, `SELECT ... FOR SHARE` succeeded.
-3. **Mutation guard:** there was no UPDATE RLS policy. An UPDATE targeting `lock_marker` affected zero rows, as expected.
+### Probe B — lock-only UPDATE policy
 
-The SQL assertions completed without exception. The MCP SQL result did not surface PostgreSQL NOTICE messages, so the pass determination is based on successful completion of both assertion blocks plus the explicit post-rollback absence check.
+Added:
 
-## Hosted role observations
+```sql
+CREATE POLICY ... FOR UPDATE TO authenticated
+USING (true)
+WITH CHECK (false);
+```
 
-A read-only inspection of the current staging database role returned:
+Observed:
 
-- `session_user = postgres`, `current_user = postgres`
-- `rolsuper = false`
-- `rolcreaterole = true`
-- `rolinherit = true`
-- `rolbypassrls = true`
-- `rolcanlogin = true`
+- `SELECT ... FOR SHARE` returned the intended row (`FOUND = true`).
+- UPDATE was rejected with `insufficient_privilege` due to the false WITH CHECK expression.
+- The marker column remained unchanged.
 
-The current `postgres` role has membership in `authenticated`, `anon`, `authenticator`, and `service_role`; it does not have membership in `supabase_admin`.
+## Design consequence
 
-## What this establishes — and what it does not
+For the worker registry owner, do not remove UPDATE policies entirely and do not use `WITH CHECK (true)`. The correct lock-only policy is:
 
-This confirms PostgreSQL 17.12 requires an UPDATE privilege for `FOR SHARE`, and that a column-scoped UPDATE grant can satisfy the lock privilege check while RLS without an UPDATE policy prevents row mutation in this isolated fixture.
+- `USING (true)` — permits the row to be found/locked by `FOR SHARE`.
+- `WITH CHECK (false)` — rejects all attempted new row values.
+- Column-level UPDATE grants only on the exact columns needed for the lock privilege check.
+- No INSERT or DELETE grants and no API/worker-login membership in the function owner.
 
-It does **not** yet prove the proposed five NOLOGIN/NOBYPASSRLS function-owner roles can safely use the same pattern against the actual HAPPY tenant tables. It also does not validate exact candidate function ownership, function-owner table/column privileges, RLS policy composition, role memberships, trigger paths, or concurrency with tenant-membership revocation.
+The worker registry candidate has been updated to use six lock-only policies with `USING (true) WITH CHECK (false)`.
 
-**No HAPPY migration, role, grant, application table, or worker credential was created.** The only SQL DDL/DML was confined to the rolled-back probe transaction. No production project was accessed or modified.
+## Safety / scope
 
-## Branch limitation
-
-The requested Supabase development branch could not be created because the connected organization is on the Free plan; Supabase returned: `Branching is supported only on the Pro plan or above`. No branch was created and no branch compute charge started. The probe therefore ran as a rollback-only transaction against the otherwise-empty staging project.
+The probe ran in a single transaction and was rolled back. Post-run checks confirmed the probe schema and table were absent. No HAPPY migrations, roles, grants, credentials, or application data were persisted. No production project was accessed or changed.
