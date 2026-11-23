@@ -182,14 +182,14 @@ for i in "${!rpc_names[@]}"; do
     local $/;
     open my $fh, "<", $file or die $!;
     my $sql = <$fh>;
-    if ($sql !~ /create\\s+or\\s+replace\\s+function\\s+private\\.\\Q$fn\\E\\s*\\((.*?)\\)/is) {
+    if ($sql !~ /create\s+or\s+replace\s+function\s+private\.\Q$fn\E\s*\((.*?)\)/is) {
       exit 2;
     }
     my @args = split /,/, $1;
     for (@args) {
-      s/^\\s*p_[a-z0-9_]+\\s+//i;
-      s/\\s+/ /g;
-      s/^\\s+|\\s+$//g;
+      s/^\s*p_[a-z0-9_]+\s+//i;
+      s/\s+/ /g;
+      s/^\s+|\s+$//g;
       $_ = lc $_;
     }
     print join(",", @args);
