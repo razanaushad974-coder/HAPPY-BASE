@@ -95,7 +95,7 @@ async function run() {
   assert(dispatch.outboxId === "outbox-1" && Object.isFrozen(dispatch.payload),
     "enqueueDispatch must return an immutable typed outbox snapshot");
 
-  const nextDispatch = await broker.claimNextDispatch({ tenantScope });
+  const nextDispatch = await broker.claimNextDispatch({ tenantScope, ownerId: "worker-instance-1" });
   assert(nextDispatch.outboxId === "outbox-1",
     "claimNextDispatch must atomically return the next eligible outbox row");
 
@@ -128,7 +128,7 @@ async function run() {
     "list evidence must map the scoped evidence rows");
 
   noPendingDispatch = true;
-  const emptyQueue = await broker.claimNextDispatch({ tenantScope });
+  const emptyQueue = await broker.claimNextDispatch({ tenantScope, ownerId: "worker-instance-1" });
   assert(emptyQueue === null, "an empty dispatch queue must return null without fabricating work");
 
   assert(transactionCount === 9 && calls.length === 9,
