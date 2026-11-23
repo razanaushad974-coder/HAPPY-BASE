@@ -107,6 +107,23 @@ async function run() {
   assert(missingBroker.status === "NOT_CONNECTED" && missingBroker.missing === "DATABASE_BROKER",
     "missing database broker must remain disconnected");
 
+  let compositionIdentityResolutions = 0;
+  const countedIdentityProvider = {
+    getVerifiedWorkerIdentity: async () => {
+      compositionIdentityResolutions += 1;
+      return identityProvider.getVerifiedWorkerIdentity();
+    },
+  };
+  const countedComposition = await composeTrustedWorkerRuntime({
+    dependencies: { ...complete, identityProvider: countedIdentityProvider },
+    operation: "claim_task",
+    now: () => now * 1000,
+  });
+  assert(countedComposition.status === "COMPOSITION_AVAILABLE",
+    "counted identity provider should compose successfully");
+  assert(compositionIdentityResolutions === 1,
+    "composition identity and registry snapshot must come from one authorization resolution");
+
   const composed = await composeTrustedWorkerRuntime({
     dependencies: complete,
     operation: "claim_task",
