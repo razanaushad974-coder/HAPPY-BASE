@@ -76,6 +76,10 @@ function createAuthorizedBroker(
       await authorize("enqueue_dispatch");
       return rawBroker.enqueueDispatch(input);
     },
+    claimNextDispatch: async (input: Parameters<WorkerDatabaseBroker["claimNextDispatch"]>[0]) => {
+      await authorize("claim_next_dispatch");
+      return rawBroker.claimNextDispatch(input);
+    },
     claimDispatch: async (input: Parameters<WorkerDatabaseBroker["claimDispatch"]>[0]) => {
       await authorize("claim_task");
       return rawBroker.claimDispatch(input);
