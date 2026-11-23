@@ -95,7 +95,7 @@ export async function authorizeWorkerBrokerOperation(input: {
       capabilities.some((capability) =>
         typeof capability !== "string" ||
         !Object.values(OPERATION_CAPABILITY).includes(capability as WorkerCapability) &&
-        !["API", "BROWSER", "FILE", "DATABASE", "DEPLOY", "PUBLISH"].includes(capability)
+        !["CODE", "FILE", "API", "BROWSER", "SHELL", "DATABASE", "AI", "DEPLOYMENT", "PUBLISH", "AUTOMATION", "DEPLOY"].includes(capability)
       ) ||
       new Set(capabilities).size !== capabilities.length ||
       !registration.enabled ||
