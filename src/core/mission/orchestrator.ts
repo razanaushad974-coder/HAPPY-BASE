@@ -24,6 +24,7 @@ import {
   type DurableDispatchPollResult,
   type IdempotentDispatchProvider,
 } from "./durable-dispatch-worker-contract";
+import type { ProviderStatusReader } from "./provider-dispatch-reconciliation";
 
 export class MissionOrchestrator {
   private readonly missionEngine = new MissionEngine();
@@ -67,6 +68,7 @@ export class MissionOrchestrator {
     ownerId: string;
     leaseMilliseconds: number;
     provider: IdempotentDispatchProvider;
+    reconciliationProvider?: ProviderStatusReader;
     now?: () => number;
   }): Promise<WorkerRuntimeComposition | DurableDispatchPollResult> {
     const composition = await this.prepareWorkerRuntimeOperation(
@@ -86,6 +88,7 @@ export class MissionOrchestrator {
       leaseMilliseconds: input.leaseMilliseconds,
       identityProvider,
       provider: input.provider,
+      ...(input.reconciliationProvider ? { reconciliationProvider: input.reconciliationProvider } : {}),
       ...(input.now ? { now: input.now } : {}),
     });
   }
