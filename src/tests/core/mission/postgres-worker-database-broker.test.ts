@@ -96,7 +96,7 @@ async function run() {
     "enqueueDispatch must return an immutable typed outbox snapshot");
 
   const nextDispatch = await broker.claimNextDispatch({ tenantScope, ownerId: "worker-instance-1" });
-  assert(nextDispatch.outboxId === "outbox-1",
+  assert(nextDispatch !== null && nextDispatch.outboxId === "outbox-1",
     "claimNextDispatch must atomically return the next eligible outbox row");
 
   const claimed = await broker.claimDispatch({
