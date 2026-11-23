@@ -89,7 +89,7 @@ CREATE POLICY happy_tenant_records_scope_owner_insert
   ON public.happy_tenant_records
   FOR INSERT TO happy_tenant_scope_rpc_owner
   WITH CHECK (
-    user_id = auth.uid()
+    user_id = private.happy_current_authenticated_user_id()
     AND version = 1
     AND public.happy_has_active_tenant_scope(organization_id, workspace_id)
   );
@@ -99,11 +99,11 @@ CREATE POLICY happy_tenant_records_scope_owner_update
   ON public.happy_tenant_records
   FOR UPDATE TO happy_tenant_scope_rpc_owner
   USING (
-    user_id = auth.uid()
+    user_id = private.happy_current_authenticated_user_id()
     AND public.happy_has_active_tenant_scope(organization_id, workspace_id)
   )
   WITH CHECK (
-    user_id = auth.uid()
+    user_id = private.happy_current_authenticated_user_id()
     AND public.happy_has_active_tenant_scope(organization_id, workspace_id)
   );
 
@@ -112,7 +112,7 @@ CREATE POLICY happy_tenant_records_scope_owner_delete
   ON public.happy_tenant_records
   FOR DELETE TO happy_tenant_scope_rpc_owner
   USING (
-    user_id = auth.uid()
+    user_id = private.happy_current_authenticated_user_id()
     AND public.happy_has_active_tenant_scope(organization_id, workspace_id)
   );
 
