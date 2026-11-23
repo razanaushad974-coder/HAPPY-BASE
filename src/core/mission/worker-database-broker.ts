@@ -217,7 +217,7 @@ export interface WorkerDatabaseBroker {
   /** Atomically selects the next eligible PENDING outbox row under a live fenced lease. */
   claimNextDispatch(input: {
     tenantScope: WorkerTenantScope;
-  }): Promise<WorkerDispatchOutbox>;
+  }): Promise<WorkerDispatchOutbox | null>;
 
   claimDispatch(input: {
     tenantScope: WorkerTenantScope;
