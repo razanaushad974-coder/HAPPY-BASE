@@ -119,7 +119,7 @@ async function main(): Promise<void> {
     ["future issued", { issuedAt: now + 100 }],
     ["excessive lifetime", { expiresAt: now + 600 }],
     ["missing token id", { tokenId: "" }],
-    ["unapproved capability", { capabilities: ["DEPLOY"] }],
+    ["unknown capability", { capabilities: ["ROOT"] }],
     ["duplicate capability", { capabilities: ["API", "API"] }],
     ["empty capability", { capabilities: [] }],
   ];
