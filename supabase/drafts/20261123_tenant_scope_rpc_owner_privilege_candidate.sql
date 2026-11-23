@@ -11,8 +11,9 @@ GRANT USAGE ON SCHEMA private, public TO happy_tenant_scope_rpc_owner;
 
 -- The managed auth schema does not grant USAGE to arbitrary NOLOGIN roles.
 -- Keep auth.uid() behind a tiny, non-exposed SECURITY DEFINER accessor owned
--- by postgres. It returns only the verified JWT subject and performs no table
--- access; EXECUTE is limited to this owner role.
+-- by postgres. It returns only the JWT subject exposed by Supabase auth.uid()
+-- and performs no table access; EXECUTE is limited to explicitly reviewed
+-- NOLOGIN function-owner roles (never API or worker LOGIN roles).
 CREATE OR REPLACE FUNCTION private.happy_current_authenticated_user_id()
 RETURNS uuid
 LANGUAGE sql
@@ -34,12 +35,13 @@ BEGIN
     JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
    WHERE n.nspname='private'
      AND p.proname='happy_current_authenticated_user_id';
-  IF v_owner <> 'postgres'
-     OR NOT ('search_path=pg_catalog' = ANY(v_config))
-     OR NOT (SELECT p.prosecdef FROM pg_catalog.pg_proc p
-              JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
-             WHERE n.nspname='private'
-               AND p.proname='happy_current_authenticated_user_id') THEN
+  IF NOT FOUND
+     OR v_owner IS DISTINCT FROM 'postgres'
+     OR NOT ('search_path=pg_catalog' = ANY(coalesce(v_config, ARRAY[]::text[])))
+     OR NOT coalesce((SELECT p.prosecdef FROM pg_catalog.pg_proc p
+                       JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+                      WHERE n.nspname='private'
+                        AND p.proname='happy_current_authenticated_user_id'), false) THEN
     RAISE EXCEPTION 'JWT subject accessor owner/security/search_path mismatch';
   END IF;
 END
