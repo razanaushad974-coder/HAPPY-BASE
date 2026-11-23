@@ -141,24 +141,42 @@ BEGIN
      AND status='ACTIVE' FOR SHARE;
   IF NOT FOUND THEN RAISE EXCEPTION 'workspace membership FOR SHARE failed'; END IF;
 
-  UPDATE happy_registry_probe.principal_registry SET enabled=false;
-  GET DIAGNOSTICS affected=ROW_COUNT;
-  IF affected <> 0 THEN RAISE EXCEPTION 'principal registry mutation escaped'; END IF;
-  UPDATE happy_registry_probe.tenant_grants SET enabled=false;
-  GET DIAGNOSTICS affected=ROW_COUNT;
-  IF affected <> 0 THEN RAISE EXCEPTION 'tenant grant mutation escaped'; END IF;
-  UPDATE happy_registry_probe.organizations SET status='REVOKED';
-  GET DIAGNOSTICS affected=ROW_COUNT;
-  IF affected <> 0 THEN RAISE EXCEPTION 'organization mutation escaped'; END IF;
-  UPDATE happy_registry_probe.workspaces SET status='REVOKED';
-  GET DIAGNOSTICS affected=ROW_COUNT;
-  IF affected <> 0 THEN RAISE EXCEPTION 'workspace mutation escaped'; END IF;
-  UPDATE happy_registry_probe.organization_memberships SET status='REVOKED';
-  GET DIAGNOSTICS affected=ROW_COUNT;
-  IF affected <> 0 THEN RAISE EXCEPTION 'organization membership mutation escaped'; END IF;
-  UPDATE happy_registry_probe.workspace_memberships SET status='REVOKED';
-  GET DIAGNOSTICS affected=ROW_COUNT;
-  IF affected <> 0 THEN RAISE EXCEPTION 'workspace membership mutation escaped'; END IF;
+  BEGIN
+    UPDATE happy_registry_probe.principal_registry SET enabled=false;
+    GET DIAGNOSTICS affected=ROW_COUNT;
+    RAISE EXCEPTION 'principal registry UPDATE unexpectedly passed; rows=%', affected;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE happy_registry_probe.tenant_grants SET enabled=false;
+    GET DIAGNOSTICS affected=ROW_COUNT;
+    RAISE EXCEPTION 'tenant grant UPDATE unexpectedly passed; rows=%', affected;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE happy_registry_probe.organizations SET status='REVOKED';
+    GET DIAGNOSTICS affected=ROW_COUNT;
+    RAISE EXCEPTION 'organization UPDATE unexpectedly passed; rows=%', affected;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE happy_registry_probe.workspaces SET status='REVOKED';
+    GET DIAGNOSTICS affected=ROW_COUNT;
+    RAISE EXCEPTION 'workspace UPDATE unexpectedly passed; rows=%', affected;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE happy_registry_probe.organization_memberships SET status='REVOKED';
+    GET DIAGNOSTICS affected=ROW_COUNT;
+    RAISE EXCEPTION 'organization membership UPDATE unexpectedly passed; rows=%', affected;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE happy_registry_probe.workspace_memberships SET status='REVOKED';
+    GET DIAGNOSTICS affected=ROW_COUNT;
+    RAISE EXCEPTION 'workspace membership UPDATE unexpectedly passed; rows=%', affected;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
 
   RETURN true;
 END
