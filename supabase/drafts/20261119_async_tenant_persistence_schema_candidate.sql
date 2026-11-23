@@ -1,15 +1,19 @@
 -- DESIGN-ONLY schema candidate for HAPPY async tenant persistence.
 -- DO NOT APPLY to a connected/shared/production Supabase project.
 --
--- Depends on the tenant identity tables defined by the separate
--- file-mutation candidate:
+-- Depends on a separately reviewed Stage 0 canonical identity baseline:
 --   private.organizations
 --   private.workspaces
 --   private.organization_memberships
 --   private.workspace_memberships
 --
--- This draft intentionally does not create or mutate those identity tables.
--- Reconcile ownership, schema grants, migration order, and RLS before use.
+-- NO approved standalone Stage 0 baseline migration currently exists.
+-- 20261119_file_mutation_atomic_consume_candidate.sql is NOT an approved
+-- substitute: it contains legacy broad service_role grants and an unowned
+-- file-mutation SECURITY DEFINER surface. Do not apply it wholesale.
+-- This draft intentionally does not create or mutate identity tables.
+-- Author and adversarially test a minimal identity-only baseline before
+-- promoting this draft into an ordered migration.
 --
 -- Storage contract:
 --   key = organization_id + workspace_id + user_id + entity_type + id
