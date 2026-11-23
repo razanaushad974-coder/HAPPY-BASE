@@ -133,6 +133,7 @@ Separate NOLOGIN/NOBYPASSRLS role and privilege candidates now exist for:
 - `happy_tenant_scope_rpc_owner`
 - `happy_execution_request_create_rpc_owner`
 - `happy_execution_request_decision_rpc_owner`
+- `happy_worker_scheduler_rpc_owner`
 
 Hosted PostgreSQL 17.12 rollback-only synthetic probes have passed for:
 - six-table worker registry/scope SELECT and FOR SHARE lock-only grants;
@@ -145,3 +146,8 @@ The row-lock design is now explicitly **lock-only UPDATE policy**: `USING (true)
 The tenant and execution-request RPCs use `private.happy_current_authenticated_user_id()`, a private, fixed-search-path SECURITY DEFINER accessor that returns only `auth.uid()`. This is necessary because the hosted managed `auth` schema does not permit the custom NOLOGIN owner roles to call `auth.uid()` directly. The accessor is owned by trusted `postgres` and EXECUTE is limited to the intended owner roles.
 
 **These results validate synthetic PostgreSQL fixtures, not the actual HAPPY schema.** The staging project still has no HAPPY migrations/tables, and no candidate SQL, role, grant, credential, or application data was persisted. Real JWT/API, actual migration-chain, two-session membership-revocation, and hosted worker-pooler identity tests remain mandatory before any staging migration is promoted.
+
+
+The fifth owner, `happy_worker_scheduler_rpc_owner`, now has a separate NOLOGIN/NOBYPASSRLS role candidate and a least-privilege RLS/grant candidate covering mission/task snapshots, fenced leases, outbox, approved execution-request status and reconciliation evidence. A registry-owner policy helper derives the worker from `session_user` and rechecks capability + tenant membership on every RLS evaluation.
+
+A focused hosted PostgreSQL 17.12 VERIFY-only outbox probe passed: a VERIFY-only worker could acquire `FOR SHARE` on an ambiguous outbox row but could not mutate it under `USING (VERIFY scope) WITH CHECK (false)`. The extended full scheduler matrix script was not counted as passed because the SQL runner disconnected before returning a result. Real worker LOGIN identity and pooler `session_user` preservation remain unverified.
