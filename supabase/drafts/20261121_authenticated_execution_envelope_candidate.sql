@@ -88,7 +88,7 @@ before update or delete on private.execution_request_approval_events
 for each row execute function private.reject_execution_request_approval_event_mutation();
 
 create or replace function private.guard_execution_request_update()
-returns trigger language plpgsql security definer set search_path = pg_catalog
+returns trigger language plpgsql security invoker set search_path = pg_catalog
 as $guard$
 begin
   if row(new.request_id,new.task_id,new.mission_id,new.requester_user_id,new.executor_user_id,
@@ -177,7 +177,7 @@ returns table (
 language plpgsql security definer set search_path = pg_catalog
 as $function$
 declare
-  v_uid uuid := auth.uid();
+  v_uid uuid := private.happy_current_authenticated_user_id();
   v_digest text;
   v_envelope_digest text;
   v_existing private.execution_requests%rowtype;
@@ -209,19 +209,9 @@ begin
   -- Creation persists inert, pending intent only. Check active canonical scope
   -- here; the approval RPC re-locks and revalidates both memberships before
   -- any request can become READY.
-  if not exists (
-    select 1
-      from private.organizations o
-      join private.workspaces w
-        on w.organization_id=o.organization_id and w.workspace_id=p_workspace_id
-      join private.organization_memberships om
-        on om.organization_id=o.organization_id and om.user_id=v_uid
-      join private.workspace_memberships wm
-        on wm.organization_id=o.organization_id and wm.workspace_id=w.workspace_id
-       and wm.user_id=v_uid
-     where o.organization_id=p_organization_id and o.status='ACTIVE'
-       and w.status='ACTIVE' and om.status='ACTIVE' and wm.status='ACTIVE'
-  ) then raise exception 'TENANT_ACCESS_DENIED'; end if;
+  if not public.happy_has_active_tenant_scope(p_organization_id,p_workspace_id) then
+    raise exception 'TENANT_ACCESS_DENIED';
+  end if;
 
   -- Bind caller selectors to canonical, same-principal persisted records.
   -- Mission must contain the task ID; task must point back to that mission.
@@ -320,35 +310,19 @@ as $function$
     r.requires_approval,r.risk,r.approval_status,r.required_approval_role,r.status,r.input_digest,r.envelope_digest,r.created_at
   from private.execution_requests r
   where p_request_id is not null and length(btrim(p_request_id)) > 0
-    and r.request_id=p_request_id and r.executor_user_id=auth.uid()
+    and r.request_id=p_request_id and r.executor_user_id=private.happy_current_authenticated_user_id()
     and r.capability is not null
   limit 1;
 $function$;
 
-do $role$
-begin
-  create role happy_execution_request_create_rpc_owner nologin bypassrls;
-exception when duplicate_object then null;
-end
-$role$;
-grant usage on schema private,auth,extensions,public to happy_execution_request_create_rpc_owner;
-grant select,insert on private.execution_requests to happy_execution_request_create_rpc_owner;
-grant select on private.organizations,private.workspaces,
-  private.organization_memberships,private.workspace_memberships,
-  public.happy_tenant_records
-  to happy_execution_request_create_rpc_owner;
-grant execute on function auth.uid() to happy_execution_request_create_rpc_owner;
-grant execute on function extensions.digest(bytea,text) to happy_execution_request_create_rpc_owner;
-
-alter function public.create_authenticated_execution_request(text,text,text,uuid,uuid,text,text,jsonb,jsonb,text)
-  owner to happy_execution_request_create_rpc_owner;
-alter function public.resolve_authenticated_execution_request(text)
-  owner to happy_execution_request_create_rpc_owner;
-
-revoke all on function public.create_authenticated_execution_request(text,text,text,uuid,uuid,text,text,jsonb,jsonb,text) from public,anon,service_role;
-grant execute on function public.create_authenticated_execution_request(text,text,text,uuid,uuid,text,text,jsonb,jsonb,text) to authenticated;
-revoke all on function public.resolve_authenticated_execution_request(text) from public,anon,service_role;
-grant execute on function public.resolve_authenticated_execution_request(text) to authenticated;
+-- Owner provisioning and exact RLS/table grants live in the separate
+-- happy_execution_request_create_rpc_owner role/privilege candidates.
+-- Revoke default PUBLIC/API execution in this same migration transaction;
+-- the reviewed privilege candidate grants authenticated only after ownership.
+revoke all on function public.create_authenticated_execution_request(text,text,text,uuid,uuid,text,text,jsonb,jsonb,text)
+  from public, anon, authenticated, service_role;
+revoke all on function public.resolve_authenticated_execution_request(text)
+  from public, anon, authenticated, service_role;
 
 -- Authenticated founder decision. The database derives the approver from
 -- auth.uid(), locks the exact tenant/request/membership rows, forbids self
@@ -362,7 +336,7 @@ returns boolean
 language plpgsql security definer set search_path = pg_catalog
 as $decision$
 declare
-  v_approver uuid := auth.uid();
+  v_approver uuid := private.happy_current_authenticated_user_id();
   v_request private.execution_requests%rowtype;
   v_org private.organizations%rowtype;
   v_workspace private.workspaces%rowtype;
@@ -469,25 +443,10 @@ begin
 end;
 $decision$;
 
-do $role$
-begin
-  create role happy_execution_request_decision_rpc_owner nologin bypassrls;
-exception when duplicate_object then null;
-end
-$role$;
-grant usage on schema private,auth to happy_execution_request_decision_rpc_owner;
-grant select,update on private.execution_requests to happy_execution_request_decision_rpc_owner;
-grant insert,select on private.execution_request_approval_events to happy_execution_request_decision_rpc_owner;
-grant select,update on private.organizations,private.workspaces,
-  private.organization_memberships,private.workspace_memberships
-  to happy_execution_request_decision_rpc_owner;
-grant execute on function auth.uid() to happy_execution_request_decision_rpc_owner;
-alter function public.decide_authenticated_execution_request(text,text,text)
-  owner to happy_execution_request_decision_rpc_owner;
+-- Owner provisioning, founder-scoped RLS policies and exact grants live
+-- in the separate happy_execution_request_decision_rpc_owner candidates.
 revoke all on function public.decide_authenticated_execution_request(text,text,text)
-  from public,anon,service_role;
-grant execute on function public.decide_authenticated_execution_request(text,text,text)
-  to authenticated;
+  from public, anon, authenticated, service_role;
 
 -- Remaining blockers before dispatch: a separately authenticated worker claim,
 -- fenced one-shot dispatch, durable outcome evidence, and crash reconciliation
