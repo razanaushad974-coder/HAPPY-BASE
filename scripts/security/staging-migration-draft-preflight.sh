@@ -17,7 +17,9 @@ test -s "$READINESS" || fail "staging readiness review is missing"
 # It must never create config, migrations, roles, grants, or database objects.
 required=(
   20261119_file_mutation_atomic_consume_candidate.sql
+  20261123_canonical_tenant_identity_schema_candidate.sql
   20261119_async_tenant_persistence_schema_candidate.sql
+  20261123_execution_request_base_schema_candidate.sql
   20261121_authenticated_execution_envelope_candidate.sql
   20261121_durable_mission_scheduler_candidate.sql
   20261122_worker_principal_registry_candidate.sql
@@ -39,6 +41,21 @@ for file in "${required[@]}"; do
   test -s "$DRAFTS/$file" || fail "required draft missing: $file"
 done
 pass "required draft inventory is present"
+
+# The replacement identity/request baselines must stay isolated from the
+# blocked legacy file-mutation candidate and withhold runtime table grants.
+IDENTITY_BASELINE="$DRAFTS/20261123_canonical_tenant_identity_schema_candidate.sql"
+REQUEST_BASELINE="$DRAFTS/20261123_execution_request_base_schema_candidate.sql"
+if grep -Eiq '^[[:space:]]*grant[[:space:]].*service_role' "$IDENTITY_BASELINE" "$REQUEST_BASELINE"; then
+  fail "identity/request baseline grants table or schema authority to service_role"
+fi
+for table in organizations workspaces organization_memberships workspace_memberships; do
+  grep -Eiq "alter table private\.$table enable row level security" "$IDENTITY_BASELINE" \
+    || fail "identity baseline does not enable RLS on $table"
+done
+grep -Eiq 'alter table private\.execution_requests enable row level security' "$REQUEST_BASELINE" \
+  || fail "execution request base does not enable RLS"
+pass "isolated identity/request baselines enable RLS and contain no service_role grants"
 
 # Every function-owner role candidate must create a NOLOGIN, NOINHERIT,
 # NOBYPASSRLS role and must not enable any elevated role attribute.
