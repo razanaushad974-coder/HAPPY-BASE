@@ -162,18 +162,19 @@ export class MissionOrchestrator {
     reconciliationProvider?: ProviderStatusReader;
     now?: () => number;
   }): Promise<WorkerRuntimeComposition | ApprovedTaskEnqueueResult | DurableDispatchPollResult | { status: "NO_READY_TASK" }> {
-    requireCompleteScope(input.scope);
+    const scope = input.scope;
+    requireCompleteScope(scope);
     if (
-      input.scope.organizationId !== input.tenantScope.organizationId ||
-      input.scope.workspaceId !== input.tenantScope.workspaceId ||
-      input.scope.userId !== input.tenantScope.userId
+      scope.organizationId !== input.tenantScope.organizationId ||
+      scope.workspaceId !== input.tenantScope.workspaceId ||
+      scope.userId !== input.tenantScope.userId
     ) {
       throw new TenantPersistenceError("INVALID_TENANT_SCOPE", "Scheduler scan and worker claim must use the same tenant scope.");
     }
 
     const [missions, tasks] = await Promise.all([
-      input.persistence.list<Mission>(input.scope, { entityType: "MISSION", limit: 200 }),
-      input.persistence.list<MissionTask>(input.scope, { entityType: "TASK", limit: 1000 }),
+      input.persistence.list<Mission>(scope, { entityType: "MISSION", limit: 200 }),
+      input.persistence.list<MissionTask>(scope, { entityType: "TASK", limit: 1000 }),
     ]);
     const tasksByMission = new Map<string, MissionTask[]>();
     for (const record of tasks) {
