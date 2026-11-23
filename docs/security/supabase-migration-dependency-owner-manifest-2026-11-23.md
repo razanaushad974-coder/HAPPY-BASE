@@ -33,6 +33,11 @@ The branch currently contains only `supabase/drafts/`; it has no checked-in `sup
 | 5b. Worker RPC grants | `20261123_worker_registry_helper_grant_candidate.sql`, `20261123_worker_scheduler_rpc_grant_candidate.sql` | Stages 0–5a **and live identity gate** | Explicit registered worker LOGIN roles only | **WITHHELD** until dedicated LOGIN and pooler-preserved `session_user` verified |
 | 6. Runtime integration | TypeScript Vercel worker runtime | Stages 0–5b | Verified Vercel OIDC workload identity + dedicated PostgreSQL LOGIN/pool | Not connected; verify issuer, audience, subject, environment, expiry, replay/revocation and actual pooler behavior |
 
+## Canonical identity blocker audit
+
+- Detailed P0/P1 findings and remediation gates are recorded in `canonical-identity-file-mutation-baseline-blocker-audit-2026-11-23.md`.
+- The Stage 0 file-mutation candidate remains blocked; its broad `service_role` table grants and unowned SECURITY DEFINER consume RPC must be redesigned before any migration chain is authored.
+
 ## Explicitly superseded or excluded inputs
 
 - `20261121_authenticated_execution_request_rpc_candidate.sql` is a non-executable superseded note. Do not treat it as a schema prerequisite; final create/resolve RPC definitions are in the execution-envelope draft and must be audited there.
