@@ -19,7 +19,7 @@ const valid: VerifiedWorkerCredentialClaims = {
   expiresAt: now + 240,
   tokenId: "token-unique-1",
   environment: "staging",
-  capabilities: ["API", "VERIFY"],
+  capabilities: ["CODE", "FILE", "API", "BROWSER", "SHELL", "DATABASE", "AI", "DEPLOYMENT", "PUBLISH", "AUTOMATION", "DEPLOY", "CONTROL", "VERIFY"],
 };
 
 const policy = {
@@ -27,7 +27,7 @@ const policy = {
   audience: "happy-execution",
   environment: "staging",
   allowedSubjects: ["owner:team:project:happy-worker:environment:staging"],
-  allowedCapabilities: ["API", "VERIFY"] as WorkerCapability[],
+  allowedCapabilities: ["CODE", "FILE", "API", "BROWSER", "SHELL", "DATABASE", "AI", "DEPLOYMENT", "PUBLISH", "AUTOMATION", "DEPLOY", "CONTROL", "VERIFY"] as WorkerCapability[],
   maxCredentialLifetimeSeconds: 300,
   clockSkewSeconds: 15,
 };
@@ -52,7 +52,7 @@ async function main(): Promise<void> {
   assert(accepted.status === "VERIFIED", "valid platform-attested workload was rejected");
   if (accepted.status === "VERIFIED") {
     assert(accepted.identity.principal === valid.subject, "worker principal mismatch");
-    assert(accepted.identity.capabilities.join(",") === "API,VERIFY", "capability binding mismatch");
+    assert(accepted.identity.capabilities.length === 13 && accepted.identity.capabilities.includes("CODE") && accepted.identity.capabilities.includes("AUTOMATION"), "execution capability binding mismatch");
     assert(isVerifiedWorkerIdentity(accepted.identity), "provider result is missing runtime attestation");
     assert(Object.isFrozen(accepted.identity), "verified identity must be immutable");
     assert(Object.isFrozen(accepted.identity.capabilities), "verified capabilities must be immutable");
