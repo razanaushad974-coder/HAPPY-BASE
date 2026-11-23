@@ -145,3 +145,46 @@ if grep -Eiq 'grant (select|insert|update|delete|all) on (all )?tables' "$GRANT_
 fi
 
 echo "PASS: eight worker scheduler RPC drafts are tenant-bound, human-JWT independent, SECURITY DEFINER, and have only a separate capability-scoped grant candidate."
+
+# Bind the grant candidate to the exact SQL function signatures. Name-only
+# checks can pass while PostgreSQL rejects a grant due to an overload mismatch.
+normalized_sql="$(tr -d '[:space:]' < "$SQL_FILE")"
+normalized_grants="$(tr -d '[:space:]' < "$GRANT_FILE")"
+
+rpc_names=(
+  happy_worker_claim_mission_task
+  happy_worker_enqueue_mission_dispatch
+  happy_worker_heartbeat_mission_task_lease
+  happy_worker_claim_dispatch_outbox
+  happy_worker_claim_next_dispatch_outbox
+  happy_worker_record_dispatch_outcome
+  happy_worker_append_dispatch_reconciliation_evidence
+  happy_worker_list_dispatch_reconciliation_evidence
+)
+rpc_signatures=(
+  'uuid,uuid,uuid,uuid,text,text,text,integer'
+  'uuid,uuid,uuid,uuid,text,text,uuid,text,bigint,text,text,text,text,text,jsonb'
+  'uuid,uuid,uuid,uuid,text,text,uuid,text,bigint,integer'
+  'uuid,uuid,uuid,uuid,uuid,uuid,text,bigint'
+  'uuid,uuid,uuid,uuid,text'
+  'uuid,uuid,uuid,uuid,uuid,uuid,text,bigint,text,jsonb'
+  'uuid,uuid,uuid,uuid,uuid,uuid,text,text,text,timestamptz,jsonb'
+  'uuid,uuid,uuid,uuid,uuid,text,text,text'
+)
+
+for i in "${!rpc_names[@]}"; do
+  rpc="${rpc_names[$i]}"
+  signature="${rpc_signatures[$i]}"
+  definition="createorreplacefunctionprivate.$rpc($signature)"
+  grant="grantexecuteonfunctionprivate.$rpc($signature)"
+  if [[ "$normalized_sql" != *"$definition"* ]]; then
+    echo "SQL function signature does not match the reviewed contract: $rpc($signature)" >&2
+    exit 1
+  fi
+  if [[ "$normalized_grants" != *"$grant"* ]]; then
+    echo "EXECUTE grant signature does not match SQL function: $rpc($signature)" >&2
+    exit 1
+  fi
+done
+
+echo "PASS: all eight capability-scoped EXECUTE grants match exact SQL function overload signatures."
