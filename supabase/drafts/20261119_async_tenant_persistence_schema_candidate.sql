@@ -289,7 +289,7 @@ declare
   v_actor uuid;
   v_record public.happy_tenant_records%rowtype;
 begin
-  v_actor := auth.uid();
+  v_actor := private.happy_current_authenticated_user_id();
   if v_actor is null
      or not public.happy_lock_active_tenant_scope(p_organization_id, p_workspace_id) then
     raise exception 'TENANT_SCOPE_DENIED' using errcode = '42501';
@@ -336,7 +336,7 @@ declare
   v_record public.happy_tenant_records%rowtype;
   v_exists boolean;
 begin
-  v_actor := auth.uid();
+  v_actor := private.happy_current_authenticated_user_id();
   if v_actor is null
      or not public.happy_lock_active_tenant_scope(p_organization_id, p_workspace_id) then
     raise exception 'TENANT_SCOPE_DENIED' using errcode = '42501';
@@ -399,7 +399,7 @@ declare
   v_deleted boolean;
   v_exists boolean;
 begin
-  v_actor := auth.uid();
+  v_actor := private.happy_current_authenticated_user_id();
   if v_actor is null
      or not public.happy_lock_active_tenant_scope(p_organization_id, p_workspace_id) then
     raise exception 'TENANT_SCOPE_DENIED' using errcode = '42501';
