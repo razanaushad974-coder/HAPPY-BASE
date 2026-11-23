@@ -46,6 +46,15 @@ for function_name in "${functions[@]}"; do
   fi
 done
 
+if ! awk -v fn="happy_worker_claim_mission_task" '
+  index($0, "create or replace function private." fn "(") > 0 { inside=1 }
+  inside { print }
+  inside && index($0, "$claim$;") > 0 { exit }
+' "$SQL_FILE" | grep -q "r.approval_status = 'APPROVED'"; then
+  echo "Task claim must return only a persisted founder-approved execution request." >&2
+  exit 1
+fi
+
 if ! awk -v fn="happy_worker_claim_next_dispatch_outbox" '
   index($0, "create or replace function private." fn "(") > 0 { inside=1 }
   inside { print }

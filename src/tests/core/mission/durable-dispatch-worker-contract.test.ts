@@ -5,6 +5,7 @@ import type {
   WorkerTenantScope,
 } from "../../../core/mission/worker-database-broker";
 import {
+  claimAndEnqueueApprovedTask,
   dispatchClaimedOutboxItem,
   dispatchWithTrustedWorkerIdentity,
   runNextDurableDispatch,
@@ -263,6 +264,96 @@ async function run(): Promise<void> {
     createdAt: "2026-11-21T10:00:00.000Z",
     updatedAt: "2026-11-21T10:00:01.000Z",
   };
+  const approvedExecutionRequest: ExecutionRequest = {
+    id: "request-approved-task-1",
+    missionId: "mission-durable-1",
+    taskId: "task-durable-1",
+    capability: "API",
+    action: "POST",
+    input: { value: "approved-task" },
+    requiresApproval: true,
+    approved: true,
+    risk: "HIGH",
+    createdAt: "2026-11-21T10:00:00.000Z",
+  };
+  let taskClaimCalls = 0;
+  let taskLeaseHeartbeatCalls = 0;
+  let taskEnqueueCalls = 0;
+  const taskEnqueue = await claimAndEnqueueApprovedTask({
+    tenantScope,
+    missionId: approvedExecutionRequest.missionId,
+    taskId: approvedExecutionRequest.taskId,
+    ownerId: "worker-instance-42",
+    leaseMilliseconds: 30_000,
+    broker: {
+      async claimTask() {
+        taskClaimCalls += 1;
+        return {
+          leaseId: "task-lease-1",
+          attempt: 1,
+          fencingToken: 3,
+          expiresAt: "2026-11-21T10:05:00.000Z",
+          taskVersion: 12,
+          executionRequest: approvedExecutionRequest,
+        };
+      },
+      async heartbeatLease() {
+        taskLeaseHeartbeatCalls += 1;
+        return "2026-11-21T10:05:30.000Z";
+      },
+      async enqueueDispatch(input) {
+        taskEnqueueCalls += 1;
+        return {
+          ...queuedOutbox,
+          outboxId: "outbox-approved-task-1",
+          missionId: input.missionId,
+          taskId: input.taskId,
+          leaseId: input.leaseId,
+          fencingToken: input.fencingToken,
+          executionRequestId: input.executionRequestId,
+          idempotencyKey: input.idempotencyKey,
+          capability: input.capability,
+          action: input.action,
+          payloadDigest: input.payloadDigest,
+          payload: { ...input.payload },
+          status: "PENDING" as const,
+        };
+      },
+    },
+  });
+  assert(taskEnqueue.status === "ENQUEUED" &&
+    taskEnqueue.executionRequestId === approvedExecutionRequest.id &&
+    taskClaimCalls === 1 && taskLeaseHeartbeatCalls === 1 && taskEnqueueCalls === 1,
+  "approved task claim must bind its verified request, renew the lease and enqueue exactly once");
+
+  let unapprovedEnqueueCalls = 0;
+  const unapprovedTask = await claimAndEnqueueApprovedTask({
+    tenantScope,
+    missionId: approvedExecutionRequest.missionId,
+    taskId: approvedExecutionRequest.taskId,
+    ownerId: "worker-instance-42",
+    leaseMilliseconds: 30_000,
+    broker: {
+      async claimTask() {
+        return {
+          leaseId: "task-lease-unapproved",
+          attempt: 1,
+          fencingToken: 1,
+          expiresAt: "2026-11-21T10:05:00.000Z",
+          taskVersion: 13,
+          executionRequest: { ...approvedExecutionRequest, approved: false },
+        };
+      },
+      async heartbeatLease() { return "2026-11-21T10:05:30.000Z"; },
+      async enqueueDispatch() {
+        unapprovedEnqueueCalls += 1;
+        return queuedOutbox;
+      },
+    },
+  });
+  assert(unapprovedTask.status === "APPROVED_REQUEST_INVALID" && unapprovedEnqueueCalls === 0,
+    "an unapproved execution envelope must never reach dispatch enqueue");
+
   let heartbeatCalls = 0;
   let outcomeCalls = 0;
   const durableBroker: Pick<WorkerDatabaseBroker, "claimNextDispatch" | "heartbeatLease" | "recordDispatchOutcome" | "appendReconciliationEvidence"> = {

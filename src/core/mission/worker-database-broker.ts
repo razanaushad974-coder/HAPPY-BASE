@@ -1,3 +1,5 @@
+import type { ExecutionRequest } from "../execution/types";
+
 import {
   isVerifiedWorkerIdentity,
   type VerifiedWorkerIdentity,
@@ -141,6 +143,8 @@ export interface WorkerTaskLease {
   readonly fencingToken: number;
   readonly expiresAt: string;
   readonly taskVersion: number;
+  /** Exact, database-verified READY execution envelope with founder approval. */
+  readonly executionRequest: ExecutionRequest;
 }
 
 export interface WorkerDispatchOutbox {

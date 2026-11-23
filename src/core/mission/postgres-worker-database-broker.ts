@@ -1,4 +1,5 @@
 import type { PgQueryable } from "../persistence/adapters/postgres-tenant-adapter";
+import type { ExecutionRequest } from "../execution/types";
 import type {
   WorkerDatabaseBroker,
   WorkerDispatchOutbox,
@@ -31,6 +32,7 @@ interface LeaseRow {
   fencing_token: number | string;
   expires_at: string | Date;
   task_version: number | string;
+  execution_request: unknown;
 }
 
 interface OutboxRow {
@@ -111,6 +113,39 @@ function one<Row>(rows: readonly Row[]): Row {
   return rows[0];
 }
 
+function mapApprovedExecutionRequest(value: unknown): ExecutionRequest {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new PostgresWorkerDatabaseBrokerError("WORKER_BROKER_INVALID_DATABASE_ROW");
+  }
+  const row = value as Record<string, unknown>;
+  const capabilities = ["CODE", "FILE", "API", "BROWSER", "SHELL", "DATABASE", "AI", "DEPLOYMENT", "PUBLISH", "AUTOMATION"];
+  if (typeof row.id !== "string" || !row.id.trim() ||
+      typeof row.missionId !== "string" || !row.missionId.trim() ||
+      typeof row.taskId !== "string" || !row.taskId.trim() ||
+      typeof row.capability !== "string" || !capabilities.includes(row.capability) ||
+      typeof row.action !== "string" || !row.action.trim() ||
+      !row.input || typeof row.input !== "object" || Array.isArray(row.input) ||
+      row.requiresApproval !== true || row.approved !== true || row.risk !== "HIGH" ||
+      typeof row.createdAt !== "string" || !Number.isFinite(Date.parse(row.createdAt)) ||
+      (row.targetReference !== null && row.targetReference !== undefined &&
+        (typeof row.targetReference !== "object" || Array.isArray(row.targetReference)))) {
+    throw new PostgresWorkerDatabaseBrokerError("WORKER_BROKER_INVALID_DATABASE_ROW");
+  }
+  return Object.freeze({
+    id: row.id,
+    missionId: row.missionId,
+    taskId: row.taskId,
+    capability: row.capability as ExecutionRequest["capability"],
+    action: row.action,
+    input: Object.freeze({ ...(row.input as Record<string, unknown>) }),
+    ...(row.targetReference ? { targetReference: row.targetReference as ExecutionRequest["targetReference"] } : {}),
+    requiresApproval: true,
+    approved: true,
+    risk: "HIGH",
+    createdAt: new Date(row.createdAt).toISOString(),
+  });
+}
+
 function mapLease(row: LeaseRow): WorkerTaskLease {
   return Object.freeze({
     leaseId: nonEmpty(row.lease_id, "lease_id"),
@@ -118,6 +153,7 @@ function mapLease(row: LeaseRow): WorkerTaskLease {
     fencingToken: integer(row.fencing_token, "fencing_token"),
     expiresAt: iso(row.expires_at, "expires_at"),
     taskVersion: integer(row.task_version, "task_version"),
+    executionRequest: mapApprovedExecutionRequest(row.execution_request),
   });
 }
 

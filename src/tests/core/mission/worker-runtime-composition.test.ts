@@ -56,7 +56,16 @@ let brokerCalls = 0;
 const broker = {
   claimTask: async () => {
     brokerCalls += 1;
-    return { leaseId: "lease-1", attempt: 1, fencingToken: 1, expiresAt: new Date(now * 1000 + 60_000).toISOString(), taskVersion: 1 };
+    return {
+      leaseId: "lease-1", attempt: 1, fencingToken: 1,
+      expiresAt: new Date(now * 1000 + 60_000).toISOString(), taskVersion: 1,
+      executionRequest: {
+        id: "request-1", missionId: "mission-1", taskId: "task-1",
+        capability: "API", action: "POST", input: {},
+        requiresApproval: true, approved: true, risk: "HIGH",
+        createdAt: new Date(now * 1000).toISOString(),
+      },
+    };
   },
   heartbeatLease: async () => { brokerCalls += 1; return "2026-11-22T20:00:00.000Z"; },
   enqueueDispatch: async () => { brokerCalls += 1; return {}; },

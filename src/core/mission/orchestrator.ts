@@ -20,7 +20,9 @@ import type {
   WorkerTenantScope,
 } from "./worker-database-broker";
 import {
+  claimAndEnqueueApprovedTask,
   runNextDurableDispatch,
+  type ApprovedTaskEnqueueResult,
   type DurableDispatchPollResult,
   type IdempotentDispatchProvider,
 } from "./durable-dispatch-worker-contract";
@@ -93,6 +95,44 @@ export class MissionOrchestrator {
       ownerId: input.ownerId,
       leaseMilliseconds: input.leaseMilliseconds,
       identityProvider,
+      provider: input.provider,
+      ...(input.reconciliationProvider ? { reconciliationProvider: input.reconciliationProvider } : {}),
+      ...(input.now ? { now: input.now } : {}),
+    });
+  }
+
+  /**
+   * Runs one explicitly selected mission task through claim, approved request
+   * binding, outbox enqueue, provider dispatch, fenced outcome and optional
+   * reconciliation. This is a single bounded iteration, not a polling loop.
+   */
+  async runMissionTaskDispatch(input: {
+    tenantScope: WorkerTenantScope;
+    missionId: string;
+    taskId: string;
+    ownerId: string;
+    leaseMilliseconds: number;
+    provider: IdempotentDispatchProvider;
+    reconciliationProvider?: ProviderStatusReader;
+    now?: () => number;
+  }): Promise<WorkerRuntimeComposition | ApprovedTaskEnqueueResult | DurableDispatchPollResult> {
+    const composition = await this.prepareWorkerRuntimeOperation("claim_task", input.now);
+    if (composition.status !== "COMPOSITION_AVAILABLE") return composition;
+
+    const enqueue = await claimAndEnqueueApprovedTask({
+      broker: composition.broker,
+      tenantScope: input.tenantScope,
+      missionId: input.missionId,
+      taskId: input.taskId,
+      ownerId: input.ownerId,
+      leaseMilliseconds: input.leaseMilliseconds,
+    });
+    if (enqueue.status !== "ENQUEUED") return enqueue;
+
+    return this.runNextWorkerDispatch({
+      tenantScope: input.tenantScope,
+      ownerId: input.ownerId,
+      leaseMilliseconds: input.leaseMilliseconds,
       provider: input.provider,
       ...(input.reconciliationProvider ? { reconciliationProvider: input.reconciliationProvider } : {}),
       ...(input.now ? { now: input.now } : {}),

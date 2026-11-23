@@ -41,7 +41,16 @@ const session = {
         if (sql.includes("happy_worker_claim_next_dispatch_outbox(") && noPendingDispatch) {
           rows = [];
         } else if (sql.includes("happy_worker_claim_mission_task(")) {
-          rows = [{ lease_id: "lease-1", attempt: "2", fencing_token: "4", expires_at: "2026-11-22T00:05:00.000Z", task_version: "9" }];
+          rows = [{
+            lease_id: "lease-1", attempt: "2", fencing_token: "4",
+            expires_at: "2026-11-22T00:05:00.000Z", task_version: "9",
+            execution_request: {
+              id: "request-1", missionId: "mission-1", taskId: "task-1",
+              capability: "FILE", action: "READ", input: { path: "report.txt" },
+              targetReference: null, requiresApproval: true, approved: true,
+              risk: "HIGH", createdAt: "2026-11-22T00:00:00.000Z",
+            },
+          }];
         } else if (sql.includes("happy_worker_heartbeat_mission_task_lease(")) {
           rows = [{ expires_at: "2026-11-22T00:06:00.000Z" }];
         } else if (sql.includes("happy_worker_append_dispatch_reconciliation_evidence(")) {
@@ -77,6 +86,9 @@ async function run() {
   });
   assert(lease.leaseId === "lease-1" && lease.fencingToken === 4 && lease.taskVersion === 9,
     "claimTask must map the fenced lease result");
+  assert(lease.executionRequest.id === "request-1" && lease.executionRequest.approved &&
+    lease.executionRequest.requiresApproval && lease.executionRequest.risk === "HIGH",
+    "claimTask must return only the exact approved execution envelope");
 
   const heartbeat = await broker.heartbeatLease({
     tenantScope, missionId: "mission-1", taskId: "task-1",

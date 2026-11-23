@@ -16,6 +16,7 @@ begin;
 
 -- Worker-only twin of happy_claim_mission_task; uses DB-derived identity and a
 -- transactionally locked worker-to-user tenant scope.
+drop function if exists private.happy_worker_claim_mission_task(uuid,uuid,uuid,uuid,text,text,text,integer);
 create or replace function private.happy_worker_claim_mission_task(
   p_worker_principal_id uuid,
   p_organization_id uuid,
@@ -31,7 +32,8 @@ returns table (
   attempt integer,
   fencing_token bigint,
   expires_at timestamptz,
-  task_version bigint
+  task_version bigint,
+  execution_request jsonb
 )
 language plpgsql
 security definer
@@ -40,6 +42,7 @@ as $claim$
 declare
   v_actor uuid;
   v_mission jsonb;
+  v_mission_version bigint;
   v_task jsonb;
   v_task_version bigint;
   v_lease_id uuid := gen_random_uuid();
@@ -47,6 +50,10 @@ declare
   v_fencing_token bigint;
   v_expires_at timestamptz;
   v_dependency text;
+  v_request private.execution_requests%rowtype;
+  v_execution_request jsonb;
+  v_created_at_iso text;
+  v_updated_at_iso text;
 begin
   v_actor := private.happy_require_worker_tenant_scope(
     p_worker_principal_id, p_organization_id, p_workspace_id, p_user_id,
@@ -62,7 +69,7 @@ begin
   end if;
 
   -- Stable lock order: mission record, then task record, then lease row.
-  select r.data into v_mission
+  select r.data, r.version into v_mission, v_mission_version
     from public.happy_tenant_records r
    where r.organization_id = p_organization_id
      and r.workspace_id = p_workspace_id
@@ -145,8 +152,16 @@ begin
     end if;
   end loop;
 
+  v_updated_at_iso := to_char(
+    clock_timestamp() at time zone 'UTC',
+    'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+  );
+
   update public.happy_tenant_records
-     set data = jsonb_set(data, '{status}', '"RUNNING"'::jsonb, false),
+     set data = jsonb_set(
+           jsonb_set(data, '{status}', '"RUNNING"'::jsonb, false),
+           '{updatedAt}', to_jsonb(v_updated_at_iso), false
+         ),
          version = version + 1,
          updated_at = clock_timestamp()
    where organization_id = p_organization_id
@@ -157,6 +172,22 @@ begin
      and version = v_task_version;
 
   if not found then raise exception 'TASK_VERSION_CONFLICT' using errcode = '40001'; end if;
+
+  update public.happy_tenant_records
+     set data = jsonb_set(
+           jsonb_set(data, '{status}', '"RUNNING"'::jsonb, false),
+           '{updatedAt}', to_jsonb(v_updated_at_iso), false
+         ),
+         version = version + 1,
+         updated_at = clock_timestamp()
+   where organization_id = p_organization_id
+     and workspace_id = p_workspace_id
+     and user_id = v_actor
+     and entity_type = 'MISSION'
+     and record_id = p_mission_id
+     and version = v_mission_version;
+
+  if not found then raise exception 'MISSION_VERSION_CONFLICT' using errcode = '40001'; end if;
 
   insert into public.happy_mission_task_leases (
     organization_id, workspace_id, user_id, mission_id, task_id,
@@ -182,7 +213,60 @@ begin
 
   if not found then raise exception 'LEASE_HELD' using errcode = '55P03'; end if;
 
-  return query select v_lease_id, v_attempt, v_fencing_token, v_expires_at, v_task_version + 1;
+  -- A worker may claim only a task with one persisted, approved founder-gated
+  -- execution envelope bound to this exact tenant, mission and task.
+  select r.* into v_request
+    from private.execution_requests r
+   where r.organization_id = p_organization_id
+     and r.workspace_id = p_workspace_id
+     and r.requester_user_id = v_actor
+     and r.executor_user_id = v_actor
+     and r.mission_id = p_mission_id
+     and r.task_id = p_task_id
+     and r.status = 'READY'
+     and r.approval_status = 'APPROVED'
+     and r.requires_approval is true
+     and r.risk = 'HIGH'
+     and r.required_approval_role = 'FOUNDER'
+     and r.decided_by is not null
+     and r.decided_by not in (r.requester_user_id, r.executor_user_id)
+     and r.decided_at is not null
+     and r.capability in ('CODE','FILE','API','BROWSER','SHELL','DATABASE','AI','DEPLOYMENT','PUBLISH','AUTOMATION')
+     and r.action is not null and length(btrim(r.action)) > 0
+     and jsonb_typeof(r.input) = 'object'
+     and r.input_digest ~ '^[0-9a-f]{64}
+end;
+$claim$;
+     and r.envelope_digest ~ '^[0-9a-f]{64}
+end;
+$claim$;
+     and r.idempotency_key is not null and length(btrim(r.idempotency_key)) > 0
+   order by r.created_at desc
+   limit 1
+   for update;
+  if not found then
+    raise exception 'PERSISTED_APPROVED_EXECUTION_REQUEST_REQUIRED' using errcode = '42501';
+  end if;
+
+  v_created_at_iso := to_char(
+    v_request.created_at at time zone 'UTC',
+    'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+  );
+  v_execution_request := jsonb_build_object(
+    'id',v_request.request_id,
+    'taskId',v_request.task_id,
+    'missionId',v_request.mission_id,
+    'capability',v_request.capability,
+    'action',v_request.action,
+    'input',v_request.input,
+    'targetReference',v_request.target_reference,
+    'requiresApproval',true,
+    'approved',true,
+    'risk',v_request.risk,
+    'createdAt',v_created_at_iso
+  );
+
+  return query select v_lease_id, v_attempt, v_fencing_token, v_expires_at, v_task_version + 1, v_execution_request;
 end;
 $claim$;
 

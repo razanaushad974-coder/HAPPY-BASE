@@ -3,6 +3,7 @@ import type { ExecutionRequest, ExecutionRisk } from "../execution/types";
 import type {
   WorkerDatabaseBroker,
   WorkerDispatchOutbox,
+  WorkerTaskLease,
   WorkerTenantScope,
 } from "./worker-database-broker";
 import {
@@ -11,6 +12,11 @@ import {
   type ProviderReconciliationEvidenceStore,
   type ReconciliationResult,
 } from "./provider-dispatch-reconciliation";
+import {
+  createExecutionIdempotencyKey,
+  createExecutionPayloadDigest,
+  type MissionTaskLease,
+} from "./durable-scheduler-contract";
 
 export type ProviderDispatchObservation =
   | { kind: "ACKNOWLEDGED"; provider: string; providerRequestId: string; response: unknown }
@@ -41,6 +47,94 @@ export type PersistedDispatchOutcome =
   | { status: "FAILED"; outcome: Record<string, unknown> }
   | { status: "AMBIGUOUS"; outcome: Record<string, unknown> }
   | { status: "RECONCILIATION_REQUIRED"; outcome: Record<string, unknown> };
+
+export type ApprovedTaskEnqueueResult =
+  | { status: "ENQUEUED"; outboxId: string; executionRequestId: string; idempotencyKey: string }
+  | { status: "CLAIM_FAILED" | "APPROVED_REQUEST_INVALID" | "ENQUEUE_RESULT_UNKNOWN"; missionId: string; taskId: string };
+
+/** One bounded task claim and immutable outbox enqueue. Never polls or retries. */
+export async function claimAndEnqueueApprovedTask(input: {
+  broker: Pick<WorkerDatabaseBroker, "claimTask" | "heartbeatLease" | "enqueueDispatch">;
+  tenantScope: WorkerTenantScope;
+  missionId: string;
+  taskId: string;
+  ownerId: string;
+  leaseMilliseconds: number;
+}): Promise<ApprovedTaskEnqueueResult> {
+  const { missionId, taskId } = input;
+  let lease: WorkerTaskLease;
+  try {
+    lease = await input.broker.claimTask({
+      tenantScope: input.tenantScope, missionId, taskId,
+      ownerId: input.ownerId, leaseMilliseconds: input.leaseMilliseconds,
+    });
+  } catch {
+    return { status: "CLAIM_FAILED", missionId, taskId };
+  }
+
+  const request = lease.executionRequest;
+  if (!request || request.missionId !== missionId || request.taskId !== taskId ||
+      request.approved !== true || request.requiresApproval !== true || request.risk !== "HIGH") {
+    return { status: "APPROVED_REQUEST_INVALID", missionId, taskId };
+  }
+
+  try {
+    await input.broker.heartbeatLease({
+      tenantScope: input.tenantScope, missionId, taskId,
+      leaseId: lease.leaseId, ownerId: input.ownerId,
+      fencingToken: lease.fencingToken, leaseMilliseconds: input.leaseMilliseconds,
+    });
+  } catch {
+    return { status: "ENQUEUE_RESULT_UNKNOWN", missionId, taskId };
+  }
+
+  const missionLease: MissionTaskLease = {
+    id: lease.leaseId,
+    scope: input.tenantScope,
+    missionId,
+    taskId,
+    ownerId: input.ownerId,
+    attempt: lease.attempt,
+    fencingToken: lease.fencingToken,
+    expiresAt: lease.expiresAt,
+  };
+  const idempotencyKey = createExecutionIdempotencyKey(missionLease, request);
+  const payloadDigest = createExecutionPayloadDigest(request);
+  const payload = Object.freeze({
+    id: request.id,
+    taskId: request.taskId,
+    missionId: request.missionId,
+    capability: request.capability,
+    action: request.action,
+    input: request.input,
+    targetReference: request.targetReference ?? null,
+    requiresApproval: true,
+    approved: true,
+    risk: request.risk,
+    createdAt: request.createdAt,
+  });
+
+  try {
+    const outbox = await input.broker.enqueueDispatch({
+      tenantScope: input.tenantScope, missionId, taskId,
+      leaseId: lease.leaseId, ownerId: input.ownerId,
+      fencingToken: lease.fencingToken,
+      executionRequestId: request.id,
+      idempotencyKey, capability: request.capability,
+      action: request.action, payloadDigest, payload,
+    });
+    if (outbox.missionId !== missionId || outbox.taskId !== taskId ||
+        outbox.executionRequestId !== request.id || outbox.leaseId !== lease.leaseId ||
+        outbox.fencingToken !== lease.fencingToken || outbox.idempotencyKey !== idempotencyKey ||
+        outbox.payloadDigest !== payloadDigest || outbox.status !== "PENDING") {
+      return { status: "ENQUEUE_RESULT_UNKNOWN", missionId, taskId };
+    }
+    return { status: "ENQUEUED", outboxId: outbox.outboxId, executionRequestId: request.id, idempotencyKey };
+  } catch {
+    // Commit may have succeeded before a transport failure. Never replay blindly.
+    return { status: "ENQUEUE_RESULT_UNKNOWN", missionId, taskId };
+  }
+}
 
 export interface DispatchOutcomeRecorder {
   /** Must be a tenant-authenticated, fenced, one-time database operation. */
