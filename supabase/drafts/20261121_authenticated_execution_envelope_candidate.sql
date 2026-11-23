@@ -2,7 +2,8 @@
 -- Depends on:
 --   20261119_file_mutation_atomic_consume_candidate.sql
 --   20261119_async_tenant_persistence_schema_candidate.sql
---   20261121_authenticated_execution_request_rpc_candidate.sql
+--   Execution-request create/resolve RPCs are defined in this file; the similarly named
+--   20261121_authenticated_execution_request_rpc_candidate.sql is superseded and inert.
 -- Task/mission selectors must resolve to exact same-user, same-tenant
 -- happy_tenant_records rows, with task.missionId and mission.taskIds agreeing.
 -- This persists immutable intent and founder decisions only; it does not dispatch.
