@@ -113,12 +113,24 @@ export async function runNextDurableDispatch(input: {
   identityProvider: TrustedWorkerIdentityResolver;
   provider: IdempotentDispatchProvider;
   reconciliationProvider?: ProviderStatusReader;
+  /** Bounded provider-call deadline; defaults to the current lease duration. */
+  dispatchTimeoutMilliseconds?: number;
+  /** Test/hosting override. Defaults to one third of the lease duration. */
+  heartbeatIntervalMilliseconds?: number;
   now?: () => number;
 }): Promise<DurableDispatchPollResult> {
   if (
     typeof input.ownerId !== "string" || !input.ownerId.trim() ||
     !Number.isSafeInteger(input.leaseMilliseconds) ||
-    input.leaseMilliseconds < 5_000 || input.leaseMilliseconds > 300_000
+    input.leaseMilliseconds < 5_000 || input.leaseMilliseconds > 300_000 ||
+    (input.dispatchTimeoutMilliseconds !== undefined &&
+      (!Number.isSafeInteger(input.dispatchTimeoutMilliseconds) ||
+       input.dispatchTimeoutMilliseconds < 1_000 ||
+       input.dispatchTimeoutMilliseconds > 300_000)) ||
+    (input.heartbeatIntervalMilliseconds !== undefined &&
+      (!Number.isSafeInteger(input.heartbeatIntervalMilliseconds) ||
+       input.heartbeatIntervalMilliseconds < 100 ||
+       input.heartbeatIntervalMilliseconds > Math.floor(input.leaseMilliseconds / 2)))
   ) return { status: "CLAIM_FAILED" };
 
   let outbox: WorkerDispatchOutbox | null;
@@ -207,12 +219,67 @@ export async function runNextDurableDispatch(input: {
       });
     },
   };
+  // Keep the lease alive while a bounded provider request is in flight.
+  // A heartbeat failure or timeout is deliberately converted to an ambiguous
+  // provider result: the side effect may already have happened, so never replay.
+  const heartbeatInterval = input.heartbeatIntervalMilliseconds ??
+    Math.max(1_000, Math.floor(input.leaseMilliseconds / 3));
+  const dispatchTimeout = input.dispatchTimeoutMilliseconds ?? input.leaseMilliseconds;
+  const leaseRenewingProvider: IdempotentDispatchProvider = {
+    providerId: input.provider.providerId,
+    supportsIdempotencyKeys: input.provider.supportsIdempotencyKeys,
+    async dispatch(providerRequest, options) {
+      let heartbeatFailed = false;
+      let heartbeatInFlight: Promise<void> | null = null;
+      const renewLease = (): Promise<void> => {
+        if (heartbeatInFlight) return heartbeatInFlight;
+        heartbeatInFlight = input.broker.heartbeatLease({
+          tenantScope: input.tenantScope,
+          missionId: outbox.missionId,
+          taskId: outbox.taskId,
+          leaseId: outbox.leaseId,
+          ownerId: input.ownerId,
+          fencingToken: outbox.fencingToken,
+          leaseMilliseconds: input.leaseMilliseconds,
+        }).then(() => undefined).catch(() => {
+          heartbeatFailed = true;
+        }).finally(() => {
+          heartbeatInFlight = null;
+        });
+        return heartbeatInFlight;
+      };
+      const heartbeatTimer = setInterval(() => {
+        void renewLease();
+      }, heartbeatInterval);
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const timeout = new Promise<never>((_resolve, reject) => {
+          timeoutHandle = setTimeout(
+            () => reject(new Error("PROVIDER_DISPATCH_TIMEOUT")),
+            dispatchTimeout,
+          );
+        });
+        const observation = await Promise.race([
+          input.provider.dispatch(providerRequest, options),
+          timeout,
+        ]);
+        if (heartbeatInFlight) await heartbeatInFlight;
+        if (heartbeatFailed) throw new Error("LEASE_HEARTBEAT_FAILED_DURING_PROVIDER_CALL");
+        return observation;
+      } finally {
+        clearInterval(heartbeatTimer);
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+        if (heartbeatInFlight) await heartbeatInFlight;
+      }
+    },
+  };
+
   let result: DispatchWorkerResult;
   try {
     result = await dispatchWithTrustedWorkerIdentity(
       input.identityProvider,
       dispatch,
-      input.provider,
+      leaseRenewingProvider,
       recorder,
       input.now,
     );

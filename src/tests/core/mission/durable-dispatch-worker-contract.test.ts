@@ -317,6 +317,82 @@ async function run(): Promise<void> {
   assert(heartbeatCalls === 1 && outcomeCalls === 1 && durableProviderCalls === 1,
     "durable worker lifecycle must heartbeat and persist exactly once");
 
+  // A slow provider call must keep renewing its lease while it is in flight.
+  let slowHeartbeatCalls = 0;
+  let slowOutcome: PersistedDispatchOutcome | undefined;
+  const slowRun = await runNextDurableDispatch({
+    broker: {
+      async claimNextDispatch() { return queuedOutbox; },
+      async heartbeatLease() {
+        slowHeartbeatCalls += 1;
+        return "2026-11-21T10:05:00.000Z";
+      },
+      async recordDispatchOutcome(input) {
+        slowOutcome = { status: input.status, outcome: { ...input.outcome } };
+        return { ...queuedOutbox, status: input.status, outcome: { ...input.outcome } };
+      },
+      async appendReconciliationEvidence() { return "unused"; },
+    },
+    tenantScope,
+    ownerId: "worker-instance-42",
+    leaseMilliseconds: 5_000,
+    heartbeatIntervalMilliseconds: 100,
+    dispatchTimeoutMilliseconds: 2_000,
+    identityProvider: { async getVerifiedWorkerIdentity() { return workerIdentity; } },
+    provider: {
+      providerId: "slow-provider",
+      supportsIdempotencyKeys: true,
+      async dispatch() {
+        await new Promise((resolve) => setTimeout(resolve, 260));
+        return { kind: "ACKNOWLEDGED", provider: "slow-provider", providerRequestId: "slow-remote-1", response: {} };
+      },
+    },
+  });
+  assert(slowRun.status === "PROCESSED" && slowRun.result.status === "RECORDED" &&
+    slowRun.result.outcome === "ACKNOWLEDGED" && slowHeartbeatCalls >= 2,
+  "long-running provider call did not renew its lease while in flight");
+  assert(slowOutcome?.status === "ACKNOWLEDGED",
+    "long-running provider acknowledgement was not persisted");
+
+  // A heartbeat failure during a provider call makes its result ambiguous;
+  // the provider may have completed, so the worker must not report success.
+  let failingHeartbeatCalls = 0;
+  let heartbeatFailureOutcome: PersistedDispatchOutcome | undefined;
+  const heartbeatFailureRun = await runNextDurableDispatch({
+    broker: {
+      async claimNextDispatch() { return queuedOutbox; },
+      async heartbeatLease() {
+        failingHeartbeatCalls += 1;
+        if (failingHeartbeatCalls > 1) throw new Error("lease heartbeat unavailable");
+        return "2026-11-21T10:05:00.000Z";
+      },
+      async recordDispatchOutcome(input) {
+        heartbeatFailureOutcome = { status: input.status, outcome: { ...input.outcome } };
+        return { ...queuedOutbox, status: input.status, outcome: { ...input.outcome } };
+      },
+      async appendReconciliationEvidence() { return "unused"; },
+    },
+    tenantScope,
+    ownerId: "worker-instance-42",
+    leaseMilliseconds: 5_000,
+    heartbeatIntervalMilliseconds: 100,
+    dispatchTimeoutMilliseconds: 2_000,
+    identityProvider: { async getVerifiedWorkerIdentity() { return workerIdentity; } },
+    provider: {
+      providerId: "heartbeat-failure-provider",
+      supportsIdempotencyKeys: true,
+      async dispatch() {
+        await new Promise((resolve) => setTimeout(resolve, 260));
+        return { kind: "ACKNOWLEDGED", provider: "heartbeat-failure-provider", providerRequestId: "late-remote-1", response: {} };
+      },
+    },
+  });
+  assert(heartbeatFailureRun.status === "PROCESSED" &&
+    heartbeatFailureRun.result.status === "RECORDED" &&
+    heartbeatFailureRun.result.outcome === "AMBIGUOUS" &&
+    heartbeatFailureOutcome?.status === "AMBIGUOUS",
+  "lease heartbeat failure was not converted to an ambiguous, non-replayable outcome");
+
   let reconciliationEvidenceCalls = 0;
   const ambiguousOutbox = { ...queuedOutbox, outboxId: "outbox-ambiguous-1", idempotencyKey: "ambiguous-key-1" };
   const ambiguousBroker: Pick<WorkerDatabaseBroker, "claimNextDispatch" | "heartbeatLease" | "recordDispatchOutcome" | "appendReconciliationEvidence"> = {
