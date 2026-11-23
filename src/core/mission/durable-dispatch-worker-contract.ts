@@ -5,6 +5,11 @@ import type {
   WorkerDispatchOutbox,
   WorkerTenantScope,
 } from "./worker-database-broker";
+import {
+  reconcileProviderDispatch,
+  type ProviderStatusReader,
+  type ReconciliationResult,
+} from "./provider-dispatch-reconciliation";
 
 export type ProviderDispatchObservation =
   | { kind: "ACKNOWLEDGED"; provider: string; providerRequestId: string; response: unknown }
@@ -54,7 +59,7 @@ export interface TrustedWorkerIdentityResolver {
 export type DurableDispatchPollResult =
   | { status: "NO_PENDING_DISPATCH" }
   | { status: "CLAIM_FAILED" | "LEASE_RENEWAL_FAILED" | "OUTCOME_PERSISTENCE_FAILED"; outboxId?: string }
-  | { status: "PROCESSED"; outboxId: string; result: DispatchWorkerResult };
+  | { status: "PROCESSED"; outboxId: string; result: DispatchWorkerResult; reconciliation?: ReconciliationResult };
 
 function decodePersistedExecutionRequest(outbox: WorkerDispatchOutbox): ExecutionRequest | null {
   const payload = outbox.payload;
@@ -100,12 +105,13 @@ function decodePersistedExecutionRequest(outbox: WorkerDispatchOutbox): Executio
  * invoke it repeatedly with bounded concurrency and its own shutdown policy.
  */
 export async function runNextDurableDispatch(input: {
-  broker: Pick<WorkerDatabaseBroker, "claimNextDispatch" | "heartbeatLease" | "recordDispatchOutcome">;
+  broker: Pick<WorkerDatabaseBroker, "claimNextDispatch" | "heartbeatLease" | "recordDispatchOutcome" | "appendReconciliationEvidence">;
   tenantScope: WorkerTenantScope;
   ownerId: string;
   leaseMilliseconds: number;
   identityProvider: TrustedWorkerIdentityResolver;
   provider: IdempotentDispatchProvider;
+  reconciliationProvider?: ProviderStatusReader;
   now?: () => number;
 }): Promise<DurableDispatchPollResult> {
   if (
@@ -231,7 +237,46 @@ export async function runNextDurableDispatch(input: {
       return { status: "OUTCOME_PERSISTENCE_FAILED", outboxId: outbox.outboxId };
     }
   }
-  return { status: "PROCESSED", outboxId: outbox.outboxId, result };
+
+  let reconciliation: ReconciliationResult | undefined;
+  if (
+    input.reconciliationProvider &&
+    result.status === "RECORDED" &&
+    (result.outcome === "AMBIGUOUS" || result.outcome === "RECONCILIATION_REQUIRED")
+  ) {
+    const evidenceStore = {
+      async append(evidence: Parameters<import("./provider-dispatch-reconciliation").ProviderReconciliationEvidenceStore["append"]>[0]) {
+        await input.broker.appendReconciliationEvidence({
+          tenantScope: input.tenantScope,
+          outboxId: evidence.outboxId,
+          evidenceId: crypto.randomUUID(),
+          idempotencyKey: evidence.idempotencyKey,
+          providerId: evidence.providerId,
+          observedAt: evidence.observedAt,
+          status: evidence.observation.status,
+          observation: { ...evidence.observation },
+        });
+      },
+    };
+    const observedAt = new Date((input.now ?? Date.now)()).toISOString();
+    reconciliation = await reconcileProviderDispatch(
+      {
+        outboxId: outbox.outboxId,
+        idempotencyKey: outbox.idempotencyKey,
+        providerId: input.reconciliationProvider.providerId,
+        originalOutcome: result.outcome,
+      },
+      input.reconciliationProvider,
+      evidenceStore,
+      observedAt,
+    );
+  }
+  return {
+    status: "PROCESSED",
+    outboxId: outbox.outboxId,
+    result,
+    ...(reconciliation ? { reconciliation } : {}),
+  };
 }
 
 /**
