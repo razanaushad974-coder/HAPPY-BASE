@@ -60,6 +60,7 @@ const broker = {
   },
   heartbeatLease: async () => { brokerCalls += 1; return "2026-11-22T20:00:00.000Z"; },
   enqueueDispatch: async () => { brokerCalls += 1; return {}; },
+  claimNextDispatch: async () => { brokerCalls += 1; return null; },
   claimDispatch: async () => { brokerCalls += 1; return {}; },
   recordDispatchOutcome: async () => { brokerCalls += 1; return {}; },
   appendReconciliationEvidence: async () => { brokerCalls += 1; return "evidence-1"; },
@@ -299,6 +300,29 @@ async function run() {
     now: () => (now + 301) * 1000,
   });
   assert(expired.status === "DENIED", "expired workload identity must be denied");
+
+  const orchestratedPoll = await configuredOrchestrator.runNextWorkerDispatch({
+    tenantScope: {
+      workerPrincipalId: "principal-1",
+      organizationId: "org-1",
+      workspaceId: "ws-1",
+      userId: "user-1",
+    },
+    ownerId: "worker-instance-1",
+    leaseMilliseconds: 30_000,
+    provider: {
+      providerId: "test-provider",
+      supportsIdempotencyKeys: true,
+      async dispatch() {
+        throw new Error("empty queue must not invoke provider");
+      },
+    },
+    now: () => now * 1000,
+  });
+  assert(orchestratedPoll.status === "NO_PENDING_DISPATCH",
+    "mission orchestrator must route worker polling through the durable dispatch runtime");
+  assert(brokerCalls === 2,
+    "orchestrated durable poll must call only the guarded broker facade");
 
   console.log("Worker runtime composition tests: PASS");
 }
