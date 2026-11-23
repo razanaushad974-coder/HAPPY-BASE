@@ -12,8 +12,20 @@ GRANT happy_tenant_scope_rpc_owner TO postgres;
 CREATE SCHEMA happy_tenant_probe;
 GRANT USAGE, CREATE ON SCHEMA happy_tenant_probe TO happy_tenant_scope_rpc_owner;
 GRANT USAGE ON SCHEMA happy_tenant_probe TO authenticated;
-GRANT USAGE ON SCHEMA auth TO happy_tenant_scope_rpc_owner;
-GRANT EXECUTE ON FUNCTION auth.uid() TO happy_tenant_scope_rpc_owner;
+
+CREATE FUNCTION happy_tenant_probe.current_user_id()
+RETURNS uuid
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path=pg_catalog
+AS $current_user$
+  SELECT auth.uid();
+$current_user$;
+REVOKE ALL ON FUNCTION happy_tenant_probe.current_user_id()
+  FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION happy_tenant_probe.current_user_id()
+  TO happy_tenant_scope_rpc_owner;
 
 CREATE TABLE happy_tenant_probe.organizations (
   organization_id uuid PRIMARY KEY,
@@ -120,7 +132,7 @@ AS $scope$
        AND wm.user_id=om.user_id
      WHERE o.organization_id=p_org
        AND w.workspace_id=p_workspace
-       AND om.user_id=auth.uid()
+       AND om.user_id=happy_tenant_probe.current_user_id()
        AND o.status='ACTIVE' AND w.status='ACTIVE'
        AND om.status='ACTIVE' AND wm.status='ACTIVE'
   );
@@ -132,7 +144,7 @@ LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog
 AS $lock$
 DECLARE actor uuid;
 BEGIN
-  actor:=auth.uid();
+  actor:=happy_tenant_probe.current_user_id();
   IF actor IS NULL THEN RETURN false; END IF;
 
   PERFORM 1 FROM happy_tenant_probe.organizations
@@ -154,17 +166,17 @@ $lock$;
 
 CREATE POLICY tenant_owner_select ON happy_tenant_probe.tenant_records
   FOR SELECT TO happy_tenant_scope_rpc_owner
-  USING (user_id=auth.uid() AND happy_tenant_probe.has_active_scope(organization_id,workspace_id));
+  USING (user_id=happy_tenant_probe.current_user_id() AND happy_tenant_probe.has_active_scope(organization_id,workspace_id));
 CREATE POLICY tenant_owner_insert ON happy_tenant_probe.tenant_records
   FOR INSERT TO happy_tenant_scope_rpc_owner
-  WITH CHECK (user_id=auth.uid() AND version=1 AND happy_tenant_probe.has_active_scope(organization_id,workspace_id));
+  WITH CHECK (user_id=happy_tenant_probe.current_user_id() AND version=1 AND happy_tenant_probe.has_active_scope(organization_id,workspace_id));
 CREATE POLICY tenant_owner_update ON happy_tenant_probe.tenant_records
   FOR UPDATE TO happy_tenant_scope_rpc_owner
-  USING (user_id=auth.uid() AND happy_tenant_probe.has_active_scope(organization_id,workspace_id))
-  WITH CHECK (user_id=auth.uid() AND happy_tenant_probe.has_active_scope(organization_id,workspace_id));
+  USING (user_id=happy_tenant_probe.current_user_id() AND happy_tenant_probe.has_active_scope(organization_id,workspace_id))
+  WITH CHECK (user_id=happy_tenant_probe.current_user_id() AND happy_tenant_probe.has_active_scope(organization_id,workspace_id));
 CREATE POLICY tenant_owner_delete ON happy_tenant_probe.tenant_records
   FOR DELETE TO happy_tenant_scope_rpc_owner
-  USING (user_id=auth.uid() AND happy_tenant_probe.has_active_scope(organization_id,workspace_id));
+  USING (user_id=happy_tenant_probe.current_user_id() AND happy_tenant_probe.has_active_scope(organization_id,workspace_id));
 
 CREATE FUNCTION happy_tenant_probe.create_record(p_org uuid,p_workspace uuid,p_type text,p_id text,p_data jsonb)
 RETURNS happy_tenant_probe.tenant_records
@@ -172,7 +184,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog
 AS $create$
 DECLARE actor uuid; result happy_tenant_probe.tenant_records%rowtype;
 BEGIN
-  actor:=auth.uid();
+  actor:=happy_tenant_probe.current_user_id();
   IF actor IS NULL OR NOT happy_tenant_probe.lock_active_scope(p_org,p_workspace) THEN
     RAISE EXCEPTION 'TENANT_SCOPE_DENIED' USING ERRCODE='42501';
   END IF;
@@ -190,7 +202,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog
 AS $update$
 DECLARE actor uuid; result happy_tenant_probe.tenant_records%rowtype; exists_row boolean;
 BEGIN
-  actor:=auth.uid();
+  actor:=happy_tenant_probe.current_user_id();
   IF actor IS NULL OR NOT happy_tenant_probe.lock_active_scope(p_org,p_workspace) THEN
     RAISE EXCEPTION 'TENANT_SCOPE_DENIED' USING ERRCODE='42501';
   END IF;
@@ -216,7 +228,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog
 AS $delete$
 DECLARE actor uuid; exists_row boolean;
 BEGIN
-  actor:=auth.uid();
+  actor:=happy_tenant_probe.current_user_id();
   IF actor IS NULL OR NOT happy_tenant_probe.lock_active_scope(p_org,p_workspace) THEN
     RAISE EXCEPTION 'TENANT_SCOPE_DENIED' USING ERRCODE='42501';
   END IF;
@@ -248,7 +260,7 @@ GRANT EXECUTE ON FUNCTION happy_tenant_probe.create_record(uuid,uuid,text,text,j
 GRANT EXECUTE ON FUNCTION happy_tenant_probe.update_record(uuid,uuid,text,text,bigint,jsonb) TO authenticated;
 GRANT EXECUTE ON FUNCTION happy_tenant_probe.delete_record(uuid,uuid,text,text,bigint) TO authenticated;
 
--- User identity is supplied only through the JWT subject setting, as auth.uid() reads it.
+-- User identity is supplied only through the JWT subject setting, as happy_tenant_probe.current_user_id() reads it.
 SELECT set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000004',true);
 SET LOCAL ROLE authenticated;
 
@@ -262,7 +274,7 @@ BEGIN
     '00000000-0000-0000-0000-000000000003',
     'MISSION','mission-1','{"status":"READY"}'::jsonb
   );
-  IF created.version<>1 OR created.user_id<>auth.uid() THEN
+  IF created.version<>1 OR created.user_id<>'00000000-0000-0000-0000-000000000004'::uuid THEN
     RAISE EXCEPTION 'create path failed';
   END IF;
 
