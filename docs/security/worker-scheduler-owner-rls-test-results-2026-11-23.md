@@ -31,15 +31,22 @@ The scheduler privilege candidate scopes:
 
 PostgreSQL permissive RLS policies combine with OR. A worker principal that has both CONTROL and VERIFY satisfies the CONTROL outbox UPDATE policy as well as the VERIFY lock policy. That is expected: such a principal is authorized for CONTROL. The focused test therefore uses a VERIFY-only principal to prove that VERIFY alone cannot mutate outbox rows. The separate function EXECUTE grants still determine which RPCs a worker LOGIN can invoke.
 
-An extended full scheduler matrix script was added, but the SQL runner disconnected before returning a result on its corrected full-batch attempt. It is **not counted as passed**:
-- `scripts/security/test-worker-scheduler-owner-grants.sql`
+**PASS — extended synthetic CONTROL/VERIFY scheduler owner matrix completed on Supabase PostgreSQL 17.12.**
+
+- Script: `scripts/security/test-worker-scheduler-owner-grants.sql`
+- The complete 342-line transaction executed without SQL error.
+- CONTROL cycle: tenant scope verified; mission/task snapshot locked and CAS-updated; lease inserted; founder-approved request moved READY → RUNNING; outbox inserted and advanced PENDING → DISPATCHED → AMBIGUOUS.
+- The synthetic registry capability was then reduced to VERIFY only.
+- VERIFY cycle: ambiguous outbox row was locked with `FOR SHARE`; attempted outbox UPDATE was rejected; reconciliation evidence was inserted and read successfully.
+- Role attribute assertions passed: scheduler owner remained NOLOGIN, NOINHERIT, NOBYPASSRLS, NOSUPERUSER, NOCREATEROLE, NOCREATEDB, and NOREPLICATION; no API role membership in the scheduler owner.
+- The test intentionally models the worker DB identity with `session_user=postgres` inside a rollback-only synthetic fixture. It does **not** prove a dedicated worker LOGIN or Supabase pooler identity preservation.
 
 ## Remaining gates
 
-- Re-run the extended CONTROL lifecycle matrix in a local PostgreSQL 17 harness or a supported isolated database session.
+- Validate exact table/column grants against the real HAPPY scheduler tables after a reviewed staging migration chain exists.
 - Validate exact table/column grants against the real HAPPY scheduler tables after a reviewed staging migration chain exists.
 - Test worker LOGIN identity through the actual Supabase pooler and verify `session_user` is preserved.
 - Verify role-specific EXECUTE grants against registered dedicated worker LOGIN roles.
 - Test lease fencing, late provider responses, outbox crash recovery, revocation and tenant isolation under concurrent sessions.
 
-**Disposition: PARTIAL PASS — the focused VERIFY-only lock/mutation boundary passed. The full worker scheduler owner matrix and actual hosted worker identity remain unverified. No role, grant, migration, or worker credential was persisted.**
+**Disposition: SYNTHETIC MATRIX PASS — both focused VERIFY-only and extended CONTROL/VERIFY lifecycle probes passed on hosted PostgreSQL 17.12, with rollback and post-test catalog verification confirming zero residual probe roles, schema, or application tables. Actual HAPPY schema integration, dedicated worker LOGIN, Supabase pooler `session_user`, and live worker identity remain unverified. No role, grant, migration, or worker credential was persisted.**
