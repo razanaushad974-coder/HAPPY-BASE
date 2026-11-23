@@ -84,7 +84,7 @@ begin
 
   if coalesce(v_mission->>'status','') not in ('READY','RUNNING','VERIFYING')
      or v_task->>'missionId' is distinct from p_mission_id
-     or coalesce(v_task->>'status','') not in ('READY','RUNNING')
+     or coalesce(v_task->>'status','') not in ('PENDING','READY','RUNNING')
      or jsonb_typeof(v_mission->'taskIds') <> 'array'
      or not ((v_mission->'taskIds') ? p_task_id) then
     raise exception 'TASK_NOT_ELIGIBLE' using errcode = '55000';
