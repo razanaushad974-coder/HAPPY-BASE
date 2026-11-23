@@ -1,15 +1,10 @@
 -- Disposable Supabase PostgreSQL 17 function-owner / RLS probe.
 -- Run only on an isolated Supabase test project as its database administrator.
 -- All roles, schemas, tables, functions, grants and membership changes roll back.
--- The trusted postgres admin is temporarily made a member solely to transfer
--- function ownership; no API role or worker login is made a member of the owner.
 BEGIN;
 
 CREATE ROLE happy_owner_probe
   NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
-
--- Supabase's hosted postgres role is not SUPERUSER. Membership is needed to
--- transfer function ownership and is contained entirely in this transaction.
 GRANT happy_owner_probe TO postgres;
 
 CREATE SCHEMA happy_owner_probe;
@@ -22,14 +17,19 @@ INSERT INTO happy_owner_probe.records (id, tenant_id) VALUES (1, 'tenant-a');
 
 ALTER TABLE happy_owner_probe.records ENABLE ROW LEVEL SECURITY;
 CREATE POLICY happy_owner_probe_select
-  ON happy_owner_probe.records
-  FOR SELECT TO happy_owner_probe
+  ON happy_owner_probe.records FOR SELECT TO happy_owner_probe
   USING (tenant_id = 'tenant-a');
+CREATE POLICY happy_owner_probe_lock_only
+  ON happy_owner_probe.records FOR UPDATE TO happy_owner_probe
+  USING (tenant_id = 'tenant-a')
+  WITH CHECK (false);
 
 GRANT USAGE, CREATE ON SCHEMA happy_owner_probe TO happy_owner_probe;
 GRANT USAGE ON SCHEMA happy_owner_probe TO authenticated;
-GRANT SELECT ON happy_owner_probe.records TO happy_owner_probe;
-GRANT UPDATE (lock_marker) ON happy_owner_probe.records TO happy_owner_probe;
+GRANT SELECT (id, tenant_id, lock_marker)
+  ON happy_owner_probe.records TO happy_owner_probe;
+GRANT UPDATE (lock_marker)
+  ON happy_owner_probe.records TO happy_owner_probe;
 
 CREATE FUNCTION happy_owner_probe.lock_and_check()
 RETURNS boolean
@@ -40,21 +40,26 @@ AS $function$
 DECLARE
   affected bigint;
 BEGIN
-  -- UPDATE privilege is required for FOR SHARE, but an UPDATE RLS policy is not.
   PERFORM id
     FROM happy_owner_probe.records
    WHERE id = 1
+     AND tenant_id = 'tenant-a'
    FOR SHARE;
-
-  -- No UPDATE policy exists; RLS must filter this to zero rows.
-  UPDATE happy_owner_probe.records
-     SET lock_marker = true
-   WHERE id = 1;
-  GET DIAGNOSTICS affected = ROW_COUNT;
-
-  IF affected <> 0 THEN
-    RAISE EXCEPTION 'FAIL: owner mutated a row without an UPDATE RLS policy';
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'FAIL: function owner could not lock visible row';
   END IF;
+
+  BEGIN
+    UPDATE happy_owner_probe.records
+       SET lock_marker = true
+     WHERE id = 1
+       AND tenant_id = 'tenant-a';
+    GET DIAGNOSTICS affected = ROW_COUNT;
+    RAISE EXCEPTION 'FAIL: owner UPDATE unexpectedly completed; affected=%', affected;
+  EXCEPTION
+    WHEN insufficient_privilege THEN
+      NULL;
+  END;
   RETURN true;
 END
 $function$;
@@ -64,7 +69,6 @@ REVOKE CREATE ON SCHEMA happy_owner_probe FROM happy_owner_probe;
 REVOKE ALL ON FUNCTION happy_owner_probe.lock_and_check() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION happy_owner_probe.lock_and_check() TO authenticated;
 
--- The API caller executes the function, but is not a member of the owner role.
 SET LOCAL ROLE authenticated;
 DO $execute$
 BEGIN
