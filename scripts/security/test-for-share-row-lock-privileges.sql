@@ -1,16 +1,19 @@
--- Disposable PostgreSQL 17 privilege probe.
--- Run only on a throwaway database as a database administrator.
+-- Disposable PostgreSQL 17 / Supabase privilege probe.
+-- Run only on an isolated test database as a database administrator.
+-- Uses Supabase's built-in authenticated role so SET LOCAL ROLE is supported.
 -- Entire test rolls back. Creates no persistent objects.
 BEGIN;
 
-DO $$
+DO $preflight$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'happy_for_share_probe') THEN
-    CREATE ROLE happy_for_share_probe
-      NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'authenticated') THEN
+    RAISE EXCEPTION 'Missing Supabase authenticated role; use a Supabase test database';
+  END IF;
+  IF NOT pg_catalog.pg_has_role(current_user, 'authenticated', 'MEMBER') THEN
+    RAISE EXCEPTION 'Current database role cannot SET ROLE authenticated';
   END IF;
 END
-$$;
+$preflight$;
 
 CREATE SCHEMA happy_for_share_probe;
 CREATE TABLE happy_for_share_probe.scope_rows (
@@ -23,15 +26,15 @@ INSERT INTO happy_for_share_probe.scope_rows (id, tenant_id) VALUES (1, 'tenant-
 ALTER TABLE happy_for_share_probe.scope_rows ENABLE ROW LEVEL SECURITY;
 CREATE POLICY happy_for_share_probe_select
   ON happy_for_share_probe.scope_rows
-  FOR SELECT TO happy_for_share_probe
+  FOR SELECT TO authenticated
   USING (tenant_id = 'tenant-a');
 
-GRANT USAGE ON SCHEMA happy_for_share_probe TO happy_for_share_probe;
-GRANT SELECT ON happy_for_share_probe.scope_rows TO happy_for_share_probe;
+GRANT USAGE ON SCHEMA happy_for_share_probe TO authenticated;
+GRANT SELECT ON happy_for_share_probe.scope_rows TO authenticated;
 
 -- Probe A: SELECT + RLS SELECT policy, but no UPDATE privilege.
--- PostgreSQL is expected to reject SELECT ... FOR SHARE with insufficient_privilege.
-SET LOCAL ROLE happy_for_share_probe;
+-- PostgreSQL should reject SELECT ... FOR SHARE with insufficient_privilege.
+SET LOCAL ROLE authenticated;
 DO $probe$
 BEGIN
   BEGIN
@@ -49,10 +52,10 @@ $probe$;
 RESET ROLE;
 
 -- Probe B: grant UPDATE on one inert marker column, but do not create an UPDATE
--- RLS policy. The role can acquire the row lock, while UPDATE remains blocked by RLS.
-GRANT UPDATE (lock_marker) ON happy_for_share_probe.scope_rows TO happy_for_share_probe;
+-- RLS policy. The role can acquire the row lock, while UPDATE must affect zero rows.
+GRANT UPDATE (lock_marker) ON happy_for_share_probe.scope_rows TO authenticated;
 
-SET LOCAL ROLE happy_for_share_probe;
+SET LOCAL ROLE authenticated;
 DO $probe$
 DECLARE
   affected bigint;
