@@ -29,9 +29,10 @@ GRANT SELECT (organization_id, user_id, status)
 GRANT SELECT (organization_id, workspace_id, user_id, status)
   ON private.workspace_memberships TO happy_worker_registry_owner;
 
--- FOR SHARE needs an UPDATE SQL privilege, but no UPDATE RLS policy.
--- These column grants exist only for row-lock syntax. Do not create any
--- UPDATE policy for happy_worker_registry_owner on these six tables.
+-- FOR SHARE needs an UPDATE SQL privilege and an UPDATE RLS policy whose
+-- USING expression admits the row. The matching lock-only policies in the
+-- registry candidate use USING (true) WITH CHECK (false), so mutations fail.
+-- These column grants exist only for row-lock syntax. Never widen WITH CHECK.
 GRANT UPDATE (enabled)
   ON private.happy_worker_principal_registry TO happy_worker_registry_owner;
 GRANT UPDATE (enabled)
@@ -62,9 +63,9 @@ REVOKE ALL ON FUNCTION private.happy_require_worker_principal(text)
 REVOKE ALL ON FUNCTION private.happy_require_worker_tenant_scope(uuid,uuid,uuid,uuid,text)
   FROM public, anon, authenticated, service_role;
 
--- This owner must not have an UPDATE policy: column UPDATE grants above are
--- only row-lock capabilities. The absence of UPDATE policies makes row
--- mutation fail closed under RLS.
+-- The only UPDATE policies for this owner must be lock-only:
+-- USING (true) WITH CHECK (false). This lets FOR SHARE see and lock a row,
+-- while every UPDATE fails its new-row check. Any broader policy is a blocker.
 DO $assert$
 DECLARE
   v_bad_policy text;
@@ -86,10 +87,14 @@ BEGIN
        'public' = ANY(roles)
        OR 'happy_worker_registry_owner' = ANY(roles)
      )
+     AND (
+       coalesce(qual, '') <> 'true'
+       OR coalesce(with_check, '') <> 'false'
+     )
    LIMIT 1;
 
   IF v_bad_policy IS NOT NULL THEN
-    RAISE EXCEPTION 'Unexpected UPDATE RLS policy for registry owner: %', v_bad_policy;
+    RAISE EXCEPTION 'Non-lock-only UPDATE RLS policy for registry owner: %', v_bad_policy;
   END IF;
 
   IF has_table_privilege('happy_worker_registry_owner',
