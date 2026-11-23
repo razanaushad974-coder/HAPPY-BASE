@@ -106,4 +106,42 @@ if ! grep -q "session_user" "$REGISTRY_FILE" || ! grep -q "happy_require_worker_
   exit 1
 fi
 
-echo "PASS: eight worker scheduler RPC drafts are tenant-bound, human-JWT independent, SECURITY DEFINER, and have no EXECUTE grants."
+
+GRANT_FILE="$ROOT_DIR/supabase/drafts/20261123_worker_scheduler_rpc_grant_candidate.sql"
+test -s "$GRANT_FILE"
+
+# EXECUTE grants live in a separate operator-reviewed candidate. Verify exact
+# CONTROL/VERIFY separation and reject broad/public API grants.
+for rpc in \
+  happy_worker_claim_mission_task \
+  happy_worker_enqueue_mission_dispatch \
+  happy_worker_heartbeat_mission_task_lease \
+  happy_worker_claim_dispatch_outbox \
+  happy_worker_claim_next_dispatch_outbox \
+  happy_worker_record_dispatch_outcome; do
+  if ! grep -q "grant execute on function private.$rpc" "$GRANT_FILE"; then
+    echo "Missing capability-scoped CONTROL grant: $rpc" >&2
+    exit 1
+  fi
+done
+
+for rpc in \
+  happy_worker_append_dispatch_reconciliation_evidence \
+  happy_worker_list_dispatch_reconciliation_evidence; do
+  if ! grep -q "grant execute on function private.$rpc" "$GRANT_FILE"; then
+    echo "Missing capability-scoped VERIFY grant: $rpc" >&2
+    exit 1
+  fi
+done
+
+if grep -Eiq 'grant execute on function private\.happy_worker_.* to (public|anon|authenticated|service_role)' "$GRANT_FILE"; then
+  echo "Worker scheduler grants must never target PUBLIC or API roles." >&2
+  exit 1
+fi
+
+if grep -Eiq 'grant (select|insert|update|delete|all) on (all )?tables' "$GRANT_FILE"; then
+  echo "Worker scheduler grant candidate must not grant table access." >&2
+  exit 1
+fi
+
+echo "PASS: eight worker scheduler RPC drafts are tenant-bound, human-JWT independent, SECURITY DEFINER, and have only a separate capability-scoped grant candidate."
