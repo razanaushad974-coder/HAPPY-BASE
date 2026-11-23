@@ -270,7 +270,7 @@ begin
      or p_workspace_id is null
      or p_user_id is null
      or p_required_capability is null
-     or p_required_capability not in ('API','BROWSER','FILE','DATABASE','DEPLOY','PUBLISH','CONTROL','VERIFY') then
+     or p_required_capability not in ('CODE','FILE','API','BROWSER','SHELL','DATABASE','AI','DEPLOYMENT','PUBLISH','AUTOMATION','DEPLOY','CONTROL','VERIFY') then
     raise exception 'INVALID_WORKER_TENANT_SCOPE' using errcode = '22023';
   end if;
 
