@@ -8,6 +8,8 @@ set -euo pipefail
 : "${PGDATABASE:?PGDATABASE is required}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+IDENTITY_BASELINE_FILE="$ROOT_DIR/supabase/drafts/20261123_canonical_tenant_identity_schema_candidate.sql"
+EXECUTION_REQUEST_BASE_FILE="$ROOT_DIR/supabase/drafts/20261123_execution_request_base_schema_candidate.sql"
 SCHEMA_FILE="$ROOT_DIR/supabase/drafts/20261119_async_tenant_persistence_schema_candidate.sql"
 SCHEDULER_SCHEMA_FILE="$ROOT_DIR/supabase/drafts/20261121_durable_mission_scheduler_candidate.sql"
 TENANT_SCOPE_OWNER_ROLE_FILE="$ROOT_DIR/supabase/drafts/20261123_tenant_scope_rpc_owner_role_candidate.sql"
@@ -16,11 +18,10 @@ EXECUTION_CREATE_OWNER_ROLE_FILE="$ROOT_DIR/supabase/drafts/20261123_execution_r
 EXECUTION_CREATE_OWNER_PRIVILEGE_FILE="$ROOT_DIR/supabase/drafts/20261123_execution_request_create_owner_privilege_candidate.sql"
 EXECUTION_DECISION_OWNER_ROLE_FILE="$ROOT_DIR/supabase/drafts/20261123_execution_request_decision_owner_role_candidate.sql"
 EXECUTION_DECISION_OWNER_PRIVILEGE_FILE="$ROOT_DIR/supabase/drafts/20261123_execution_request_decision_owner_privilege_candidate.sql"
-EXECUTION_REQUEST_RPC_FILE="$ROOT_DIR/supabase/drafts/20261121_authenticated_execution_request_rpc_candidate.sql"
 EXECUTION_ENVELOPE_FILE="$ROOT_DIR/supabase/drafts/20261121_authenticated_execution_envelope_candidate.sql"
 RACE_SCRIPT="$ROOT_DIR/scripts/security/postgres-tenant-cas-concurrency.sh"
 RECONCILIATION_RACE_SCRIPT="$ROOT_DIR/scripts/security/postgres-reconciliation-evidence-concurrency.sh"
-for required_file in "$SCHEMA_FILE" "$SCHEDULER_SCHEMA_FILE" "$TENANT_SCOPE_OWNER_ROLE_FILE" "$TENANT_SCOPE_OWNER_PRIVILEGE_FILE" "$EXECUTION_CREATE_OWNER_ROLE_FILE" "$EXECUTION_CREATE_OWNER_PRIVILEGE_FILE" "$EXECUTION_DECISION_OWNER_ROLE_FILE" "$EXECUTION_DECISION_OWNER_PRIVILEGE_FILE" "$EXECUTION_REQUEST_RPC_FILE" "$EXECUTION_ENVELOPE_FILE" "$RACE_SCRIPT" "$RECONCILIATION_RACE_SCRIPT"; do
+for required_file in "$IDENTITY_BASELINE_FILE" "$EXECUTION_REQUEST_BASE_FILE" "$SCHEMA_FILE" "$SCHEDULER_SCHEMA_FILE" "$TENANT_SCOPE_OWNER_ROLE_FILE" "$TENANT_SCOPE_OWNER_PRIVILEGE_FILE" "$EXECUTION_CREATE_OWNER_ROLE_FILE" "$EXECUTION_CREATE_OWNER_PRIVILEGE_FILE" "$EXECUTION_DECISION_OWNER_ROLE_FILE" "$EXECUTION_DECISION_OWNER_PRIVILEGE_FILE" "$EXECUTION_ENVELOPE_FILE" "$RACE_SCRIPT" "$RECONCILIATION_RACE_SCRIPT"; do
   if [[ ! -f "$required_file" ]]; then
     echo "Required tenant persistence test file not found: $required_file" >&2
     exit 1
@@ -81,84 +82,44 @@ as $current_user$
   select auth.uid();
 $current_user$;
 
-create table private.organizations (
-  organization_id uuid primary key,
-  status text not null check (status in ('ACTIVE','SUSPENDED','REVOKED'))
-);
-create table private.workspaces (
-  workspace_id uuid primary key,
-  organization_id uuid not null references private.organizations(organization_id),
-  status text not null check (status in ('ACTIVE','SUSPENDED','REVOKED')),
-  unique (organization_id, workspace_id)
-);
-create table private.organization_memberships (
-  organization_id uuid not null references private.organizations(organization_id),
-  user_id uuid not null references auth.users(id),
-  status text not null check (status in ('ACTIVE','SUSPENDED','REVOKED')),
-  role text not null,
-  primary key (organization_id, user_id)
-);
-create table private.workspace_memberships (
-  organization_id uuid not null,
-  workspace_id uuid not null,
-  user_id uuid not null references auth.users(id),
-  status text not null check (status in ('ACTIVE','SUSPENDED','REVOKED')),
-  role text not null,
-  primary key (organization_id, workspace_id, user_id),
-  foreign key (organization_id, workspace_id)
-    references private.workspaces(organization_id, workspace_id)
-);
-create table private.execution_requests (
-  request_id text primary key,
-  task_id text not null,
-  mission_id text not null,
-  requester_user_id uuid not null references auth.users(id),
-  executor_user_id uuid not null references auth.users(id),
-  organization_id uuid not null references private.organizations(organization_id),
-  workspace_id uuid not null,
-  status text not null check (status in ('READY','CANCELLED','COMPLETED')),
-  foreign key (organization_id, workspace_id)
-    references private.workspaces(organization_id, workspace_id)
-);
+SQL
 
+# Apply the exact isolated design drafts used by the staging dependency plan.
+# This is a disposable PostgreSQL CI database, not the hosted staging project.
+"${psql_base[@]}" -f "$IDENTITY_BASELINE_FILE"
+"${psql_base[@]}" -f "$EXECUTION_REQUEST_BASE_FILE"
+
+"${psql_base[@]}" <<'SQL'
 insert into auth.users(id) values
   ('30000000-0000-4000-8000-000000000003'),
   ('40000000-0000-4000-8000-000000000004'),
   ('50000000-0000-4000-8000-000000000005');
-insert into private.organizations values
+insert into private.organizations(organization_id,status) values
   ('10000000-0000-4000-8000-000000000001', 'ACTIVE');
-insert into private.workspaces values
+insert into private.workspaces(workspace_id,organization_id,status) values
   ('20000000-0000-4000-8000-000000000002',
    '10000000-0000-4000-8000-000000000001', 'ACTIVE');
-insert into private.organization_memberships values
+insert into private.organization_memberships(organization_id,user_id,status,role) values
   ('10000000-0000-4000-8000-000000000001',
    '30000000-0000-4000-8000-000000000003', 'ACTIVE', 'MEMBER'),
   ('10000000-0000-4000-8000-000000000001',
    '40000000-0000-4000-8000-000000000004', 'ACTIVE', 'FOUNDER'),
   ('10000000-0000-4000-8000-000000000001',
    '50000000-0000-4000-8000-000000000005', 'ACTIVE', 'MEMBER');
-insert into private.workspace_memberships values
+insert into private.workspace_memberships(organization_id,workspace_id,user_id,status,role) values
   ('10000000-0000-4000-8000-000000000001',
    '20000000-0000-4000-8000-000000000002',
    '30000000-0000-4000-8000-000000000003', 'ACTIVE', 'MEMBER'),
   ('10000000-0000-4000-8000-000000000001',
    '20000000-0000-4000-8000-000000000002',
    '40000000-0000-4000-8000-000000000004', 'ACTIVE', 'FOUNDER'),
-  ('10000000-0000-4000-8000-000000000001',
+  ('10000000-0000-4000-8000-000000000005',
    '20000000-0000-4000-8000-000000000002',
    '50000000-0000-4000-8000-000000000005', 'REVOKED', 'MEMBER');
-
-alter table private.organizations enable row level security;
-alter table private.workspaces enable row level security;
-alter table private.organization_memberships enable row level security;
-alter table private.workspace_memberships enable row level security;
-revoke all on schema private from public, anon, authenticated;
-revoke all on all tables in schema private from public, anon, authenticated;
-grant usage on schema private to service_role;
-grant select, insert, update on private.organizations, private.workspaces,
-  private.organization_memberships, private.workspace_memberships,
-  private.execution_requests to service_role;
-insert into private.execution_requests values
+insert into private.execution_requests(
+  request_id,task_id,mission_id,requester_user_id,executor_user_id,
+  organization_id,workspace_id,status
+) values
   ('request-for-executor','task-1','mission-1',
    '40000000-0000-4000-8000-000000000004',
    '30000000-0000-4000-8000-000000000003',
@@ -178,7 +139,6 @@ SQL
 
 "${psql_base[@]}" -f "$SCHEMA_FILE"
 "${psql_base[@]}" -f "$SCHEDULER_SCHEMA_FILE"
-"${psql_base[@]}" -f "$EXECUTION_REQUEST_RPC_FILE"
 "${psql_base[@]}" -f "$EXECUTION_ENVELOPE_FILE"
 "${psql_base[@]}" -f "$EXECUTION_CREATE_OWNER_ROLE_FILE"
 "${psql_base[@]}" -f "$EXECUTION_DECISION_OWNER_ROLE_FILE"
