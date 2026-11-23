@@ -39,6 +39,31 @@ The corrected PostgreSQL 17.12 probe established:
 
 The first probe did not assert `FOUND` and its initial interpretation was wrong. The corrected tests now assert the row was actually returned/locked and verify the mutation is rejected. The six worker-registry UPDATE policies are now lock-only (`USING (true) WITH CHECK (false)`), not absent and not `WITH CHECK (true)`. A six-table synthetic fixture has passed with the exact proposed SELECT columns and column-level UPDATE grants.
 
+## Six-table worker registry privilege matrix probe
+
+A second committed script, `scripts/security/test-worker-registry-owner-grants.sql`, also completed successfully on the same PostgreSQL 17.12 staging database in a rollback-only transaction.
+
+It modeled the exact six registry/scope tables and the proposed column grants:
+
+| Table | SELECT columns | Lock UPDATE column |
+|---|---|---|
+| `happy_worker_principal_registry` | principal ID, DB login role, issuer, subject, audience, environment, capabilities, enabled, activated_at, revoked_at | enabled |
+| `happy_worker_tenant_grants` | principal ID, organization ID, workspace ID, user ID, capabilities, enabled | enabled |
+| `organizations` | organization ID, status | status |
+| `workspaces` | organization ID, workspace ID, status | status |
+| `organization_memberships` | organization ID, user ID, status | status |
+| `workspace_memberships` | organization ID, workspace ID, user ID, status | status |
+
+For all six tables, the test asserted:
+- the NOLOGIN/NONINHERIT/NOBYPASSRLS owner could find and lock the intended row using `FOR SHARE`;
+- the lock-only UPDATE policy used `USING (true) WITH CHECK (false)`;
+- attempted UPDATE operations were rejected;
+- API roles were not members of the owner role.
+
+The script blob SHA was `fa3d58d9a8ce196b0af41ec522d2f057f707c043`. A final catalog check confirmed both probe roles and all five probe schemas were absent after rollback.
+
+This validates the proposed registry-owner privilege pattern against a six-table synthetic fixture. It is not yet a test against the actual HAPPY tables, because the staging project intentionally has no HAPPY schema or migrations.
+
 ## Remaining blockers — not resolved by this probe
 
 1. Derive exact SELECT columns, row-lock UPDATE columns, and actual UPDATE columns for each of the five function-owner roles from every function body, including `SELECT * INTO rowtype`, `RETURNING`, conflict handling, triggers, and nested helper calls.
