@@ -101,7 +101,7 @@ Before producing migration SQL:
 1. Extract every table definition, constraint, RLS policy, trigger, and function signature from the prerequisite candidates.
 2. Build per-function column-level access lists, including implicit RETURNING, conflict handling, row locks and trigger side effects.
 3. Run disposable PostgreSQL 17.12 tests for each owner role with NOBYPASSRLS and the proposed exact grants. Assert both intended success and forbidden operations.
-4. Test whether `SELECT ... FOR SHARE` works with the proposed least-privilege grants; document the minimum required privilege from observed PostgreSQL behavior.
+4. **Completed for the isolated privilege pattern:** hosted PostgreSQL 17.12 confirms `FOR SHARE` needs SELECT plus an UPDATE SQL privilege but no UPDATE RLS policy. Reuse this only as a proven primitive; exact grants on actual HAPPY tables still require per-function tests.
 5. Test concurrent membership revocation against tenant scope locks and approval decisions.
 6. Only then write ordered Supabase migration files using the repository's pinned Supabase CLI workflow. Keep all worker RPC EXECUTE grants withheld until dedicated `session_user` identity is proven through the actual hosted connection path.
 
@@ -111,4 +111,4 @@ Before producing migration SQL:
 - No production database, deployment, or project was modified.
 - This inventory is not a deployment approval and is not a deployable SQL script.
 
-**Disposition: BLOCKED — exact column grants and non-bypass owner behavior still require disposable PostgreSQL 17.12 verification.**
+**Disposition: PARTIAL PASS — PostgreSQL 17.12 row-lock semantics and a NOLOGIN/NOBYPASSRLS SECURITY DEFINER owner pattern passed rollback-only staging probes. Exact HAPPY table/column grants, scheduler write policies, and concurrent revocation tests remain BLOCKED.**
