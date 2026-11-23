@@ -77,7 +77,6 @@ function decodePersistedExecutionRequest(outbox: WorkerDispatchOutbox): Executio
 
   return Object.freeze({
     id: payload.id,
-    requestId: payload.id,
     missionId: payload.missionId,
     taskId: payload.taskId,
     capability: payload.capability,
