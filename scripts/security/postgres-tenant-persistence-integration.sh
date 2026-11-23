@@ -215,15 +215,71 @@ begin
     raise exception 'execution request owner role provisioning incomplete';
   end if;
 
+  -- INSERT is intentionally column-scoped in the privilege candidate.
+  -- has_table_privilege(..., 'INSERT') must therefore be false; verify every
+  -- allowed column directly and reject any INSERT privilege on other columns.
   if not has_table_privilege('happy_execution_request_create_rpc_owner',
       'private.execution_requests', 'SELECT')
-     or not has_table_privilege('happy_execution_request_create_rpc_owner',
+     or has_table_privilege('happy_execution_request_create_rpc_owner',
       'private.execution_requests', 'INSERT')
      or has_table_privilege('happy_execution_request_create_rpc_owner',
       'private.execution_requests', 'UPDATE')
      or has_table_privilege('happy_execution_request_create_rpc_owner',
-      'private.execution_requests', 'DELETE') then
-    raise exception 'execution request create owner table privileges are not least-privilege';
+      'private.execution_requests', 'DELETE')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','request_id','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','task_id','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','mission_id','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','requester_user_id','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','executor_user_id','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','organization_id','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','workspace_id','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','status','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','capability','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','action','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','input','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','target_reference','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','requires_approval','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','risk','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','approval_status','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','required_approval_role','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','input_digest','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','envelope_digest','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','idempotency_key','INSERT')
+     or exists (
+       select 1
+         from pg_catalog.pg_attribute a
+        where a.attrelid = 'private.execution_requests'::regclass
+          and a.attnum > 0
+          and not a.attisdropped
+          and a.attname <> all (array[
+            'request_id','task_id','mission_id','requester_user_id','executor_user_id',
+            'organization_id','workspace_id','status','capability','action','input',
+            'target_reference','requires_approval','risk','approval_status',
+            'required_approval_role','input_digest','envelope_digest','idempotency_key'
+          ]::name[])
+          and has_column_privilege('happy_execution_request_create_rpc_owner',
+            a.attrelid, a.attnum, 'INSERT')
+     ) then
+    raise exception 'execution request create owner INSERT/SELECT privileges are not least-privilege';
   end if;
   if not has_table_privilege('happy_execution_request_decision_rpc_owner',
       'private.execution_requests', 'SELECT')
