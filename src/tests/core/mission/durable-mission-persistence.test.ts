@@ -70,8 +70,69 @@ async function main(): Promise<void> {
   if (verifying.graph.tasks.find((task) => task.id === rootTaskId)?.status !== "VERIFYING") {
     throw new Error("Durable task transition to VERIFYING failed.");
   }
+  const rootTask = snapshot.graph.tasks.find((task) => task.id === rootTaskId);
+  if (!rootTask) throw new Error("Persisted root task disappeared from the graph.");
+
+  let unverifiedCompletionDenied = false;
+  try {
+    await orchestrator.transitionTaskDurable({
+      scope, persistence, missionId: snapshot.mission.id, taskId: rootTaskId, status: "COMPLETED",
+    });
+  } catch {
+    unverifiedCompletionDenied = true;
+  }
+  if (rootTask.verificationRequired && !unverifiedCompletionDenied) {
+    throw new Error("A verification-required task completed without persisted PASSED verification evidence.");
+  }
+
+  const verificationRequestId = `verification-${rootTaskId}`;
+  const evidenceId = `evidence-${rootTaskId}`;
+  if (rootTask.verificationRequired) {
+    await persistence.transaction(scope, async (tx) => {
+      await tx.create(scope, "VERIFICATION_REQUEST", verificationRequestId, {
+        id: verificationRequestId,
+        missionId: snapshot.mission.id,
+        taskId: rootTaskId,
+        description: "Verify the durable root task.",
+        criteria: [{ id: "criterion-1", description: "Result verified", expected: "PASS", required: true }],
+        preferredMethods: ["TEST"],
+        requiresEvidence: true,
+        createdAt: new Date().toISOString(),
+      });
+      await tx.create(scope, "EVIDENCE", evidenceId, {
+        id: evidenceId,
+        verificationRequestId,
+        missionId: snapshot.mission.id,
+        taskId: rootTaskId,
+        type: "TEST_RESULT",
+        source: "TEST",
+        title: "Durable task verification evidence",
+        content: "PASS",
+        capturedAt: new Date().toISOString(),
+        isPrimary: true,
+      });
+      await tx.create(scope, "VERIFICATION", verificationRequestId, {
+        id: `verification-result-${verificationRequestId}`,
+        requestId: verificationRequestId,
+        status: "PASSED",
+        confidence: "HIGH",
+        passedCriteria: ["criterion-1"],
+        failedCriteria: [],
+        partialCriteria: [],
+        evidenceIds: [evidenceId],
+        summary: "Persisted verification passed.",
+        verifiedAt: new Date().toISOString(),
+      });
+    });
+  }
+
   await orchestrator.transitionTaskDurable({
-    scope, persistence, missionId: snapshot.mission.id, taskId: rootTaskId, status: "COMPLETED",
+    scope,
+    persistence,
+    missionId: snapshot.mission.id,
+    taskId: rootTaskId,
+    status: "COMPLETED",
+    ...(rootTask.verificationRequired ? { verificationRequestId } : {}),
   });
   const persistedCompletedTask = await persistence.get<{ status: string }>(scope, "TASK", rootTaskId);
   if (persistedCompletedTask?.data.status !== "COMPLETED") {
@@ -96,6 +157,7 @@ async function main(): Promise<void> {
     completeTaskGraphPersisted: true,
     versionedTaskAndMissionTransitions: true,
     dependencyGatePreserved: true,
+    persistedVerificationRequiredBeforeCompletion: true,
     tenantPrincipalIsolation: true,
     missingPrincipalDenied: true,
     transactionRollback: true,

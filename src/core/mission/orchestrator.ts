@@ -29,6 +29,8 @@ import {
 } from "./durable-dispatch-worker-contract";
 import type { ProviderStatusReader } from "./provider-dispatch-reconciliation";
 import type { TenantScope } from "../state/types";
+import type { VerificationRequest, VerificationResult } from "../verification/types";
+import type { Evidence } from "../evidence/types";
 import {
   requireCompleteScope,
   TenantPersistenceError,
@@ -155,6 +157,8 @@ export class MissionOrchestrator {
       missionId: string;
       taskId: string;
       status: MissionTask["status"];
+      /** Required when a verification-gated task is being completed. */
+      verificationRequestId?: string;
     },
   ): Promise<MissionSnapshot> {
     const scope = input.scope;
@@ -176,6 +180,47 @@ export class MissionOrchestrator {
 
       const records = taskRecords.filter((record): record is NonNullable<typeof record> => Boolean(record));
       const tasks = records.map((record) => record.data);
+      const targetTask = tasks.find((task) => task.id === input.taskId);
+      if (!targetTask) {
+        throw new TenantPersistenceError("RECORD_NOT_FOUND", "Mission task was not found in its declared graph.");
+      }
+
+      if (input.status === "COMPLETED" && targetTask.verificationRequired) {
+        const verificationRequestId = input.verificationRequestId;
+        if (!verificationRequestId?.trim()) {
+          throw new TenantPersistenceError("INVALID_RECORD_DATA", "A persisted PASSED verification is required before completing this task.");
+        }
+        const verificationRequest = await transaction.get<VerificationRequest>(
+          scope, "VERIFICATION_REQUEST", verificationRequestId,
+        );
+        const verification = await transaction.get<VerificationResult>(
+          scope, "VERIFICATION", verificationRequestId,
+        );
+        if (!verificationRequest || !verification ||
+            verificationRequest.data.id !== verificationRequestId ||
+            verificationRequest.data.missionId !== input.missionId ||
+            verificationRequest.data.taskId !== input.taskId ||
+            verification.data.requestId !== verificationRequestId ||
+            verification.data.status !== "PASSED" ||
+            !Array.isArray(verification.data.evidenceIds) ||
+            verification.data.evidenceIds.length === 0) {
+          throw new TenantPersistenceError("INVALID_RECORD_DATA", "Persisted verification is not PASSED or is not bound to this mission task.");
+        }
+        const evidence = await Promise.all(
+          verification.data.evidenceIds.map((evidenceId) =>
+            transaction.get<Evidence>(scope, "EVIDENCE", evidenceId),
+          ),
+        );
+        if (evidence.some((record) =>
+          !record ||
+          record.data.verificationRequestId !== verificationRequestId ||
+          record.data.missionId !== input.missionId ||
+          record.data.taskId !== input.taskId
+        )) {
+          throw new TenantPersistenceError("INVALID_RECORD_DATA", "Verification evidence is missing or belongs to a different mission task.");
+        }
+      }
+
       const transition = this.missionEngine.updateTaskStatus(
         missionRecord.data, tasks, input.taskId, input.status,
       );
