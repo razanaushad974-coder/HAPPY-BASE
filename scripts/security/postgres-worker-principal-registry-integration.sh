@@ -108,6 +108,13 @@ on conflict (organization_id, workspace_id, user_id) do update set
   role = excluded.role;
 SQL
 
+# Verify that the DB-side registry recognizes every execution capability
+# as well as the separate CONTROL/VERIFY broker permissions.
+if ! grep -q "'CODE','FILE','API','BROWSER','SHELL','DATABASE','AI','DEPLOYMENT','PUBLISH','AUTOMATION','DEPLOY','CONTROL','VERIFY'" "$REGISTRY_SQL"; then
+  echo "Worker registry capability set is not aligned with execution capabilities." >&2
+  exit 1
+fi
+
 "${psql[@]}" -f "$REGISTRY_SQL"
 
 "${psql[@]}" <<'SQL'
