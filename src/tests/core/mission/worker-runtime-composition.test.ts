@@ -321,7 +321,7 @@ async function run() {
   });
   assert(orchestratedPoll.status === "NO_PENDING_DISPATCH",
     "mission orchestrator must route worker polling through the durable dispatch runtime");
-  assert(brokerCalls === 2,
+  assert(Number(brokerCalls) === 2,
     "orchestrated durable poll must call only the guarded broker facade");
 
   console.log("Worker runtime composition tests: PASS");
