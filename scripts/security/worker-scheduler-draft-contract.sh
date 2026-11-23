@@ -46,6 +46,15 @@ for function_name in "${functions[@]}"; do
   fi
 done
 
+if ! awk -v fn="happy_worker_claim_next_dispatch_outbox" '
+  index($0, "create or replace function private." fn "(") > 0 { inside=1 }
+  inside { print }
+  inside && /^\$[a-z_]+\$;$/ { exit }
+' "$SQL_FILE" | grep -q "v_request.approval_status <> 'APPROVED'"; then
+  echo "Next-dispatch claim must revalidate persisted founder approval." >&2
+  exit 1
+fi
+
 if grep -Eq 'grant execute on function private\.happy_worker_' "$SQL_FILE"; then
   echo "Worker RPC EXECUTE grants must remain withheld until live identity verification." >&2
   exit 1
