@@ -217,6 +217,8 @@ export interface WorkerDatabaseBroker {
   /** Atomically selects the next eligible PENDING outbox row under a live fenced lease. */
   claimNextDispatch(input: {
     tenantScope: WorkerTenantScope;
+    /** Server-generated worker-instance owner; never accepted from a user request. */
+    ownerId: string;
   }): Promise<WorkerDispatchOutbox | null>;
 
   claimDispatch(input: {
