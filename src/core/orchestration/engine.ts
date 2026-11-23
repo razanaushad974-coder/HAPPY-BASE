@@ -837,24 +837,51 @@ contextSummary:
                 };
 
                 executionRequestId ??= executionRequest.id;
-                await state.execution().create(
-                    executionRequest.id,
-                    executionRequest,
-                    request.userId,
-                );
+                let durableExecutionVersion: number | undefined;
+                if (durableTenantScope && this.tenantPersistence) {
+                    const persistedExecution = await this.tenantPersistence.transaction(
+                        durableTenantScope,
+                        (transaction) => transaction.create(
+                            durableTenantScope,
+                            "EXECUTION",
+                            executionRequest.id,
+                            executionRequest,
+                        ),
+                    );
+                    durableExecutionVersion = persistedExecution.version;
+                } else {
+                    await state.execution().create(
+                        executionRequest.id,
+                        executionRequest,
+                        request.userId,
+                    );
+                }
 
                 const executionResult =
                     await this.execution.execute(executionRequest);
 
-                await state.execution().update(
-                    executionRequest.id,
-                    {
-                        ...executionRequest,
-                        ...executionResult,
-                        targetReference:
-                            executionRequest.targetReference,
-                    },
-                );
+                const persistedExecutionResult = {
+                    ...executionRequest,
+                    ...executionResult,
+                    targetReference: executionRequest.targetReference,
+                };
+                if (durableTenantScope && this.tenantPersistence && durableExecutionVersion !== undefined) {
+                    await this.tenantPersistence.transaction(
+                        durableTenantScope,
+                        (transaction) => transaction.update(
+                            durableTenantScope,
+                            "EXECUTION",
+                            executionRequest.id,
+                            durableExecutionVersion,
+                            persistedExecutionResult,
+                        ),
+                    );
+                } else {
+                    await state.execution().update(
+                        executionRequest.id,
+                        persistedExecutionResult,
+                    );
+                }
 
                 const executionStageStatus:
                     HappyPipelineStageResult["status"] =
