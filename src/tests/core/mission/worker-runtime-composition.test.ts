@@ -58,12 +58,12 @@ const broker = {
     brokerCalls += 1;
     return { leaseId: "lease-1", attempt: 1, fencingToken: 1, expiresAt: new Date(now * 1000 + 60_000).toISOString(), taskVersion: 1 };
   },
-  heartbeatLease: async () => "2026-11-22T20:00:00.000Z",
-  enqueueDispatch: async () => ({}),
-  claimDispatch: async () => ({}),
-  recordDispatchOutcome: async () => ({}),
-  appendReconciliationEvidence: async () => "evidence-1",
-  listReconciliationEvidence: async () => [],
+  heartbeatLease: async () => { brokerCalls += 1; return "2026-11-22T20:00:00.000Z"; },
+  enqueueDispatch: async () => { brokerCalls += 1; return {}; },
+  claimDispatch: async () => { brokerCalls += 1; return {}; },
+  recordDispatchOutcome: async () => { brokerCalls += 1; return {}; },
+  appendReconciliationEvidence: async () => { brokerCalls += 1; return "evidence-1"; },
+  listReconciliationEvidence: async () => { brokerCalls += 1; return []; },
 } as unknown as WorkerDatabaseBroker;
 const complete: WorkerRuntimeCompositionDependencies = {
   identityProvider,
@@ -156,6 +156,59 @@ async function run() {
   }
   assert(revokedCallDenied, "revocation after composition must deny subsequent broker calls");
   assert(brokerCalls === 1, "revoked call must not reach the raw broker");
+
+  if (composed.status === "COMPOSITION_AVAILABLE") {
+    const scope = {
+      workerPrincipalId: "principal-1",
+      organizationId: "org-1",
+      workspaceId: "ws-1",
+      userId: "user-1",
+    };
+    const revokedOperations: Array<() => Promise<unknown>> = [
+      () => composed.broker.heartbeatLease({
+        tenantScope: scope, missionId: "mission-1", taskId: "task-1",
+        leaseId: "lease-1", ownerId: claims.subject, fencingToken: 1,
+        leaseMilliseconds: 30_000,
+      }),
+      () => composed.broker.enqueueDispatch({
+        tenantScope: scope, missionId: "mission-1", taskId: "task-1",
+        leaseId: "lease-1", ownerId: claims.subject, fencingToken: 1,
+        executionRequestId: "request-1", idempotencyKey: "idem-1",
+        capability: "API", action: "GET", payloadDigest: "sha256:test", payload: {},
+      }),
+      () => composed.broker.claimDispatch({
+        tenantScope: scope, outboxId: "outbox-1", leaseId: "lease-1",
+        ownerId: claims.subject, fencingToken: 1,
+      }),
+      () => composed.broker.recordDispatchOutcome({
+        tenantScope: scope, outboxId: "outbox-1", leaseId: "lease-1",
+        ownerId: claims.subject, fencingToken: 1,
+        status: "ACKNOWLEDGED", outcome: {},
+      }),
+      () => composed.broker.appendReconciliationEvidence({
+        tenantScope: scope, outboxId: "outbox-1", evidenceId: "evidence-1",
+        idempotencyKey: "idem-1", providerId: "provider-1",
+        observedAt: new Date(now * 1000).toISOString(),
+        status: "UNKNOWN", observation: { status: "UNKNOWN" },
+      }),
+      () => composed.broker.listReconciliationEvidence({
+        tenantScope: scope, outboxId: "outbox-1", missionId: "mission-1",
+        taskId: "task-1", executionRequestId: "request-1",
+      }),
+    ];
+    for (const invoke of revokedOperations) {
+      let denied = false;
+      try {
+        await invoke();
+      } catch (error) {
+        denied = error instanceof WorkerBrokerAuthorizationError &&
+          error.reason === "PRINCIPAL_NOT_AUTHORIZED";
+      }
+      assert(denied, "every broker method must recheck and reject a revoked principal");
+    }
+  }
+  assert(brokerCalls === 1,
+    "revocation must block every guarded broker method before any raw broker operation");
   liveRegistration = { ...liveRegistration, enabled: true };
 
   const revoked = await composeTrustedWorkerRuntime({
