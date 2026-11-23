@@ -258,18 +258,22 @@ export async function runNextDurableDispatch(input: {
         });
       },
     };
-    const observedAt = new Date((input.now ?? Date.now)()).toISOString();
-    reconciliation = await reconcileProviderDispatch(
-      {
-        outboxId: outbox.outboxId,
-        idempotencyKey: outbox.idempotencyKey,
-        providerId: input.reconciliationProvider.providerId,
-        originalOutcome: result.outcome,
-      },
-      input.reconciliationProvider,
-      evidenceStore,
-      observedAt,
-    );
+    const observedAtMs = (input.now ?? Date.now)();
+    if (!Number.isFinite(observedAtMs) || observedAtMs < 0) {
+      reconciliation = { status: "RECONCILIATION_REQUIRED", reason: "RECONCILIATION_CLOCK_UNAVAILABLE" };
+    } else {
+      reconciliation = await reconcileProviderDispatch(
+        {
+          outboxId: outbox.outboxId,
+          idempotencyKey: outbox.idempotencyKey,
+          providerId: input.reconciliationProvider.providerId,
+          originalOutcome: result.outcome,
+        },
+        input.reconciliationProvider,
+        evidenceStore,
+        new Date(observedAtMs).toISOString(),
+      );
+    }
   }
   return {
     status: "PROCESSED",
