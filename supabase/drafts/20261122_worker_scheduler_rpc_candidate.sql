@@ -794,6 +794,22 @@ declare
   v_actor uuid;
   v_outbox public.happy_execution_dispatch_outbox%rowtype;
   v_lease public.happy_mission_task_leases%rowtype;
+  v_request private.execution_requests%rowtype;
+  v_mission jsonb;
+  v_mission_version bigint;
+  v_task jsonb;
+  v_task_version bigint;
+  v_task_status text;
+  v_mission_status text;
+  v_completed jsonb;
+  v_failed jsonb;
+  v_blocked jsonb;
+  v_total integer;
+  v_completed_count integer;
+  v_has_running boolean;
+  v_has_verifying boolean;
+  v_progress integer;
+  v_updated_at_iso text;
 begin
   v_actor := private.happy_require_worker_tenant_scope(
     p_worker_principal_id, p_organization_id, p_workspace_id, p_user_id,
@@ -808,7 +824,8 @@ begin
     raise exception 'INVALID_DISPATCH_OUTCOME' using errcode = '22023';
   end if;
 
-  -- Lock order matches enqueue and outbox claim: lease before outbox.
+  -- Discover immutable mission/task selectors without taking the outbox lock.
+  -- All mutating paths then lock mission -> task -> lease -> outbox -> request.
   select * into v_outbox
     from public.happy_execution_dispatch_outbox o
    where o.organization_id = p_organization_id
@@ -816,6 +833,32 @@ begin
      and o.user_id = v_actor
      and o.outbox_id = p_outbox_id;
   if not found then raise exception 'OUTBOX_NOT_FOUND' using errcode = 'P0002'; end if;
+
+  select r.data, r.version into v_mission, v_mission_version
+    from public.happy_tenant_records r
+   where r.organization_id = p_organization_id
+     and r.workspace_id = p_workspace_id
+     and r.user_id = v_actor
+     and r.entity_type = 'MISSION'
+     and r.record_id = v_outbox.mission_id
+   for update;
+  if not found then raise exception 'MISSION_NOT_FOUND' using errcode = 'P0002'; end if;
+
+  select r.data, r.version into v_task, v_task_version
+    from public.happy_tenant_records r
+   where r.organization_id = p_organization_id
+     and r.workspace_id = p_workspace_id
+     and r.user_id = v_actor
+     and r.entity_type = 'TASK'
+     and r.record_id = v_outbox.task_id
+   for update;
+  if not found
+     or v_task->>'missionId' is distinct from v_outbox.mission_id
+     or v_task->>'status' <> 'RUNNING'
+     or jsonb_typeof(v_mission->'taskIds') <> 'array'
+     or not ((v_mission->'taskIds') ? v_outbox.task_id) then
+    raise exception 'TASK_NOT_RUNNING_OR_MISSION_BINDING_MISMATCH' using errcode = '55000';
+  end if;
 
   select * into v_lease
     from public.happy_mission_task_leases l
@@ -845,6 +888,26 @@ begin
     raise exception 'OUTBOX_OUTCOME_ALREADY_RECORDED_OR_NOT_DISPATCHED' using errcode = '55000';
   end if;
 
+  select * into v_request
+    from private.execution_requests r
+   where r.request_id = v_outbox.execution_request_id
+     and r.organization_id = p_organization_id
+     and r.workspace_id = p_workspace_id
+     and r.requester_user_id = v_actor
+     and r.executor_user_id = v_actor
+     and r.mission_id = v_outbox.mission_id
+     and r.task_id = v_outbox.task_id
+   for update;
+  if not found
+     or v_request.approval_status <> 'APPROVED'
+     or v_request.required_approval_role <> 'FOUNDER'
+     or v_request.decided_by is null
+     or v_request.decided_by in (v_request.requester_user_id,v_request.executor_user_id)
+     or v_request.decided_at is null
+     or v_request.status not in ('READY','RUNNING') then
+    raise exception 'PERSISTED_APPROVED_EXECUTION_REQUEST_REQUIRED' using errcode = '42501';
+  end if;
+
   update public.happy_execution_dispatch_outbox
      set status = p_status,
          outcome = p_outcome,
@@ -855,6 +918,109 @@ begin
   if not found then
     raise exception 'OUTBOX_OUTCOME_ALREADY_RECORDED_OR_NOT_DISPATCHED' using errcode = '55000';
   end if;
+
+  -- Persist provider outcome into the task/request lifecycle. ACKNOWLEDGED
+  -- means VERIFYING, never COMPLETED; only a later verification boundary may
+  -- release dependent tasks. Ambiguous results become BLOCKED, not replayable.
+  v_task_status := case
+    when p_status = 'ACKNOWLEDGED' then 'VERIFYING'
+    when p_status = 'FAILED' then 'FAILED'
+    else 'BLOCKED'
+  end;
+
+  v_updated_at_iso := to_char(
+    clock_timestamp() at time zone 'UTC',
+    'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+  );
+
+  update public.happy_tenant_records
+     set data = jsonb_set(
+           jsonb_set(data, '{status}', to_jsonb(v_task_status), false),
+           '{updatedAt}', to_jsonb(v_updated_at_iso), false
+         ),
+         version = version + 1,
+         updated_at = clock_timestamp()
+   where organization_id = p_organization_id
+     and workspace_id = p_workspace_id
+     and user_id = v_actor
+     and entity_type = 'TASK'
+     and record_id = v_outbox.task_id
+     and version = v_task_version;
+  if not found then raise exception 'TASK_VERSION_CONFLICT' using errcode = '40001'; end if;
+
+  if v_request.status = 'READY' then
+    update private.execution_requests
+       set status = 'RUNNING'
+     where request_id = v_request.request_id
+       and status = 'READY';
+    if not found then raise exception 'EXECUTION_REQUEST_STATE_CONFLICT' using errcode = '40001'; end if;
+  end if;
+
+  if p_status = 'FAILED' then
+    update private.execution_requests set status = 'FAILED'
+     where request_id = v_request.request_id and status = 'RUNNING';
+  elsif p_status in ('AMBIGUOUS','RECONCILIATION_REQUIRED') then
+    update private.execution_requests set status = 'BLOCKED'
+     where request_id = v_request.request_id and status = 'RUNNING';
+  end if;
+  if not found and p_status <> 'ACKNOWLEDGED' then
+    raise exception 'EXECUTION_REQUEST_STATE_CONFLICT' using errcode = '40001';
+  end if;
+
+  select
+    count(*)::integer,
+    coalesce(jsonb_agg(r.record_id order by r.record_id) filter (where r.data->>'status' = 'COMPLETED'), '[]'::jsonb),
+    coalesce(jsonb_agg(r.record_id order by r.record_id) filter (where r.data->>'status' = 'FAILED'), '[]'::jsonb),
+    coalesce(jsonb_agg(r.record_id order by r.record_id) filter (where r.data->>'status' = 'BLOCKED'), '[]'::jsonb),
+    coalesce(bool_or(r.data->>'status' = 'RUNNING'), false),
+    coalesce(bool_or(r.data->>'status' = 'VERIFYING'), false)
+  into v_total, v_completed, v_failed, v_blocked, v_has_running, v_has_verifying
+  from public.happy_tenant_records r
+  where r.organization_id = p_organization_id
+    and r.workspace_id = p_workspace_id
+    and r.user_id = v_actor
+    and r.entity_type = 'TASK'
+    and r.data->>'missionId' = v_outbox.mission_id;
+
+  v_completed_count := jsonb_array_length(v_completed);
+  v_progress := case when v_total = 0 then 0
+    else round((v_completed_count::numeric / v_total::numeric) * 100)::integer end;
+  v_mission_status := case
+    when jsonb_array_length(v_failed) > 0 then 'FAILED'
+    when jsonb_array_length(v_blocked) > 0 then 'BLOCKED'
+    when v_total > 0 and v_completed_count = v_total then 'COMPLETED'
+    when v_has_running then 'RUNNING'
+    when v_has_verifying then 'VERIFYING'
+    else 'READY'
+  end;
+
+  update public.happy_tenant_records
+     set data = jsonb_set(
+           jsonb_set(
+             jsonb_set(
+               jsonb_set(
+                 jsonb_set(
+                   jsonb_set(data, '{status}', to_jsonb(v_mission_status), false),
+                   '{completedTaskIds}', v_completed, false
+                 ),
+                 '{failedTaskIds}', v_failed, false
+               ),
+               '{blockedTaskIds}', v_blocked, false
+             ),
+             '{progressPercent}', to_jsonb(v_progress), false
+           ),
+           '{updatedAt}', to_jsonb(v_updated_at_iso), false
+         ),
+         version = version + 1,
+         updated_at = clock_timestamp()
+   where organization_id = p_organization_id
+     and workspace_id = p_workspace_id
+     and user_id = v_actor
+     and entity_type = 'MISSION'
+     and record_id = v_outbox.mission_id
+     and version = v_mission_version;
+  if not found then raise exception 'MISSION_VERSION_CONFLICT' using errcode = '40001'; end if;
+
   return v_outbox;
 end;
 $outcome$;

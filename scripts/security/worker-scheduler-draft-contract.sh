@@ -83,6 +83,24 @@ if [[ "$(grep -c '^revoke all on function private\.happy_worker_' "$SQL_FILE")" 
   exit 1
 fi
 
+if ! awk -v fn="happy_worker_record_dispatch_outcome" '
+  index($0, "create or replace function private." fn "(") > 0 { inside=1 }
+  inside { print }
+  inside && index($0, "$outcome$;") > 0 { exit }
+' "$SQL_FILE" | grep -q "when p_status = 'ACKNOWLEDGED' then 'VERIFYING'"; then
+  echo "Dispatch acknowledgement must move the task to VERIFYING, not COMPLETED." >&2
+  exit 1
+fi
+
+if ! awk -v fn="happy_worker_record_dispatch_outcome" '
+  index($0, "create or replace function private." fn "(") > 0 { inside=1 }
+  inside { print }
+  inside && index($0, "$outcome$;") > 0 { exit }
+' "$SQL_FILE" | grep -q "MISSION_VERSION_CONFLICT"; then
+  echo "Dispatch outcome must persist the aggregate mission snapshot with version fencing." >&2
+  exit 1
+fi
+
 if ! grep -q "session_user" "$REGISTRY_FILE" || ! grep -q "happy_require_worker_tenant_scope" "$REGISTRY_FILE"; then
   echo "Worker principal registry does not expose the required DB-derived scope boundary." >&2
   exit 1
