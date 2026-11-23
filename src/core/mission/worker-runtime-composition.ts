@@ -44,9 +44,14 @@ export class WorkerBrokerAuthorizationError extends Error {
   }
 }
 
+interface WorkerAuthorizationSnapshot {
+  readonly identity: VerifiedWorkerIdentity;
+  readonly registration: WorkerPrincipalRegistration;
+}
+
 type WorkerAuthorizationCheck = (
   operation: WorkerBrokerOperation,
-) => Promise<WorkerPrincipalRegistration>;
+) => Promise<WorkerAuthorizationSnapshot>;
 
 /**
  * The returned facade never exposes the raw broker. Identity and operator
@@ -135,9 +140,12 @@ export async function composeTrustedWorkerRuntime(input: {
     return authorization.registration;
   };
 
-  let initialRegistration: WorkerPrincipalRegistration;
+  let initialAuthorization: WorkerAuthorizationSnapshot;
   try {
-    initialRegistration = await authorize(input.operation);
+    // Capture identity and registration from the same authorization pass.
+    // This avoids a second provider lookup producing a mismatched descriptive
+    // snapshot if credentials rotate between calls.
+    initialAuthorization = await authorize(input.operation);
   } catch (error) {
     return {
       status: "DENIED",
@@ -147,23 +155,10 @@ export async function composeTrustedWorkerRuntime(input: {
     };
   }
 
-  // Identity is resolved again for the returned descriptive snapshot only;
-  // the facade itself never trusts this snapshot for subsequent operations.
-  let initialIdentity: VerifiedWorkerIdentity;
-  try {
-    const resolution = await identityProvider.getVerifiedWorkerIdentity();
-    if (resolution.status !== "VERIFIED" || !isVerifiedWorkerIdentity(resolution.identity)) {
-      return { status: "DENIED", reason: "IDENTITY_INVALID" };
-    }
-    initialIdentity = resolution.identity;
-  } catch {
-    return { status: "DENIED", reason: "IDENTITY_UNAVAILABLE" };
-  }
-
   return Object.freeze({
     status: "COMPOSITION_AVAILABLE" as const,
-    identity: initialIdentity,
-    registration: initialRegistration,
+    identity: initialAuthorization.identity,
+    registration: initialAuthorization.registration,
     broker: createAuthorizedBroker(databaseBroker, authorize),
     liveDatabaseSession: "NOT_VERIFIED" as const,
   });
