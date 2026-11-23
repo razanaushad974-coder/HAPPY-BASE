@@ -19,7 +19,7 @@ const provider: IdempotentDispatchProvider = {
 };
 
 const runtime = {
-  tokenReader: async () => null,
+  tokenReader: async () => "test-only-token",
   jwks: {
     issuer: "https://oidc.example.test",
     audience: "happy-worker",
