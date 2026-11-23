@@ -484,6 +484,47 @@ async function run(): Promise<void> {
     heartbeatFailureOutcome?.status === "AMBIGUOUS",
   "lease heartbeat failure was not converted to an ambiguous, non-replayable outcome");
 
+  const exactOutbox = { ...queuedOutbox, outboxId: "outbox-exact-claim-1", status: "PENDING" as const };
+  let exactClaimDispatchCalls = 0;
+  let accidentalNextClaimCalls = 0;
+  const exactOutboxRun = await runNextDurableDispatch({
+    broker: {
+      async claimNextDispatch() {
+        accidentalNextClaimCalls += 1;
+        throw new Error("exact task dispatch must not claim a different queue item");
+      },
+      async claimDispatch(input) {
+        exactClaimDispatchCalls += 1;
+        assert(input.outboxId === exactOutbox.outboxId &&
+          input.leaseId === exactOutbox.leaseId &&
+          input.fencingToken === exactOutbox.fencingToken,
+        "exact outbox claim must preserve lease and fencing bindings");
+        return { ...exactOutbox, status: "DISPATCHED" as const };
+      },
+      async heartbeatLease() { return "2026-11-21T10:05:00.000Z"; },
+      async recordDispatchOutcome(input) {
+        return { ...exactOutbox, status: input.status, outcome: { ...input.outcome } };
+      },
+      async appendReconciliationEvidence() { return "unused"; },
+    },
+    tenantScope,
+    ownerId: "worker-instance-42",
+    leaseMilliseconds: 30_000,
+    claimedOutbox: exactOutbox,
+    identityProvider: { async getVerifiedWorkerIdentity() { return workerIdentity; } },
+    provider: {
+      providerId: "exact-outbox-provider",
+      supportsIdempotencyKeys: true,
+      async dispatch() {
+        return { kind: "ACKNOWLEDGED", provider: "exact-outbox-provider", providerRequestId: "exact-remote-1", response: {} };
+      },
+    },
+  });
+  assert(exactOutboxRun.status === "PROCESSED" &&
+    exactOutboxRun.result.status === "RECORDED" &&
+    exactClaimDispatchCalls === 1 && accidentalNextClaimCalls === 0,
+  "mission task worker must dispatch the exact outbox row it just enqueued");
+
   let reconciliationEvidenceCalls = 0;
   const ambiguousOutbox = { ...queuedOutbox, outboxId: "outbox-ambiguous-1", idempotencyKey: "ambiguous-key-1" };
   const ambiguousBroker: Pick<WorkerDatabaseBroker, "claimNextDispatch" | "heartbeatLease" | "recordDispatchOutcome" | "appendReconciliationEvidence"> = {

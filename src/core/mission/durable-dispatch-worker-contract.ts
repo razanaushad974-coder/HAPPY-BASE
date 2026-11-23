@@ -49,7 +49,7 @@ export type PersistedDispatchOutcome =
   | { status: "RECONCILIATION_REQUIRED"; outcome: Record<string, unknown> };
 
 export type ApprovedTaskEnqueueResult =
-  | { status: "ENQUEUED"; outboxId: string; executionRequestId: string; idempotencyKey: string }
+  | { status: "ENQUEUED"; outbox: WorkerDispatchOutbox; outboxId: string; executionRequestId: string; idempotencyKey: string }
   | { status: "CLAIM_FAILED" | "APPROVED_REQUEST_INVALID" | "ENQUEUE_RESULT_UNKNOWN"; missionId: string; taskId: string };
 
 /** One bounded task claim and immutable outbox enqueue. Never polls or retries. */
@@ -129,7 +129,7 @@ export async function claimAndEnqueueApprovedTask(input: {
         outbox.payloadDigest !== payloadDigest || outbox.status !== "PENDING") {
       return { status: "ENQUEUE_RESULT_UNKNOWN", missionId, taskId };
     }
-    return { status: "ENQUEUED", outboxId: outbox.outboxId, executionRequestId: request.id, idempotencyKey };
+    return { status: "ENQUEUED", outbox, outboxId: outbox.outboxId, executionRequestId: request.id, idempotencyKey };
   } catch {
     // Commit may have succeeded before a transport failure. Never replay blindly.
     return { status: "ENQUEUE_RESULT_UNKNOWN", missionId, taskId };
@@ -200,13 +200,16 @@ function decodePersistedExecutionRequest(outbox: WorkerDispatchOutbox): Executio
  * invoke it repeatedly with bounded concurrency and its own shutdown policy.
  */
 export async function runNextDurableDispatch(input: {
-  broker: Pick<WorkerDatabaseBroker, "claimNextDispatch" | "heartbeatLease" | "recordDispatchOutcome" | "appendReconciliationEvidence">;
+  broker: Pick<WorkerDatabaseBroker, "claimNextDispatch" | "heartbeatLease" | "recordDispatchOutcome" | "appendReconciliationEvidence"> &
+    Partial<Pick<WorkerDatabaseBroker, "claimDispatch">>;
   tenantScope: WorkerTenantScope;
   ownerId: string;
   leaseMilliseconds: number;
   identityProvider: TrustedWorkerIdentityResolver;
   provider: IdempotentDispatchProvider;
   reconciliationProvider?: ProviderStatusReader;
+  /** Exact outbox created by the preceding task claim; avoids dispatching a different queue item. */
+  claimedOutbox?: WorkerDispatchOutbox;
   /** Bounded provider-call deadline; defaults to the current lease duration. */
   dispatchTimeoutMilliseconds?: number;
   /** Test/hosting override. Defaults to one third of the lease duration. */
@@ -229,10 +232,21 @@ export async function runNextDurableDispatch(input: {
 
   let outbox: WorkerDispatchOutbox | null;
   try {
-    outbox = await input.broker.claimNextDispatch({
-      tenantScope: input.tenantScope,
-      ownerId: input.ownerId,
-    });
+    if (input.claimedOutbox) {
+      if (!input.broker.claimDispatch) return { status: "CLAIM_FAILED" };
+      outbox = await input.broker.claimDispatch({
+        tenantScope: input.tenantScope,
+        outboxId: input.claimedOutbox.outboxId,
+        leaseId: input.claimedOutbox.leaseId,
+        ownerId: input.ownerId,
+        fencingToken: input.claimedOutbox.fencingToken,
+      });
+    } else {
+      outbox = await input.broker.claimNextDispatch({
+        tenantScope: input.tenantScope,
+        ownerId: input.ownerId,
+      });
+    }
   } catch {
     return { status: "CLAIM_FAILED" };
   }

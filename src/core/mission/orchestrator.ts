@@ -17,6 +17,7 @@ import {
 } from "./worker-runtime-composition";
 import type {
   WorkerBrokerOperation,
+  WorkerDispatchOutbox,
   WorkerTenantScope,
 } from "./worker-database-broker";
 import {
@@ -77,6 +78,7 @@ export class MissionOrchestrator {
     leaseMilliseconds: number;
     provider: IdempotentDispatchProvider;
     reconciliationProvider?: ProviderStatusReader;
+    claimedOutbox?: WorkerDispatchOutbox;
     now?: () => number;
   }): Promise<WorkerRuntimeComposition | DurableDispatchPollResult> {
     const composition = await this.prepareWorkerRuntimeOperation(
@@ -97,6 +99,7 @@ export class MissionOrchestrator {
       identityProvider,
       provider: input.provider,
       ...(input.reconciliationProvider ? { reconciliationProvider: input.reconciliationProvider } : {}),
+      ...(input.claimedOutbox ? { claimedOutbox: input.claimedOutbox } : {}),
       ...(input.now ? { now: input.now } : {}),
     });
   }
@@ -134,6 +137,7 @@ export class MissionOrchestrator {
       ownerId: input.ownerId,
       leaseMilliseconds: input.leaseMilliseconds,
       provider: input.provider,
+      claimedOutbox: enqueue.outbox,
       ...(input.reconciliationProvider ? { reconciliationProvider: input.reconciliationProvider } : {}),
       ...(input.now ? { now: input.now } : {}),
     });
