@@ -13,6 +13,7 @@ functions=(
   happy_worker_enqueue_mission_dispatch
   happy_worker_heartbeat_mission_task_lease
   happy_worker_claim_dispatch_outbox
+  happy_worker_claim_next_dispatch_outbox
   happy_worker_record_dispatch_outcome
   happy_worker_append_dispatch_reconciliation_evidence
   happy_worker_list_dispatch_reconciliation_evidence
@@ -51,7 +52,7 @@ if grep -Eq 'grant execute on function private\.happy_worker_' "$SQL_FILE"; then
 fi
 
 if [[ "$(grep -c '^revoke all on function private\.happy_worker_' "$SQL_FILE")" -ne "${#functions[@]}" ]]; then
-  echo "Expected exact revokes for all seven worker RPCs." >&2
+  echo "Expected exact revokes for all eight worker RPCs." >&2
   exit 1
 fi
 
@@ -60,4 +61,4 @@ if ! grep -q "session_user" "$REGISTRY_FILE" || ! grep -q "happy_require_worker_
   exit 1
 fi
 
-echo "PASS: seven worker scheduler RPC drafts are tenant-bound, human-JWT independent, SECURITY DEFINER, and have no EXECUTE grants."
+echo "PASS: eight worker scheduler RPC drafts are tenant-bound, human-JWT independent, SECURITY DEFINER, and have no EXECUTE grants."
