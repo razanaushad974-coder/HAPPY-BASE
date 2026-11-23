@@ -119,7 +119,7 @@ as $scope$
        and wm.user_id = om.user_id
      where o.organization_id = p_organization_id
        and w.workspace_id = p_workspace_id
-       and om.user_id = auth.uid()
+       and om.user_id = private.happy_current_authenticated_user_id()
        and o.status = 'ACTIVE'
        and w.status = 'ACTIVE'
        and om.status = 'ACTIVE'
@@ -227,7 +227,7 @@ as $lock_scope$
 declare
   v_actor uuid;
 begin
-  v_actor := auth.uid();
+  v_actor := private.happy_current_authenticated_user_id();
   if v_actor is null then return false; end if;
 
   perform 1
