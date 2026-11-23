@@ -22,7 +22,8 @@ const request: ExecutionRequest = {
 const dispatch: ClaimedDispatch = {
   outboxId: "outbox-1", idempotencyKey: "tenant-key-1",
   executionRequestId: request.id, leaseId: "lease-1",
-  ownerId: "owner:team:project:happy-worker:environment:staging", fencingToken: 4, request,
+  // The lease owner is a server-generated worker-instance ID, not the OIDC subject.
+  ownerId: "worker-instance-42", fencingToken: 4, request,
 };
 const workerNow = Math.floor(Date.now() / 1000);
 const identityPolicy = {
@@ -164,15 +165,17 @@ async function run(): Promise<void> {
   );
   assert(invalid.status === "RECONCILIATION_REQUIRED" && invalidCalls === 0, "mismatched request binding reached provider");
 
-  let identityMismatchCalls = 0;
-  const wrongPrincipal = await resolveWorkerIdentity({ subject: "owner:team:project:other-worker:environment:staging" });
-  const deniedIdentity = await dispatchClaimedOutboxItem(
-    dispatch, wrongPrincipal,
-    { ...provider, async dispatch() { identityMismatchCalls += 1; return { kind: "ACKNOWLEDGED" as const, provider: "x", providerRequestId: "x", response: null }; } },
+  // A workload identity and a worker-instance lease owner are distinct identities.
+  // The guarded broker and database principal registry authorize the workload;
+  // the owner ID only fences a specific worker instance's lease.
+  const differentInstanceOwner = await dispatchClaimedOutboxItem(
+    { ...dispatch, ownerId: "worker-instance-99" },
+    workerIdentity,
+    provider,
     recorderFor(async () => {}),
   );
-  assert(deniedIdentity.status === "RECONCILIATION_REQUIRED" && identityMismatchCalls === 0,
-    "worker principal mismatch reached provider");
+  assert(differentInstanceOwner.status === "RECORDED",
+    "a valid workload identity must not be conflated with the per-instance lease owner");
 
   const missingCapability = await resolveWorkerIdentity({ capabilities: ["VERIFY"] });
   const deniedCapability = await dispatchClaimedOutboxItem(
