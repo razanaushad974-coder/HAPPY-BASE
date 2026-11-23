@@ -7,8 +7,26 @@
 -- DO NOT APPLY to a connected/shared/production project.
 BEGIN;
 
-GRANT USAGE ON SCHEMA private, public, auth TO happy_tenant_scope_rpc_owner;
-GRANT EXECUTE ON FUNCTION auth.uid() TO happy_tenant_scope_rpc_owner;
+GRANT USAGE ON SCHEMA private, public TO happy_tenant_scope_rpc_owner;
+
+-- The managed auth schema does not grant USAGE to arbitrary NOLOGIN roles.
+-- Keep auth.uid() behind a tiny, non-exposed SECURITY DEFINER accessor owned
+-- by postgres. It returns only the verified JWT subject and performs no table
+-- access; EXECUTE is limited to this owner role.
+CREATE OR REPLACE FUNCTION private.happy_current_authenticated_user_id()
+RETURNS uuid
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog
+AS $current_user$
+  SELECT auth.uid();
+$current_user$;
+
+REVOKE ALL ON FUNCTION private.happy_current_authenticated_user_id()
+  FROM public, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION private.happy_current_authenticated_user_id()
+  TO happy_tenant_scope_rpc_owner;
 
 -- Private canonical identity lookups. The SELECT policies admit rows to the
 -- NOLOGIN owner; the lock-only UPDATE policies allow FOR SHARE but reject
@@ -62,7 +80,7 @@ CREATE POLICY happy_tenant_records_scope_owner_select
   ON public.happy_tenant_records
   FOR SELECT TO happy_tenant_scope_rpc_owner
   USING (
-    user_id = auth.uid()
+    user_id = private.happy_current_authenticated_user_id()
     AND public.happy_has_active_tenant_scope(organization_id, workspace_id)
   );
 
