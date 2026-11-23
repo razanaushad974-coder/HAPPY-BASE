@@ -131,7 +131,7 @@ CREATE TABLE happy_worker_sched_probe.outbox(
  outbox_id uuid PRIMARY KEY,organization_id uuid,workspace_id uuid,user_id uuid,
  mission_id text,task_id text,lease_id uuid,fencing_token bigint,attempt int,
  execution_request_id text,idempotency_key text,capability text,action text,
- payload_digest text,payload jsonb,outcome jsonb,status text,
+ payload_digest text,payload jsonb,outcome jsonb NOT NULL DEFAULT '{}'::jsonb,status text NOT NULL DEFAULT 'PENDING',
  created_at timestamptz DEFAULT clock_timestamp(),updated_at timestamptz DEFAULT clock_timestamp()
 );
 CREATE TABLE happy_worker_sched_probe.requests(
