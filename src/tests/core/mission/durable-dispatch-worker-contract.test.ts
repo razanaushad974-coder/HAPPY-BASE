@@ -280,6 +280,9 @@ async function run(): Promise<void> {
       outcomeCalls += 1;
       return { ...queuedOutbox, status: input.status, outcome: { ...input.outcome } };
     },
+    async appendReconciliationEvidence() {
+      throw new Error("acknowledged dispatch must not be reconciled");
+    },
   };
   let durableProviderCalls = 0;
   const durableResult = await runNextDurableDispatch({
@@ -313,6 +316,52 @@ async function run(): Promise<void> {
   );
   assert(heartbeatCalls === 1 && outcomeCalls === 1 && durableProviderCalls === 1,
     "durable worker lifecycle must heartbeat and persist exactly once");
+
+  let reconciliationEvidenceCalls = 0;
+  const ambiguousOutbox = { ...queuedOutbox, outboxId: "outbox-ambiguous-1", idempotencyKey: "ambiguous-key-1" };
+  const ambiguousBroker: Pick<WorkerDatabaseBroker, "claimNextDispatch" | "heartbeatLease" | "recordDispatchOutcome" | "appendReconciliationEvidence"> = {
+    async claimNextDispatch() { return ambiguousOutbox; },
+    async heartbeatLease() { return "2026-11-21T10:05:00.000Z"; },
+    async recordDispatchOutcome(input) {
+      return { ...ambiguousOutbox, status: input.status, outcome: { ...input.outcome } };
+    },
+    async appendReconciliationEvidence(input) {
+      reconciliationEvidenceCalls += 1;
+      assert(input.outboxId === ambiguousOutbox.outboxId &&
+        input.idempotencyKey === ambiguousOutbox.idempotencyKey &&
+        input.status === "SUCCEEDED",
+      "reconciliation evidence must remain bound to the claimed outbox and idempotency key");
+      return input.evidenceId;
+    },
+  };
+  const ambiguousRun = await runNextDurableDispatch({
+    broker: ambiguousBroker,
+    tenantScope,
+    ownerId: "worker-instance-42",
+    leaseMilliseconds: 30_000,
+    identityProvider: { async getVerifiedWorkerIdentity() { return workerIdentity; } },
+    provider: {
+      providerId: "durable-provider",
+      supportsIdempotencyKeys: true,
+      async dispatch() { throw new Error("transport closed after provider accepted request"); },
+    },
+    reconciliationProvider: {
+      providerId: "durable-provider",
+      supportsIdempotencyKeys: true,
+      async lookupByIdempotencyKey() {
+        return { status: "SUCCEEDED", providerRequestId: "remote-ambiguous-1", result: { accepted: true } };
+      },
+    },
+    now: () => workerNow * 1000,
+  });
+  assert(ambiguousRun.status === "PROCESSED" &&
+    ambiguousRun.result.status === "RECORDED" &&
+    ambiguousRun.result.outcome === "AMBIGUOUS" &&
+    ambiguousRun.reconciliation?.status === "RECORDED" &&
+    ambiguousRun.reconciliation.decision.status === "VERIFICATION_REQUIRED",
+  "ambiguous provider result must trigger read-only reconciliation and persist evidence");
+  assert(reconciliationEvidenceCalls === 1,
+    "provider reconciliation must append exactly one immutable evidence record");
 
   const emptyQueueResult = await runNextDurableDispatch({
     broker: {
