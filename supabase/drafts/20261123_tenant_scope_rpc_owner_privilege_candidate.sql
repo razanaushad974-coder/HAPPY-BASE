@@ -23,6 +23,28 @@ AS $current_user$
   SELECT auth.uid();
 $current_user$;
 
+ALTER FUNCTION private.happy_current_authenticated_user_id() OWNER TO postgres;
+
+DO $accessor_check$
+DECLARE v_owner text; v_config text[];
+BEGIN
+  SELECT pg_catalog.pg_get_userbyid(p.proowner), p.proconfig
+    INTO v_owner, v_config
+    FROM pg_catalog.pg_proc p
+    JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+   WHERE n.nspname='private'
+     AND p.proname='happy_current_authenticated_user_id';
+  IF v_owner <> 'postgres'
+     OR NOT ('search_path=pg_catalog' = ANY(v_config))
+     OR NOT (SELECT p.prosecdef FROM pg_catalog.pg_proc p
+              JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+             WHERE n.nspname='private'
+               AND p.proname='happy_current_authenticated_user_id') THEN
+    RAISE EXCEPTION 'JWT subject accessor owner/security/search_path mismatch';
+  END IF;
+END
+$accessor_check$;
+
 REVOKE ALL ON FUNCTION private.happy_current_authenticated_user_id()
   FROM public, anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION private.happy_current_authenticated_user_id()
