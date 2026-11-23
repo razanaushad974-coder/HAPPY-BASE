@@ -36,7 +36,7 @@ returns table (
 language plpgsql
 security definer
 set search_path = pg_catalog
-as $claim$
+as $claim$;
 declare
   v_actor uuid;
   v_mission jsonb;
@@ -209,7 +209,7 @@ returns public.happy_execution_dispatch_outbox
 language plpgsql
 security definer
 set search_path = pg_catalog
-as $enqueue$
+as $enqueue$;
 declare
   v_actor uuid;
   v_lease public.happy_mission_task_leases%rowtype;
@@ -436,7 +436,7 @@ returns timestamptz
 language plpgsql
 security definer
 set search_path = pg_catalog
-as $heartbeat$
+as $heartbeat$;
 declare
   v_actor uuid;
   v_expires_at timestamptz;
@@ -485,7 +485,7 @@ returns public.happy_execution_dispatch_outbox
 language plpgsql
 security definer
 set search_path = pg_catalog
-as $dispatch$
+as $dispatch$;
 declare
   v_actor uuid;
   v_lease public.happy_mission_task_leases%rowtype;
@@ -576,7 +576,7 @@ returns public.happy_execution_dispatch_outbox
 language plpgsql
 security definer
 set search_path = pg_catalog
-as $outcome$
+as $outcome$;
 declare
   v_actor uuid;
   v_outbox public.happy_execution_dispatch_outbox%rowtype;
@@ -665,7 +665,7 @@ returns uuid
 language plpgsql
 security definer
 set search_path = pg_catalog
-as $append$
+as $append$;
 declare
   v_actor uuid;
   v_outbox public.happy_execution_dispatch_outbox%rowtype;
@@ -763,7 +763,7 @@ returns table (
 language plpgsql
 security definer
 set search_path = pg_catalog
-as $read_evidence$
+as $read_evidence$;
 declare
   v_actor uuid;
   v_outbox public.happy_execution_dispatch_outbox%rowtype;

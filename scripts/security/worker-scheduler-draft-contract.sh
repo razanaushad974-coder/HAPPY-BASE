@@ -22,14 +22,13 @@ tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 
 for function_name in "${functions[@]}"; do
-  awk -v fn="$function_name" '
-    $0 ~ "create or replace function private\." fn "\\(" { inside=1 }
+  if ! awk -v fn="$function_name" '
+    $0 ~ "create or replace function private\\." fn "\\(" { inside=1 }
     inside { print }
-    inside && /^\$[a-z_]+\$;$/ { exit }
-  ' "$SQL_FILE" > "$tmp"
-
-  if [[ ! -s "$tmp" ]]; then
-    echo "Missing worker RPC definition: $function_name" >&2
+    inside && /^\\$[a-z_]+\\$;$/ { found_end=1; exit }
+    END { if (!found_end) exit 2 }
+  ' "$SQL_FILE" > "$tmp"; then
+    echo "Missing or unterminated worker RPC definition: $function_name" >&2
     exit 1
   fi
   if ! grep -q "happy_require_worker_tenant_scope" "$tmp"; then
