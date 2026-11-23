@@ -75,3 +75,34 @@ A local PostgreSQL 17 harness is not proof that hosted Supabase preserves `sessi
 ## Acceptance gate
 
 Only promote a reviewed migration when it has: an ordered dependency chain; explicit function owners and grants; static SQL contract checks; disposable PostgreSQL adversarial tests; hosted staging verification using the actual login/pooler; and a reviewed rollback/recovery procedure. Keep all worker RPCs unavailable until the worker identity and approval binding tests pass.
+
+
+## Second-pass migration graph audit — 2026-11-23
+
+The repository tree at reviewed head `d173678120220e23913f86adf23bc304d9dc254f` was inspected recursively. It confirms there is no `supabase/config.toml`, no `supabase/migrations/`, and no alternative checked-in SQL migration directory. The only Supabase SQL files are under `supabase/drafts/`.
+
+### Additional P0/P1 dependency findings
+
+- **Superseded dependency reference:** `20261121_authenticated_execution_envelope_candidate.sql` declares a dependency on `20261121_authenticated_execution_request_rpc_candidate.sql`. The latter is now a 12-line superseded design note with no executable SQL; it explicitly says the final create/resolve RPC definitions are in the envelope candidate. A future migration assembler must not treat the superseded placeholder as a schema-producing prerequisite. The dependency comment and migration manifest must be corrected together.
+- **Legacy tenant-context owner note conflicts with current owner model:** `20261121_authenticated_tenant_context_rpc_candidate.sql` still documents a dedicated BYPASSRLS owner as one candidate. That conflicts with the current NOLOGIN/NOBYPASSRLS owner policy and the newer tenant-scope owner candidates. It must be reconciled or excluded; it must not be copied into a deployable migration unchanged.
+- **Authenticated execution request placeholder:** the intermediate `20261121_authenticated_execution_request_rpc_candidate.sql` must remain explicitly excluded from any executable migration chain. The actual RPC definitions and current owner/grant design need to be assembled from the envelope and current owner candidates after signature-level review.
+- **Worker sequence is not just file order:** the registry/helper and scheduler/grant candidates depend on the final tenant identity, execution-request/approval, durable scheduler, and function-owner baselines. Their presence in the repository does not mean their prerequisites are deployable or complete.
+
+### Safe migration assembly order (proposed, not applied)
+
+1. **Bootstrap and baseline:** add a reviewed `supabase/config.toml` and create the first migration from the canonical organization/workspace/membership and execution-request identity schema. Separate legacy file-mutation approval objects from the baseline if their broad `service_role` table grants and public SECURITY DEFINER endpoint are not redesigned and approved.
+2. **Tenant persistence:** tenant record table, exact CAS functions, tenant-scope owner role/privileges, and lock-only RLS policies; verify all referenced objects and signatures.
+3. **Human execution/approval:** execution-request envelope, create/resolve/decision RPCs, immutable approval events, and their separate NOLOGIN/NOBYPASSRLS owners/privileges. Do not include the superseded placeholder as a migration.
+4. **Durable scheduler base:** leases, outbox, reconciliation evidence, human-session RPCs and immutable transition guards; first close graph/retry/approval-binding and owner/grant review findings.
+5. **Worker registry:** registry/tenant-grant tables, identity helper, dedicated registry owner and its exact privileges.
+6. **Worker RPCs:** worker-specific RPCs, scheduler owner privileges, and capability-specific EXECUTE grants. Keep grants withheld until a real dedicated LOGIN and pooler-preserved `session_user` are proven.
+7. **Runtime connection:** only after the database contract passes, connect the Vercel OIDC identity verifier and dedicated PostgreSQL pool; run live principal, revocation, fencing, and late-response tests.
+
+This is a dependency proposal, not authorization to deploy. Migration files must be generated using the Supabase CLI migration workflow, reviewed as a complete ordered chain, and tested against disposable staging before any apply operation.
+
+### Next work that is safe without database writes
+
+- Correct stale dependency comments and superseded-file labels in drafts.
+- Build a migration manifest that maps every object/function to its prerequisite and intended owner.
+- Add static checks that reject BYPASSRLS owner definitions, unresolved function signatures, missing revokes, public execution, broad API-role grants, and migration references to superseded drafts.
+- Prepare a staging acceptance script, but do not create permanent roles, tables, grants, credentials, or apply migrations without explicit approval.
