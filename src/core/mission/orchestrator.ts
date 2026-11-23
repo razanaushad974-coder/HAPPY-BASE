@@ -29,7 +29,6 @@ import {
 } from "./durable-dispatch-worker-contract";
 import type { ProviderStatusReader } from "./provider-dispatch-reconciliation";
 import type { TenantScope } from "../state/types";
-import { requireCompleteScope, type AsyncTenantPersistenceAdapter } from "../persistence/async-tenant-repository";
 import type { VerificationRequest, VerificationResult } from "../verification/types";
 import type { Evidence } from "../evidence/types";
 import {
@@ -161,7 +160,13 @@ export class MissionOrchestrator {
     provider: IdempotentDispatchProvider;
     reconciliationProvider?: ProviderStatusReader;
     now?: () => number;
-  }): Promise<WorkerRuntimeComposition | ApprovedTaskEnqueueResult | DurableDispatchPollResult | { status: "NO_READY_TASK" }> {
+  }): Promise<
+    WorkerRuntimeComposition |
+    ApprovedTaskEnqueueResult |
+    DurableDispatchPollResult |
+    { status: "NO_READY_TASK" } |
+    { status: "NOT_CONNECTED"; missing: "TENANT_PERSISTENCE" }
+  > {
     const scope = input.scope;
     requireCompleteScope(scope);
     if (
