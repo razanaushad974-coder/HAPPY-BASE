@@ -8,6 +8,7 @@ import type {
 import {
   reconcileProviderDispatch,
   type ProviderStatusReader,
+  type ProviderReconciliationEvidenceStore,
   type ReconciliationResult,
 } from "./provider-dispatch-reconciliation";
 
@@ -244,8 +245,8 @@ export async function runNextDurableDispatch(input: {
     result.status === "RECORDED" &&
     (result.outcome === "AMBIGUOUS" || result.outcome === "RECONCILIATION_REQUIRED")
   ) {
-    const evidenceStore = {
-      async append(evidence: Parameters<import("./provider-dispatch-reconciliation").ProviderReconciliationEvidenceStore["append"]>[0]) {
+    const evidenceStore: ProviderReconciliationEvidenceStore = {
+      async append(evidence) {
         await input.broker.appendReconciliationEvidence({
           tenantScope: input.tenantScope,
           outboxId: evidence.outboxId,
