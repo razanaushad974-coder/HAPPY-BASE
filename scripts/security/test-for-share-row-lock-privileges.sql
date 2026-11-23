@@ -1,82 +1,89 @@
--- Disposable PostgreSQL 17 / Supabase privilege probe.
+-- Disposable PostgreSQL 17 row-lock / RLS probe.
 -- Run only on an isolated test database as a database administrator.
--- Uses Supabase's built-in authenticated role so SET LOCAL ROLE is supported.
 -- Entire test rolls back. Creates no persistent objects.
 BEGIN;
-
-DO $preflight$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'authenticated') THEN
-    RAISE EXCEPTION 'Missing Supabase authenticated role; use a Supabase test database';
-  END IF;
-  IF NOT pg_catalog.pg_has_role(current_user, 'authenticated', 'MEMBER') THEN
-    RAISE EXCEPTION 'Current database role cannot SET ROLE authenticated';
-  END IF;
-END
-$preflight$;
 
 CREATE SCHEMA happy_for_share_probe;
 CREATE TABLE happy_for_share_probe.scope_rows (
   id bigint PRIMARY KEY,
-  tenant_id text NOT NULL,
   lock_marker boolean NOT NULL DEFAULT false
 );
-INSERT INTO happy_for_share_probe.scope_rows (id, tenant_id) VALUES (1, 'tenant-a');
+INSERT INTO happy_for_share_probe.scope_rows (id) VALUES (1);
 
 ALTER TABLE happy_for_share_probe.scope_rows ENABLE ROW LEVEL SECURITY;
 CREATE POLICY happy_for_share_probe_select
   ON happy_for_share_probe.scope_rows
   FOR SELECT TO authenticated
-  USING (tenant_id = 'tenant-a');
+  USING (true);
 
 GRANT USAGE ON SCHEMA happy_for_share_probe TO authenticated;
 GRANT SELECT ON happy_for_share_probe.scope_rows TO authenticated;
-
--- Probe A: SELECT + RLS SELECT policy, but no UPDATE privilege.
--- PostgreSQL should reject SELECT ... FOR SHARE with insufficient_privilege.
-SET LOCAL ROLE authenticated;
-DO $probe$
-BEGIN
-  BEGIN
-    PERFORM id
-    FROM happy_for_share_probe.scope_rows
-    WHERE id = 1
-    FOR SHARE;
-    RAISE EXCEPTION 'FAIL: FOR SHARE unexpectedly succeeded without UPDATE privilege';
-  EXCEPTION
-    WHEN insufficient_privilege THEN
-      RAISE NOTICE 'PASS: FOR SHARE requires an UPDATE privilege in addition to SELECT';
-  END;
-END
-$probe$;
-RESET ROLE;
-
--- Probe B: grant UPDATE on one inert marker column, but do not create an UPDATE
--- RLS policy. The role can acquire the row lock, while UPDATE must affect zero rows.
 GRANT UPDATE (lock_marker) ON happy_for_share_probe.scope_rows TO authenticated;
 
+-- Probe A: no UPDATE RLS policy. FOR SHARE does not throw; RLS filters the
+-- row from the locking SELECT, so FOUND must be false.
 SET LOCAL ROLE authenticated;
-DO $probe$
+DO $without_update_policy$
+BEGIN
+  PERFORM id
+    FROM happy_for_share_probe.scope_rows
+   WHERE id = 1
+   FOR SHARE;
+
+  IF FOUND THEN
+    RAISE EXCEPTION 'FAIL: FOR SHARE unexpectedly saw a row without UPDATE policy';
+  END IF;
+END
+$without_update_policy$;
+RESET ROLE;
+
+-- Probe B: UPDATE USING allows the row to be locked, but WITH CHECK false
+-- rejects every attempted mutation.
+CREATE POLICY happy_for_share_probe_lock_only
+  ON happy_for_share_probe.scope_rows
+  FOR UPDATE TO authenticated
+  USING (true)
+  WITH CHECK (false);
+
+SET LOCAL ROLE authenticated;
+DO $lock_only$
 DECLARE
   affected bigint;
 BEGIN
   PERFORM id
-  FROM happy_for_share_probe.scope_rows
-  WHERE id = 1
-  FOR SHARE;
+    FROM happy_for_share_probe.scope_rows
+   WHERE id = 1
+   FOR SHARE;
 
-  UPDATE happy_for_share_probe.scope_rows
-     SET lock_marker = true
-   WHERE id = 1;
-  GET DIAGNOSTICS affected = ROW_COUNT;
-
-  IF affected <> 0 THEN
-    RAISE EXCEPTION 'FAIL: UPDATE changed a row without an UPDATE RLS policy';
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'FAIL: FOR SHARE did not return the row under lock-only UPDATE policy';
   END IF;
 
-  RAISE NOTICE 'PASS: FOR SHARE succeeds with column UPDATE grant; RLS without UPDATE policy blocks row mutation';
+  BEGIN
+    UPDATE happy_for_share_probe.scope_rows
+       SET lock_marker = true
+     WHERE id = 1;
+    GET DIAGNOSTICS affected = ROW_COUNT;
+    RAISE EXCEPTION 'FAIL: UPDATE unexpectedly completed; affected=%', affected;
+  EXCEPTION
+    WHEN insufficient_privilege THEN
+      RAISE NOTICE 'PASS: lock-only UPDATE policy rejects row mutation';
+  END;
 END
-$probe$;
+$lock_only$;
 RESET ROLE;
+
+DO $verify$
+DECLARE
+  marker boolean;
+BEGIN
+  SELECT lock_marker INTO marker
+    FROM happy_for_share_probe.scope_rows
+   WHERE id = 1;
+  IF marker IS DISTINCT FROM false THEN
+    RAISE EXCEPTION 'FAIL: row marker changed';
+  END IF;
+END
+$verify$;
 
 ROLLBACK;
