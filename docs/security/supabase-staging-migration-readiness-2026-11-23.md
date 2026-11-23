@@ -106,3 +106,13 @@ This is a dependency proposal, not authorization to deploy. Migration files must
 - Build a migration manifest that maps every object/function to its prerequisite and intended owner.
 - Add static checks that reject BYPASSRLS owner definitions, unresolved function signatures, missing revokes, public execution, broad API-role grants, and migration references to superseded drafts.
 - Prepare a staging acceptance script, but do not create permanent roles, tables, grants, credentials, or apply migrations without explicit approval.
+
+
+## Draft cleanup and static preflight — 2026-11-23
+
+- Replaced `20261121_authenticated_tenant_context_rpc_candidate.sql` with a non-executable superseded note. Its former BYPASSRLS-owner suggestion is explicitly rejected; any required tenant-context RPC must be re-designed against the current NOLOGIN/NOBYPASSRLS owner model.
+- Added `docs/security/supabase-migration-dependency-owner-manifest-2026-11-23.md`, which maps baseline → tenant persistence → authenticated execution/approval → durable scheduler → worker registry → worker RPC grants → runtime, with owner roles, prerequisites, excluded drafts and acceptance evidence.
+- Added `scripts/security/staging-migration-draft-preflight.sh`. It checks required draft inventory, five NOLOGIN/NOINHERIT/NOBYPASSRLS owner definitions, superseded-note inertness, separation of worker RPC grants, and reuses the existing worker scheduler contract test. It reports the absent Supabase config/migration chain as a hard **BLOCKED** gate and never applies SQL.
+- Fetched the committed script and all five owner-role candidates from the branch and independently checked the expected role attributes. Both superseded SQL notes were confirmed to contain no executable DDL/DCL; worker base RPC SQL contains no EXECUTE grants, and all eight worker RPCs appear in the separate CONTROL/VERIFY grant candidate.
+
+**Verification boundary:** these are repository-content/static checks performed against fetched branch files. The new shell preflight has not yet been run in a checked-out repository/CI environment. No local PostgreSQL or hosted staging migration was run as part of this cleanup. The project remains empty and not ready to apply.
