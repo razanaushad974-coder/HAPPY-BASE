@@ -16,7 +16,7 @@ const config = {
   expectedSubject: "owner:team:project:happy-worker:environment:staging",
   expectedWorkloadClaims: { ownerId: "owner_123", projectId: "prj_worker_123", environment: "staging" },
   maxTokenLifetimeSeconds: 300,
-  capabilities: ["API", "VERIFY"] as const,
+  capabilities: ["CODE", "FILE", "API", "BROWSER", "SHELL", "DATABASE", "AI", "DEPLOYMENT", "PUBLISH", "AUTOMATION", "DEPLOY", "CONTROL", "VERIFY"] as const,
   now: () => now * 1000,
 };
 
@@ -51,7 +51,7 @@ async function main() {
 
   const accepted = await verifier.verifyCredential(token(validClaims));
   assert(accepted?.subject === validClaims.sub, "valid signed OIDC credential rejected");
-  assert(accepted?.capabilities.join(",") === "API,VERIFY", "server-owned capabilities not applied");
+  assert(accepted?.capabilities.length === 13 && accepted.capabilities.includes("CODE") && accepted.capabilities.includes("AUTOMATION"), "server-owned execution capabilities not applied");
   assert(fetchCount === 1, "JWKS should be fetched once and cached");
   const standardJwks = new JwksOidcWorkerCredentialVerifier(config, async () => ({
     ok: true, status: 200, async json() { return { keys: [{ ...jwk, kid: "key-1" }] }; },
