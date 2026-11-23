@@ -300,12 +300,25 @@ GRANT EXECUTE ON FUNCTION happy_worker_sched_probe.control_cycle() TO authentica
 GRANT EXECUTE ON FUNCTION happy_worker_sched_probe.verify_cycle() TO authenticated;
 
 SET LOCAL ROLE authenticated;
-DO $test$
+DO $control_test$
 BEGIN
  IF happy_worker_sched_probe.control_cycle() IS DISTINCT FROM true THEN RAISE EXCEPTION 'CONTROL worker lifecycle failed'; END IF;
+END
+$control_test$;
+RESET ROLE;
+
+-- Revoke CONTROL from the synthetic session principal before testing VERIFY.
+-- The same session_user is retained; only the registered capability set changes.
+UPDATE happy_worker_sched_probe.principal_registry
+   SET capabilities=ARRAY['VERIFY']::text[]
+ WHERE db_login_role=session_user;
+
+SET LOCAL ROLE authenticated;
+DO $verify_test$
+BEGIN
  IF happy_worker_sched_probe.verify_cycle() IS DISTINCT FROM true THEN RAISE EXCEPTION 'VERIFY worker evidence lifecycle failed'; END IF;
 END
-$test$;
+$verify_test$;
 RESET ROLE;
 
 DO $assert$
