@@ -63,7 +63,7 @@ Every application function-owner role must be:
 ## Required acceptance evidence before staging apply
 
 1. Static draft contract passes, including exact function signature ↔ grant matching.
-2. A new identity-only Stage 0 migration exists, and the dependency manifest matches actual SQL object references; no blocked or superseded draft is included.
+2. An isolated identity-only Stage 0 SQL draft exists (not yet a Supabase migration); it and the execution-request base draft match actual SQL object references. Before staging, create ordered CLI migrations from reviewed drafts and replay the full chain from an empty database; no blocked or superseded draft may be included.
 3. Each function owner has exact schema, table, column, and helper-function privileges; no excess privileges.
 4. PostgreSQL 17 adversarial tests pass for RLS, FOR SHARE locks, forbidden updates, owner role attributes, and membership graph.
 5. Authenticated tests pass with real Supabase JWTs: tenant isolation, revoked membership, self-approval denial, immutable envelope, stale CAS and transaction rollback.
