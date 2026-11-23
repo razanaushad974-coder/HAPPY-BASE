@@ -25,6 +25,11 @@ import {
   type IdempotentDispatchProvider,
 } from "./durable-dispatch-worker-contract";
 import type { ProviderStatusReader } from "./provider-dispatch-reconciliation";
+import type { TenantScope } from "../state/types";
+import {
+  requireCompleteScope,
+  type AsyncTenantPersistenceAdapter,
+} from "../persistence/async-tenant-repository";
 
 export class MissionOrchestrator {
   private readonly missionEngine = new MissionEngine();
@@ -91,6 +96,32 @@ export class MissionOrchestrator {
       ...(input.reconciliationProvider ? { reconciliationProvider: input.reconciliationProvider } : {}),
       ...(input.now ? { now: input.now } : {}),
     });
+  }
+
+  /**
+   * Creates a mission and its complete task graph in one tenant-bound
+   * persistence transaction. This is an explicit durable entry point: callers
+   * must supply the authenticated tenant scope and a real transactional
+   * adapter. It never falls back to the synchronous in-memory create path.
+   *
+   * The worker outbox is intentionally a later lifecycle boundary: no task is
+   * dispatched here, and approval-gated tasks remain governed by the persisted
+   * execution-request / founder-approval checks in the worker RPC.
+   */
+  async createDurable(
+    plan: ExecutionPlan,
+    scope: TenantScope,
+    persistence: AsyncTenantPersistenceAdapter,
+  ): Promise<MissionSnapshot> {
+    requireCompleteScope(scope);
+    const snapshot = this.create(plan);
+    await persistence.transaction(scope, async (transaction) => {
+      await transaction.create(scope, "MISSION", snapshot.mission.id, snapshot.mission);
+      for (const task of snapshot.graph.tasks) {
+        await transaction.create(scope, "TASK", task.id, task);
+      }
+    });
+    return snapshot;
   }
 
   create(plan: ExecutionPlan): MissionSnapshot {
