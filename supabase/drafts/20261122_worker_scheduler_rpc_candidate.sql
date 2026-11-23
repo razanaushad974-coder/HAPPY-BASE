@@ -576,6 +576,7 @@ declare
   v_actor uuid;
   v_lease public.happy_mission_task_leases%rowtype;
   v_outbox public.happy_execution_dispatch_outbox%rowtype;
+  v_request private.execution_requests%rowtype;
 begin
   v_actor := private.happy_require_worker_tenant_scope(
     p_worker_principal_id, p_organization_id, p_workspace_id, p_user_id,
@@ -636,6 +637,35 @@ begin
      or v_outbox.lease_id <> v_lease.lease_id
      or v_outbox.fencing_token <> v_lease.fencing_token then
     raise exception 'STALE_OR_EXPIRED_DISPATCH_LEASE' using errcode = '55000';
+  end if;
+
+  -- Approval is revalidated at dispatch time, not only when the outbox was
+  -- enqueued. The request row is locked so a concurrent approval revocation
+  -- cannot race the transition from PENDING to DISPATCHED.
+  select r.* into v_request
+    from private.execution_requests r
+   where r.request_id = v_outbox.execution_request_id
+     and r.organization_id = p_organization_id
+     and r.workspace_id = p_workspace_id
+     and r.requester_user_id = v_actor
+     and r.executor_user_id = v_actor
+     and r.mission_id = v_outbox.mission_id
+     and r.task_id = v_outbox.task_id
+   for share;
+
+  if not found
+     or v_request.status <> 'READY'
+     or v_request.approval_status <> 'APPROVED'
+     or v_request.requires_approval is distinct from true
+     or v_request.required_approval_role <> 'FOUNDER'
+     or v_request.decided_by is null
+     or v_request.decided_by in (v_request.requester_user_id,v_request.executor_user_id)
+     or v_request.decided_at is null
+     or v_request.risk <> 'HIGH'
+     or v_request.idempotency_key <> v_outbox.idempotency_key
+     or v_request.capability <> v_outbox.capability
+     or v_request.action <> v_outbox.action then
+    raise exception 'PERSISTED_APPROVED_EXECUTION_REQUEST_REQUIRED' using errcode = '42501';
   end if;
 
   update public.happy_execution_dispatch_outbox
