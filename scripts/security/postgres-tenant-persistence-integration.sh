@@ -220,7 +220,9 @@ begin
      or not has_table_privilege('happy_execution_request_create_rpc_owner',
       'private.execution_requests', 'INSERT')
      or has_table_privilege('happy_execution_request_create_rpc_owner',
-      'private.execution_requests', 'UPDATE,DELETE') then
+      'private.execution_requests', 'UPDATE')
+     or has_table_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests', 'DELETE') then
     raise exception 'execution request create owner table privileges are not least-privilege';
   end if;
   if not has_table_privilege('happy_execution_request_decision_rpc_owner',
