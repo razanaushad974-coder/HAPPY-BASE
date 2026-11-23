@@ -36,7 +36,7 @@ returns table (
 language plpgsql
 security definer
 set search_path = pg_catalog
-as $claim$;
+as $claim$
 declare
   v_actor uuid;
   v_mission jsonb;
@@ -184,7 +184,7 @@ begin
 
   return query select v_lease_id, v_attempt, v_fencing_token, v_expires_at, v_task_version + 1;
 end;
-$claim$
+$claim$;
 
 -- Worker-only twin of happy_enqueue_mission_dispatch; uses DB-derived identity and a
 -- transactionally locked worker-to-user tenant scope.
@@ -209,7 +209,7 @@ returns public.happy_execution_dispatch_outbox
 language plpgsql
 security definer
 set search_path = pg_catalog
-as $enqueue$;
+as $enqueue$
 declare
   v_actor uuid;
   v_lease public.happy_mission_task_leases%rowtype;
@@ -416,7 +416,7 @@ begin
 
   return v_outbox;
 end;
-$enqueue$
+$enqueue$;
 
 -- Worker-only twin of happy_heartbeat_mission_task_lease; uses DB-derived identity and a
 -- transactionally locked worker-to-user tenant scope.
@@ -436,7 +436,7 @@ returns timestamptz
 language plpgsql
 security definer
 set search_path = pg_catalog
-as $heartbeat$;
+as $heartbeat$
 declare
   v_actor uuid;
   v_expires_at timestamptz;
@@ -467,7 +467,7 @@ begin
   if not found then raise exception 'STALE_OR_EXPIRED_LEASE' using errcode = '55000'; end if;
   return v_expires_at;
 end;
-$heartbeat$
+$heartbeat$;
 
 -- Worker-only twin of happy_claim_dispatch_outbox; uses DB-derived identity and a
 -- transactionally locked worker-to-user tenant scope.
@@ -485,7 +485,7 @@ returns public.happy_execution_dispatch_outbox
 language plpgsql
 security definer
 set search_path = pg_catalog
-as $dispatch$;
+as $dispatch$
 declare
   v_actor uuid;
   v_lease public.happy_mission_task_leases%rowtype;
@@ -556,7 +556,7 @@ begin
   if not found then raise exception 'OUTBOX_ALREADY_CLAIMED_OR_REQUIRES_RECONCILIATION' using errcode = '55000'; end if;
   return v_outbox;
 end;
-$dispatch$
+$dispatch$;
 
 -- Worker-only twin of happy_record_dispatch_outcome; uses DB-derived identity and a
 -- transactionally locked worker-to-user tenant scope.
@@ -576,7 +576,7 @@ returns public.happy_execution_dispatch_outbox
 language plpgsql
 security definer
 set search_path = pg_catalog
-as $outcome$;
+as $outcome$
 declare
   v_actor uuid;
   v_outbox public.happy_execution_dispatch_outbox%rowtype;
@@ -644,7 +644,7 @@ begin
   end if;
   return v_outbox;
 end;
-$outcome$
+$outcome$;
 
 -- Worker-only twin of happy_append_dispatch_reconciliation_evidence; uses DB-derived identity and a
 -- transactionally locked worker-to-user tenant scope.
@@ -665,7 +665,7 @@ returns uuid
 language plpgsql
 security definer
 set search_path = pg_catalog
-as $append$;
+as $append$
 declare
   v_actor uuid;
   v_outbox public.happy_execution_dispatch_outbox%rowtype;
@@ -737,7 +737,7 @@ begin
 
   return p_evidence_id;
 end;
-$append$
+$append$;
 
 -- Worker-only twin of happy_list_dispatch_reconciliation_evidence; uses DB-derived identity and a
 -- transactionally locked worker-to-user tenant scope.
@@ -763,7 +763,7 @@ returns table (
 language plpgsql
 security definer
 set search_path = pg_catalog
-as $read_evidence$;
+as $read_evidence$
 declare
   v_actor uuid;
   v_outbox public.happy_execution_dispatch_outbox%rowtype;
@@ -834,7 +834,7 @@ begin
        and e.outbox_id = p_outbox_id
      order by e.observed_at, e.evidence_id;
 end;
-$read_evidence$
+$read_evidence$;
 
 revoke all on function private.happy_worker_claim_mission_task(uuid,uuid,uuid,uuid,text,text,text,integer)
   from public, anon, authenticated, service_role;
