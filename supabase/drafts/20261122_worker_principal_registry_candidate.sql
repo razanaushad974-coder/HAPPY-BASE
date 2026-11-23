@@ -138,50 +138,15 @@ create policy happy_worker_workspace_memberships_owner_read
   on private.workspace_memberships
   for select to happy_worker_registry_owner using (true);
 
--- SELECT ... FOR SHARE must pass the owner's UPDATE RLS policy as well.
--- Actual UPDATE privilege remains column-scoped (enabled/status only) in the
--- operator setup; this policy does not grant table-level DML.
-drop policy if exists happy_worker_registry_owner_lock on private.happy_worker_principal_registry;
-create policy happy_worker_registry_owner_lock
-  on private.happy_worker_principal_registry
-  for update to happy_worker_registry_owner
-  using (true)
-  with check (true);
-
-drop policy if exists happy_worker_tenant_grants_owner_lock on private.happy_worker_tenant_grants;
-create policy happy_worker_tenant_grants_owner_lock
-  on private.happy_worker_tenant_grants
-  for update to happy_worker_registry_owner
-  using (true)
-  with check (true);
-
-drop policy if exists happy_worker_organizations_owner_lock on private.organizations;
-create policy happy_worker_organizations_owner_lock
-  on private.organizations
-  for update to happy_worker_registry_owner
-  using (true)
-  with check (true);
-
-drop policy if exists happy_worker_workspaces_owner_lock on private.workspaces;
-create policy happy_worker_workspaces_owner_lock
-  on private.workspaces
-  for update to happy_worker_registry_owner
-  using (true)
-  with check (true);
-
-drop policy if exists happy_worker_org_memberships_owner_lock on private.organization_memberships;
-create policy happy_worker_org_memberships_owner_lock
-  on private.organization_memberships
-  for update to happy_worker_registry_owner
-  using (true)
-  with check (true);
-
-drop policy if exists happy_worker_workspace_memberships_owner_lock on private.workspace_memberships;
-create policy happy_worker_workspace_memberships_owner_lock
-  on private.workspace_memberships
-  for update to happy_worker_registry_owner
-  using (true)
-  with check (true);
+-- PostgreSQL 17.12 probe result:
+-- SELECT ... FOR SHARE requires SELECT plus an UPDATE SQL privilege, but it
+-- does NOT require an UPDATE RLS policy. Keep UPDATE policies absent for these
+-- owner roles. A narrowly scoped column-level UPDATE grant may be used solely
+-- to satisfy the row-lock privilege check; without an UPDATE policy, attempts
+-- to mutate rows remain filtered by RLS (verified by the rollback-only probe).
+--
+-- Do not create broad USING (true) / WITH CHECK (true) UPDATE policies here:
+-- they would turn any future UPDATE column grant into an actual mutation path.
 
 create or replace function private.happy_require_worker_principal(
   p_required_capability text
