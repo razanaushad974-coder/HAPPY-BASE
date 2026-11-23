@@ -68,6 +68,30 @@ async function main(): Promise<void> {
             stateFile,
         );
 
+    const disconnectedWorker = await happy.runMissionTaskDispatch({
+        tenantScope: {
+            workerPrincipalId: "worker-principal-test",
+            organizationId: "org-a",
+            workspaceId: "workspace-a",
+            userId: "user-a",
+        },
+        missionId: "mission-not-connected",
+        taskId: "task-not-connected",
+        ownerId: "worker-instance-test",
+        leaseMilliseconds: 30_000,
+        provider: {
+            providerId: "must-not-run",
+            supportsIdempotencyKeys: true,
+            async dispatch() {
+                throw new Error("disconnected worker must not call a provider");
+            },
+        },
+    });
+    assert(
+        disconnectedWorker.status === "NOT_CONNECTED",
+        "default orchestration facade must fail closed until trusted worker dependencies are composed.",
+    );
+
     const lowRisk =
         await happy.run({
             id:

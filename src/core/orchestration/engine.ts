@@ -8,6 +8,7 @@ import {
 import { PersistentMemoryService } from "../memory/persistent-service";
 import { ReasoningOrchestrator } from "../reasoning/orchestrator";
 import { MissionOrchestrator } from "../mission/orchestrator";
+import type { WorkerRuntimeCompositionDependencies } from "../mission/worker-runtime-composition";
 import { MissionEngine } from "../mission/mission-engine";
 import { TaskGraphEngine } from "../mission/task-graph";
 import type { AsyncTenantPersistenceAdapter } from "../persistence/async-tenant-repository";
@@ -97,9 +98,10 @@ export class HappyOrchestrationEngine {
         persistenceFile?: string,
         private readonly approvalVerifier?: PipelineApprovalVerifier,
         private readonly tenantPersistence?: AsyncTenantPersistenceAdapter,
+        workerRuntimeDependencies: WorkerRuntimeCompositionDependencies | null = null,
     ) {
         this.reasoning = new ReasoningOrchestrator();
-        this.mission = new MissionOrchestrator();
+        this.mission = new MissionOrchestrator(workerRuntimeDependencies);
 
         const registry =
             new ExecutionAdapterRegistry();
@@ -166,6 +168,17 @@ export class HappyOrchestrationEngine {
                     this.persistenceFile,
                 ),
             );
+    }
+
+    /**
+     * Exposes one bounded trusted-worker task iteration through the same
+     * orchestration facade. It remains NOT_CONNECTED until server composition
+     * supplies verified Vercel identity, live principal registry and DB broker.
+     */
+    runMissionTaskDispatch(
+        input: Parameters<MissionOrchestrator["runMissionTaskDispatch"]>[0],
+    ): ReturnType<MissionOrchestrator["runMissionTaskDispatch"]> {
+        return this.mission.runMissionTaskDispatch(input);
     }
 
     async run(
