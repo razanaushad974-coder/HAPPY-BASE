@@ -7,6 +7,7 @@ function assert(condition: unknown, message: string): asserts condition {
 
 const calls: Array<{ sql: string; values: readonly unknown[] }> = [];
 let transactionCount = 0;
+let noPendingDispatch = false;
 
 const outboxRow = {
   outbox_id: "outbox-1",
@@ -37,7 +38,9 @@ const session = {
       async query<Row>(sql: string, values: readonly unknown[] = []) {
         calls.push({ sql, values });
         let rows: unknown[];
-        if (sql.includes("happy_worker_claim_mission_task(")) {
+        if (sql.includes("happy_worker_claim_next_dispatch_outbox(") && noPendingDispatch) {
+          rows = [];
+        } else if (sql.includes("happy_worker_claim_mission_task(")) {
           rows = [{ lease_id: "lease-1", attempt: "2", fencing_token: "4", expires_at: "2026-11-22T00:05:00.000Z", task_version: "9" }];
         } else if (sql.includes("happy_worker_heartbeat_mission_task_lease(")) {
           rows = [{ expires_at: "2026-11-22T00:06:00.000Z" }];
@@ -124,7 +127,11 @@ async function run() {
   assert(evidence.length === 1 && evidence[0].evidenceId === "evidence-1",
     "list evidence must map the scoped evidence rows");
 
-  assert(transactionCount === 8 && calls.length === 8,
+  noPendingDispatch = true;
+  const emptyQueue = await broker.claimNextDispatch({ tenantScope });
+  assert(emptyQueue === null, "an empty dispatch queue must return null without fabricating work");
+
+  assert(transactionCount === 9 && calls.length === 9,
     "every fixed broker operation must execute in its own worker transaction");
   for (const call of calls) {
     const placeholders = [...call.sql.matchAll(/\$(\d+)/g)].map((match) => Number(match[1]));
@@ -144,7 +151,7 @@ async function run() {
   } catch {
     rejected = true;
   }
-  assert(rejected && transactionCount === 8,
+  assert(rejected && transactionCount === 9,
     "invalid scope selectors must fail before opening a database transaction");
 
   console.log("PostgreSQL worker database broker contract: PASS");
