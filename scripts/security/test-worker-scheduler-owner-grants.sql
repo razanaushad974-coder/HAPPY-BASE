@@ -123,14 +123,16 @@ CREATE TABLE happy_worker_sched_probe.tenant_records(
 );
 CREATE TABLE happy_worker_sched_probe.leases(
  organization_id uuid,workspace_id uuid,user_id uuid,mission_id text,task_id text,
- lease_id uuid,owner_id text,attempt int,fencing_token bigint,expires_at timestamptz,updated_at timestamptz,
+ lease_id uuid,owner_id text,attempt int,fencing_token bigint,expires_at timestamptz,
+ created_at timestamptz DEFAULT clock_timestamp(),updated_at timestamptz DEFAULT clock_timestamp(),
  PRIMARY KEY(organization_id,workspace_id,user_id,mission_id,task_id)
 );
 CREATE TABLE happy_worker_sched_probe.outbox(
  outbox_id uuid PRIMARY KEY,organization_id uuid,workspace_id uuid,user_id uuid,
  mission_id text,task_id text,lease_id uuid,fencing_token bigint,attempt int,
  execution_request_id text,idempotency_key text,capability text,action text,
- payload_digest text,payload jsonb,outcome jsonb,status text,updated_at timestamptz
+ payload_digest text,payload jsonb,outcome jsonb,status text,
+ created_at timestamptz DEFAULT clock_timestamp(),updated_at timestamptz DEFAULT clock_timestamp()
 );
 CREATE TABLE happy_worker_sched_probe.requests(
  request_id text PRIMARY KEY,organization_id uuid,workspace_id uuid,requester_user_id uuid,executor_user_id uuid,
@@ -234,19 +236,26 @@ BEGIN
    AND user_id=actor AND entity_type='TASK' AND record_id='task-1' AND version=task_version;
  IF NOT FOUND THEN RAISE EXCEPTION 'task update failed'; END IF;
 
- INSERT INTO happy_worker_sched_probe.leases VALUES
-  ('00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000003',actor,'mission-1','task-1',
-   '00000000-0000-0000-0000-000000000020','worker-owner',1,1,clock_timestamp()+interval '1 minute',clock_timestamp());
+ INSERT INTO happy_worker_sched_probe.leases(
+  organization_id,workspace_id,user_id,mission_id,task_id,lease_id,owner_id,attempt,fencing_token,expires_at
+ ) VALUES (
+  '00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000003',actor,'mission-1','task-1',
+  '00000000-0000-0000-0000-000000000020','worker-owner',1,1,clock_timestamp()+interval '1 minute'
+ );
 
  SELECT * INTO req FROM happy_worker_sched_probe.requests WHERE request_id='req-1' FOR UPDATE;
  IF NOT FOUND THEN RAISE EXCEPTION 'request lock failed'; END IF;
  UPDATE happy_worker_sched_probe.requests SET status='RUNNING' WHERE request_id='req-1' AND status='READY';
  IF NOT FOUND THEN RAISE EXCEPTION 'request update failed'; END IF;
 
- INSERT INTO happy_worker_sched_probe.outbox VALUES
-  ('00000000-0000-0000-0000-000000000030','00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000003',actor,
-   'mission-1','task-1','00000000-0000-0000-0000-000000000020',1,1,'req-1','idem-1','CODE','execute','sha256:'||repeat('a',64),
-   '{"id":"req-1"}'::jsonb,'{}'::jsonb,'PENDING',clock_timestamp());
+ INSERT INTO happy_worker_sched_probe.outbox(
+  outbox_id,organization_id,workspace_id,user_id,mission_id,task_id,lease_id,fencing_token,attempt,
+  execution_request_id,idempotency_key,capability,action,payload_digest,payload
+ ) VALUES (
+  '00000000-0000-0000-0000-000000000030','00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000003',actor,
+  'mission-1','task-1','00000000-0000-0000-0000-000000000020',1,1,'req-1','idem-1','CODE','execute','sha256:'||repeat('a',64),
+  '{"id":"req-1"}'::jsonb
+ );
 
  UPDATE happy_worker_sched_probe.outbox SET status='DISPATCHED',updated_at=clock_timestamp()
   WHERE outbox_id='00000000-0000-0000-0000-000000000030' AND status='PENDING';
