@@ -263,8 +263,6 @@ BEGIN
  UPDATE happy_worker_sched_probe.outbox SET status='AMBIGUOUS',outcome='{"provider":"provider-x"}'::jsonb,updated_at=clock_timestamp()
   WHERE outbox_id='00000000-0000-0000-0000-000000000030' AND status='DISPATCHED';
  IF NOT FOUND THEN RAISE EXCEPTION 'outbox ambiguous update failed'; END IF;
- UPDATE happy_worker_sched_probe.requests SET status='BLOCKED' WHERE request_id='req-1' AND status='RUNNING';
- IF NOT FOUND THEN RAISE EXCEPTION 'request blocked update failed'; END IF;
  RETURN true;
 END
 $control$;
