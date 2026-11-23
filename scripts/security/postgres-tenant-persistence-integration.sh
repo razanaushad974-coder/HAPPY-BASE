@@ -443,25 +443,18 @@ begin
   ) into v_approved;
   if not v_approved then raise exception 'active founder could not approve pending request'; end if;
 
-  select status into v_status from private.execution_requests
-   where request_id='exec-envelope-001';
+  perform set_config('request.jwt.claim.sub',
+    '30000000-0000-4000-8000-000000000003', false);
+  select r.status into v_status
+    from public.resolve_authenticated_execution_request('exec-envelope-001') r;
   if v_status <> 'READY' then raise exception 'founder approval did not transition request to READY'; end if;
 
-  select count(*) into v_count from private.execution_request_approval_events
-   where request_id='exec-envelope-001'
-     and actor_user_id='40000000-0000-4000-8000-000000000004'
-     and decision='APPROVED'
-     and reason='founder approved integration test';
-  if v_count <> 1 then raise exception 'immutable founder approval evidence was not appended exactly once'; end if;
-
+  perform set_config('request.jwt.claim.sub',
+    '40000000-0000-4000-8000-000000000004', false);
   select public.decide_authenticated_execution_request(
     'exec-envelope-001','REJECTED','duplicate decision must be denied'
   ) into v_approved;
   if v_approved then raise exception 'second founder decision unexpectedly succeeded'; end if;
-
-  select count(*) into v_count from private.execution_request_approval_events
-   where request_id='exec-envelope-001';
-  if v_count <> 1 then raise exception 'duplicate decision changed append-only approval evidence'; end if;
 end
 $execution_request_lifecycle$;
 
@@ -600,6 +593,25 @@ end
 $revoked$;
 
 reset role;
+
+do $approval_evidence$
+declare v_count bigint;
+begin
+  select count(*) into v_count
+    from private.execution_request_approval_events
+   where request_id='exec-envelope-001'
+     and actor_user_id='40000000-0000-4000-8000-000000000004'
+     and decision='APPROVED'
+     and reason='founder approved integration test';
+  if v_count <> 1 then
+    raise exception 'immutable founder approval evidence was not appended exactly once';
+  end if;
+  if (select count(*) from private.execution_request_approval_events
+       where request_id='exec-envelope-001') <> 1 then
+    raise exception 'duplicate decision changed append-only approval evidence';
+  end if;
+end
+$approval_evidence$;
 
 do $privileges$
 begin
