@@ -38,6 +38,46 @@ async function main(): Promise<void> {
   }
   if (!missingPrincipalDenied) throw new Error("Durable mission creation accepted a missing user principal.");
 
+  const rootTaskId = snapshot.graph.roots[0];
+  if (!rootTaskId) throw new Error("Durable mission did not persist a root task.");
+  const running = await orchestrator.transitionTaskDurable({
+    scope, persistence, missionId: snapshot.mission.id, taskId: rootTaskId, status: "RUNNING",
+  });
+  const persistedRunningTask = await persistence.get<{ status: string }>(scope, "TASK", rootTaskId);
+  const persistedRunningMission = await persistence.get<{ status: string }>(scope, "MISSION", snapshot.mission.id);
+  if (running.mission.status !== "RUNNING" || persistedRunningTask?.data.status !== "RUNNING" ||
+      persistedRunningTask.version !== 2 || persistedRunningMission?.data.status !== "RUNNING") {
+    throw new Error("Durable task transition did not atomically persist task and mission state.");
+  }
+
+  const dependentTask = snapshot.graph.tasks.find((task) => task.dependencyIds.length > 0);
+  if (dependentTask) {
+    let prematureStartDenied = false;
+    try {
+      await orchestrator.transitionTaskDurable({
+        scope, persistence, missionId: snapshot.mission.id,
+        taskId: dependentTask.id, status: "RUNNING",
+      });
+    } catch {
+      prematureStartDenied = true;
+    }
+    if (!prematureStartDenied) throw new Error("Durable transition allowed a dependent task to start early.");
+  }
+
+  const verifying = await orchestrator.transitionTaskDurable({
+    scope, persistence, missionId: snapshot.mission.id, taskId: rootTaskId, status: "VERIFYING",
+  });
+  if (verifying.graph.tasks.find((task) => task.id === rootTaskId)?.status !== "VERIFYING") {
+    throw new Error("Durable task transition to VERIFYING failed.");
+  }
+  await orchestrator.transitionTaskDurable({
+    scope, persistence, missionId: snapshot.mission.id, taskId: rootTaskId, status: "COMPLETED",
+  });
+  const persistedCompletedTask = await persistence.get<{ status: string }>(scope, "TASK", rootTaskId);
+  if (persistedCompletedTask?.data.status !== "COMPLETED") {
+    throw new Error("Durable task completion was not persisted.");
+  }
+
   let rollbackVerified = false;
   const rollbackId = "rollback-probe";
   try {
@@ -54,6 +94,8 @@ async function main(): Promise<void> {
   console.log({
     missionPersisted: true,
     completeTaskGraphPersisted: true,
+    versionedTaskAndMissionTransitions: true,
+    dependencyGatePreserved: true,
     tenantPrincipalIsolation: true,
     missingPrincipalDenied: true,
     transactionRollback: true,

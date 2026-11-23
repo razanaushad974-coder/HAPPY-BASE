@@ -28,6 +28,7 @@ import type { ProviderStatusReader } from "./provider-dispatch-reconciliation";
 import type { TenantScope } from "../state/types";
 import {
   requireCompleteScope,
+  TenantPersistenceError,
   type AsyncTenantPersistenceAdapter,
 } from "../persistence/async-tenant-repository";
 
@@ -108,6 +109,64 @@ export class MissionOrchestrator {
    * dispatched here, and approval-gated tasks remain governed by the persisted
    * execution-request / founder-approval checks in the worker RPC.
    */
+  /**
+   * Applies a mission-engine task transition and persists both task and
+   * aggregate mission state with version-checked writes in one transaction.
+   * A rejected graph/transition or stale version rolls back the whole change.
+   */
+  async transitionTaskDurable(
+    input: {
+      scope: TenantScope;
+      persistence: AsyncTenantPersistenceAdapter;
+      missionId: string;
+      taskId: string;
+      status: MissionTask["status"];
+    },
+  ): Promise<MissionSnapshot> {
+    requireCompleteScope(input.scope);
+    return input.persistence.transaction(input.scope, async (transaction) => {
+      const missionRecord = await transaction.get<Mission>(
+        input.scope, "MISSION", input.missionId,
+      );
+      if (!missionRecord) throw new TenantPersistenceError("RECORD_NOT_FOUND", "Mission record was not found.");
+
+      const taskRecords = await Promise.all(
+        missionRecord.data.taskIds.map((id) =>
+          transaction.get<MissionTask>(input.scope, "TASK", id),
+        ),
+      );
+      if (taskRecords.some((record) => !record)) {
+        throw new TenantPersistenceError("RECORD_NOT_FOUND", "Mission task graph is incomplete in durable storage.");
+      }
+
+      const records = taskRecords.filter((record): record is NonNullable<typeof record> => Boolean(record));
+      const tasks = records.map((record) => record.data);
+      const transition = this.missionEngine.updateTaskStatus(
+        missionRecord.data, tasks, input.taskId, input.status,
+      );
+      const previousTask = records.find((record) => record.id === input.taskId);
+      const nextTask = transition.tasks.find((task) => task.id === input.taskId);
+      if (!previousTask || !nextTask) {
+        throw new TenantPersistenceError("RECORD_NOT_FOUND", "Mission task was not found in its declared graph.");
+      }
+
+      if (JSON.stringify(previousTask.data) !== JSON.stringify(nextTask)) {
+        await transaction.update(
+          input.scope, "TASK", input.taskId, previousTask.version, nextTask,
+        );
+      }
+      if (JSON.stringify(missionRecord.data) !== JSON.stringify(transition.mission)) {
+        await transaction.update(
+          input.scope, "MISSION", input.missionId, missionRecord.version, transition.mission,
+        );
+      }
+      return {
+        mission: transition.mission,
+        graph: this.graphEngine.buildGraph(transition.tasks),
+      };
+    });
+  }
+
   async createDurable(
     plan: ExecutionPlan,
     scope: TenantScope,
