@@ -43,18 +43,18 @@ assert(/v_existing\.envelope_digest is distinct from v_envelope_digest/i.test(sq
   "Idempotent retries must compare the persisted envelope digest.");
 assert(/row\(new\.request_id[\s\S]*new\.envelope_digest[\s\S]*new\.created_at\)[\s\S]*is distinct from[\s\S]*row\(old\.request_id[\s\S]*old\.envelope_digest[\s\S]*old\.created_at\)/i.test(sql),
   "The database trigger must prevent mutation of immutable envelope fields.");
-assert(/create or replace function private\\.happy_current_authenticated_user_id\\(\\)[\\s\\S]*security definer[\\s\\S]*set search_path = pg_catalog[\\s\\S]*select auth\\.uid\\(\\)/i.test(ownerSql),
+assert(/create or replace function private\.happy_current_authenticated_user_id\(\\)[\\s\\S]*security definer[\\s\\S]*set search_path = pg_catalog[\\s\\S]*select auth\\.uid\(\\)/i.test(ownerSql),
   "JWT subject accessor must be a minimal SECURITY DEFINER wrapper around auth.uid() with a fixed search_path.");
-assert(/alter function private\\.happy_current_authenticated_user_id\\(\\) owner to postgres/i.test(ownerSql) &&
-  /revoke all on function private\\.happy_current_authenticated_user_id\\(\\)[\\s\\S]*from public, anon, authenticated, service_role/i.test(ownerSql) &&
-  /grant execute on function private\\.happy_current_authenticated_user_id\\(\\)[\\s\\S]*to happy_tenant_scope_rpc_owner/i.test(ownerSql),
+assert(/alter function private\.happy_current_authenticated_user_id\(\\) owner to postgres/i.test(ownerSql) &&
+  /revoke all on function private\.happy_current_authenticated_user_id\(\\)[\\s\\S]*from public, anon, authenticated, service_role/i.test(ownerSql) &&
+  /grant execute on function private\.happy_current_authenticated_user_id\(\\)[\\s\\S]*to happy_tenant_scope_rpc_owner/i.test(ownerSql),
   "JWT subject accessor must have the reviewed postgres owner and no API-role EXECUTE grants.");
-assert(/grant execute on function private\\.happy_current_authenticated_user_id\\(\\)[\\s\\S]*to happy_execution_request_create_rpc_owner/i.test(createOwnerSql) &&
-  /grant execute on function private\\.happy_current_authenticated_user_id\\(\\)[\\s\\S]*to happy_execution_request_decision_rpc_owner/i.test(decisionOwnerSql),
+assert(/grant execute on function private\.happy_current_authenticated_user_id\(\\)[\\s\\S]*to happy_execution_request_create_rpc_owner/i.test(createOwnerSql) &&
+  /grant execute on function private\.happy_current_authenticated_user_id\(\\)[\\s\\S]*to happy_execution_request_decision_rpc_owner/i.test(decisionOwnerSql),
   "Only the dedicated execution-request function owners may receive the accessor capability.");
-assert(/v_uid uuid := private\\.happy_current_authenticated_user_id\\(\\)/i.test(sql) &&
-  /v_approver uuid := private\\.happy_current_authenticated_user_id\\(\\)/i.test(sql) &&
-  /r\\.executor_user_id=private\\.happy_current_authenticated_user_id\\(\\)/i.test(sql),
+assert(/v_uid uuid := private\.happy_current_authenticated_user_id\(\\)/i.test(sql) &&
+  /v_approver uuid := private\.happy_current_authenticated_user_id\(\\)/i.test(sql) &&
+  /r\\.executor_user_id=private\.happy_current_authenticated_user_id\(\\)/i.test(sql),
   "Creation, resolution, and decision RPCs must derive the caller from the private verified JWT-subject accessor.");
 assert(/new\.status <> 'WAITING_APPROVAL'[\s\S]*new\.requires_approval is distinct from true[\s\S]*new\.approval_status <> 'PENDING'/i.test(sql),
   "New enveloped requests must start pending founder approval.");
