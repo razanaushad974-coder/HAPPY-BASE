@@ -167,6 +167,12 @@ export class MissionOrchestrator {
     { status: "NO_READY_TASK" } |
     { status: "NOT_CONNECTED"; missing: "TENANT_PERSISTENCE" }
   > {
+    // Resolve trusted workload identity and the live principal registry
+    // before reading tenant scheduling metadata. The claim path re-authorizes
+    // immediately before every broker operation.
+    const composition = await this.prepareWorkerRuntimeOperation("claim_task", input.now);
+    if (composition.status !== "COMPOSITION_AVAILABLE") return composition;
+
     const scope = input.scope;
     requireCompleteScope(scope);
     if (
