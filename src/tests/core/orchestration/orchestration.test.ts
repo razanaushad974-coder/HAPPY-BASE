@@ -23,6 +23,10 @@ import {
     createHappyStateStore,
 } from "../../../core/state/factory";
 
+import {
+    InMemoryTenantPersistenceAdapter,
+} from "../../../core/persistence/adapters/in-memory-tenant-adapter";
+
 function assert(
     condition: boolean,
     message: string,
@@ -610,6 +614,82 @@ async function main(): Promise<void> {
     assert(
         crossTenantBlocked,
         "Cross-tenant direct read was not blocked.",
+    );
+
+    // ==============================================
+    // DURABLE PIPELINE MISSION + TASK INTEGRATION
+    // ==============================================
+
+    const durableTenantStore = new InMemoryTenantPersistenceAdapter();
+    const durableHappy = new HappyOrchestrator(
+        stateFile,
+        undefined,
+        durableTenantStore,
+    );
+    const durableResult = await durableHappy.run({
+        id: "pipeline-durable-mission",
+        command: "research the HAPPY platform architecture",
+        organizationId: "org-durable",
+        workspaceId: "workspace-durable",
+        userId: "user-durable",
+        source: "TEXT",
+        createdAt: new Date().toISOString(),
+    }, {
+        authenticatedActorUserId: "user-durable",
+        organizationId: "org-durable",
+        workspaceId: "workspace-durable",
+    });
+    const durableScope = {
+        organizationId: "org-durable",
+        workspaceId: "workspace-durable",
+        userId: "user-durable",
+    };
+    const durableMissions = await durableTenantStore.list<{ taskIds: string[] }>(
+        durableScope,
+        { entityType: "MISSION" },
+    );
+    const durableTasks = await durableTenantStore.list<{ missionId: string; status: string }>(
+        durableScope,
+        { entityType: "TASK" },
+    );
+
+    assert(
+        durableResult.missionId !== undefined &&
+        durableMissions.some((record) => record.id === durableResult.missionId),
+        "Main orchestration pipeline did not persist its mission through the durable tenant adapter.",
+    );
+    assert(
+        durableTasks.length > 0 &&
+        durableTasks.every((record) => record.data.missionId === durableResult.missionId),
+        "Main orchestration pipeline did not persist the complete task graph in the durable tenant adapter.",
+    );
+    assert(
+        durableTasks.some((record) => record.version > 1),
+        "Main orchestration pipeline did not persist task lifecycle transitions through the durable adapter.",
+    );
+
+    const missionCountBeforePrincipalMismatch = durableMissions.length;
+    const mismatchedPrincipalResult = await durableHappy.run({
+        id: "pipeline-durable-principal-mismatch",
+        command: "research the HAPPY platform architecture",
+        organizationId: "org-durable",
+        workspaceId: "workspace-durable",
+        userId: "user-durable",
+        source: "TEXT",
+        createdAt: new Date().toISOString(),
+    }, {
+        authenticatedActorUserId: "different-user",
+        organizationId: "org-durable",
+        workspaceId: "workspace-durable",
+    });
+    const durableMissionsAfterMismatch = await durableTenantStore.list(
+        durableScope,
+        { entityType: "MISSION" },
+    );
+    assert(
+        mismatchedPrincipalResult.status === "NOT_YET_CONNECTED" &&
+        durableMissionsAfterMismatch.length === missionCountBeforePrincipalMismatch,
+        "Durable pipeline did not fail closed on a request/verified-principal mismatch.",
     );
 
     // ==============================================

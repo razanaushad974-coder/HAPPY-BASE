@@ -10,6 +10,7 @@ import { ReasoningOrchestrator } from "../reasoning/orchestrator";
 import { MissionOrchestrator } from "../mission/orchestrator";
 import { MissionEngine } from "../mission/mission-engine";
 import { TaskGraphEngine } from "../mission/task-graph";
+import type { AsyncTenantPersistenceAdapter } from "../persistence/async-tenant-repository";
 
 import {
     ExecutionAdapterRegistry,
@@ -95,6 +96,7 @@ export class HappyOrchestrationEngine {
     constructor(
         persistenceFile?: string,
         private readonly approvalVerifier?: PipelineApprovalVerifier,
+        private readonly tenantPersistence?: AsyncTenantPersistenceAdapter,
     ) {
         this.reasoning = new ReasoningOrchestrator();
         this.mission = new MissionOrchestrator();
@@ -430,6 +432,43 @@ contextSummary:
             trustedContext.workspaceId === request.workspaceId &&
             trustedContext.authenticatedActorUserId.trim().length > 0;
 
+        // Durable pipeline mode binds persistence to the verified current actor.
+        // A caller-supplied request.userId is never accepted as the database principal.
+        const durableTenantScope =
+            this.tenantPersistence &&
+            trustedContextMatchesRequest &&
+            requesterUserId !== undefined &&
+            requesterUserId === trustedContext.authenticatedActorUserId
+                ? {
+                    organizationId: trustedContext.organizationId,
+                    workspaceId: trustedContext.workspaceId,
+                    userId: trustedContext.authenticatedActorUserId,
+                }
+                : undefined;
+
+        if (this.tenantPersistence && !durableTenantScope) {
+            addStage({
+                stage: "PERSIST",
+                status: "NOT_YET_CONNECTED",
+                summary: "Durable mode requires a verified actor matching the request principal and exact tenant scope.",
+            });
+            return {
+                requestId: request.id,
+                status: "NOT_YET_CONNECTED",
+                currentStage: "PERSIST",
+                trace: {
+                    requestId: request.id,
+                    stages,
+                    currentStage: "PERSIST",
+                    status: "NOT_YET_CONNECTED",
+                    startedAt,
+                    completedAt: new Date().toISOString(),
+                },
+                evidenceIds: [],
+                persisted: false,
+            };
+        }
+
         let verifiedApproval = false;
 
         if (
@@ -568,18 +607,24 @@ contextSummary:
         // The plan retains WAITING_APPROVAL as its audit history, but a
         // persisted approval has already been verified above. Seed the
         // executable mission as READY only on that trusted verification path.
-        const missionSnapshot =
-            this.mission.create(
-                verifiedApproval
-                    ? { ...plan, status: "READY" }
-                    : plan,
-            );
+        const missionPlan = verifiedApproval
+            ? { ...plan, status: "READY" as const }
+            : plan;
+        const missionSnapshot = durableTenantScope && this.tenantPersistence
+            ? await this.mission.createDurable(
+                missionPlan,
+                durableTenantScope,
+                this.tenantPersistence,
+            )
+            : this.mission.create(missionPlan);
 
-        await state.mission().create(
-            missionSnapshot.mission.id,
-            missionSnapshot.mission,
-            request.userId,
-        );
+        if (!durableTenantScope) {
+            await state.mission().create(
+                missionSnapshot.mission.id,
+                missionSnapshot.mission,
+                request.userId,
+            );
+        }
 
         addStage({
             stage: "MISSION",
@@ -594,15 +639,14 @@ contextSummary:
         // TASK GRAPH
         // ==================================================
 
-        for (
-            const task of
-            missionSnapshot.graph.tasks
-        ) {
-            await state.task().create(
-                task.id,
-                task,
-                request.userId,
-            );
+        if (!durableTenantScope) {
+            for (const task of missionSnapshot.graph.tasks) {
+                await state.task().create(
+                    task.id,
+                    task,
+                    request.userId,
+                );
+            }
         }
 
         if (missionSnapshot.graph.tasks.length === 0) {
@@ -682,6 +726,29 @@ contextSummary:
 
         let currentMission = missionSnapshot.mission;
         let currentTasks = missionSnapshot.graph.tasks;
+
+        const transitionTask = async (
+            taskId: string,
+            status: import("../mission/types").TaskStatus,
+        ): Promise<{ mission: typeof currentMission; tasks: typeof currentTasks }> => {
+            if (durableTenantScope && this.tenantPersistence) {
+                const persisted = await this.mission.transitionTaskDurable({
+                    scope: durableTenantScope,
+                    persistence: this.tenantPersistence,
+                    missionId: currentMission.id,
+                    taskId,
+                    status,
+                });
+                return { mission: persisted.mission, tasks: persisted.graph.tasks };
+            }
+            return missionEngine.updateTaskStatus(
+                currentMission,
+                currentTasks,
+                taskId,
+                status,
+            );
+        };
+
         let executionRequestId: string | undefined;
         let verificationRequestId: string | undefined;
         const allEvidenceIds: string[] = [];
@@ -707,12 +774,7 @@ contextSummary:
             }
 
             for (const task of readyTasks) {
-                const running = missionEngine.updateTaskStatus(
-                    currentMission,
-                    currentTasks,
-                    task.id,
-                    "RUNNING",
-                );
+                const running = await transitionTask(task.id, "RUNNING");
                 currentMission = running.mission;
                 currentTasks = running.tasks;
 
@@ -725,11 +787,13 @@ contextSummary:
                     );
                 }
 
-                await state.task().update(task.id, runningTask);
-                await state.mission().update(
-                    currentMission.id,
-                    currentMission,
-                );
+                if (!durableTenantScope) {
+                    await state.task().update(task.id, runningTask);
+                    await state.mission().update(
+                        currentMission.id,
+                        currentMission,
+                    );
+                }
 
                 const executionRequest = {
                     id: `exec-${request.id}-${task.id}`,
@@ -810,12 +874,7 @@ contextSummary:
                     sawBlocked = true;
                 }
 
-                const verifying = missionEngine.updateTaskStatus(
-                    currentMission,
-                    currentTasks,
-                    task.id,
-                    "VERIFYING",
-                );
+                const verifying = await transitionTask(task.id, "VERIFYING");
                 currentMission = verifying.mission;
                 currentTasks = verifying.tasks;
                 const verifyingTask = currentTasks.find(
@@ -826,11 +885,13 @@ contextSummary:
                         `Mission task disappeared before verification: ${task.id}`,
                     );
                 }
-                await state.task().update(task.id, verifyingTask);
-                await state.mission().update(
-                    currentMission.id,
-                    currentMission,
-                );
+                if (!durableTenantScope) {
+                    await state.task().update(task.id, verifyingTask);
+                    await state.mission().update(
+                        currentMission.id,
+                        currentMission,
+                    );
+                }
 
                 const verificationRequest = {
                     id: `verification-${request.id}-${task.id}`,
@@ -951,12 +1012,7 @@ contextSummary:
                     sawBlocked = true;
                 }
 
-                const finalized = missionEngine.updateTaskStatus(
-                    currentMission,
-                    currentTasks,
-                    task.id,
-                    finalTaskStatus,
-                );
+                const finalized = await transitionTask(task.id, finalTaskStatus);
                 currentMission = finalized.mission;
                 currentTasks = finalized.tasks;
 
@@ -969,11 +1025,13 @@ contextSummary:
                     );
                 }
 
-                await state.task().update(task.id, finalizedTask);
-                await state.mission().update(
-                    currentMission.id,
-                    currentMission,
-                );
+                if (!durableTenantScope) {
+                    await state.task().update(task.id, finalizedTask);
+                    await state.mission().update(
+                        currentMission.id,
+                        currentMission,
+                    );
+                }
             }
         }
 

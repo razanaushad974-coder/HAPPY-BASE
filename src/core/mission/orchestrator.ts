@@ -100,16 +100,6 @@ export class MissionOrchestrator {
   }
 
   /**
-   * Creates a mission and its complete task graph in one tenant-bound
-   * persistence transaction. This is an explicit durable entry point: callers
-   * must supply the authenticated tenant scope and a real transactional
-   * adapter. It never falls back to the synchronous in-memory create path.
-   *
-   * The worker outbox is intentionally a later lifecycle boundary: no task is
-   * dispatched here, and approval-gated tasks remain governed by the persisted
-   * execution-request / founder-approval checks in the worker RPC.
-   */
-  /**
    * Applies a mission-engine task transition and persists both task and
    * aggregate mission state with version-checked writes in one transaction.
    * A rejected graph/transition or stale version rolls back the whole change.
@@ -168,6 +158,11 @@ export class MissionOrchestrator {
     });
   }
 
+  /**
+   * Creates the mission and all task rows atomically under the exact verified
+   * tenant principal. This adapter must be a real transactional store in
+   * production; the in-memory adapter is suitable only for contract tests.
+   */
   async createDurable(
     plan: ExecutionPlan,
     scope: TenantScope,

@@ -2,6 +2,8 @@ import {
     HappyOrchestrationEngine,
 } from "./engine";
 
+import type { AsyncTenantPersistenceAdapter } from "../persistence/async-tenant-repository";
+
 import type {
     HappyPipelineRequest,
     HappyPipelineResult,
@@ -16,11 +18,13 @@ export class HappyOrchestrator {
     constructor(
         persistenceFile?: string,
         approvalVerifier?: PipelineApprovalVerifier,
+        tenantPersistence?: AsyncTenantPersistenceAdapter,
     ) {
         this.engine =
             new HappyOrchestrationEngine(
                 persistenceFile,
                 approvalVerifier,
+                tenantPersistence,
             );
     }
 
