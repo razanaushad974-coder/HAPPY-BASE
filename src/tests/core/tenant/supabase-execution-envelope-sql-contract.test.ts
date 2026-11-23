@@ -30,6 +30,16 @@ const decisionOwnerPath = resolve(
   "supabase/drafts/20261123_execution_request_decision_owner_privilege_candidate.sql",
 );
 const decisionOwnerSql = readFileSync(decisionOwnerPath, "utf8");
+const createOwnerRolePath = resolve(
+  process.cwd(),
+  "supabase/drafts/20261123_execution_request_create_owner_role_candidate.sql",
+);
+const createOwnerRoleSql = readFileSync(createOwnerRolePath, "utf8");
+const decisionOwnerRolePath = resolve(
+  process.cwd(),
+  "supabase/drafts/20261123_execution_request_decision_owner_role_candidate.sql",
+);
+const decisionOwnerRoleSql = readFileSync(decisionOwnerRolePath, "utf8");
 
 assert(/add column if not exists input_digest text/i.test(sql), "Payload digest column is missing.");
 assert(/add column if not exists envelope_digest text/i.test(sql), "Immutable envelope digest column is missing.");
@@ -68,9 +78,9 @@ assert(/create table if not exists private\.execution_request_approval_events/i.
 assert(/revoke all on function public\.create_authenticated_execution_request[\s\S]*from public,anon,service_role/i.test(sql) &&
   /grant execute on function public\.create_authenticated_execution_request[\s\S]*to authenticated/i.test(sql),
   "Request creation RPC must be authenticated-only, not service-role callable.");
-assert(/create role happy_execution_request_create_rpc_owner nologin bypassrls/i.test(sql) &&
-  /create role happy_execution_request_decision_rpc_owner nologin bypassrls/i.test(sql),
-  "Privileged RPC ownership must use dedicated NOLOGIN roles.");
+assert(/create role happy_execution_request_create_rpc_owner[\s\S]*nologin noinherit nosuperuser nocreatedb nocreaterole[\s\S]*noreplication nobypassrls/i.test(createOwnerRoleSql) &&
+  /create role happy_execution_request_decision_rpc_owner[\s\S]*nologin noinherit nosuperuser nocreatedb nocreaterole[\s\S]*noreplication nobypassrls/i.test(decisionOwnerRoleSql),
+  "Execution-request RPC owners must be dedicated NOLOGIN, NOINHERIT, NOBYPASSRLS roles.");
 assert(!/create\s+(?:or replace\s+)?function\s+(?:public|private)\.[a-z0-9_]*(?:claim|dispatch|finish|complete)[a-z0-9_]*\s*\(/i.test(sql),
   "This candidate must not introduce a worker claim, dispatch, or completion endpoint.");
 
