@@ -88,7 +88,9 @@ create index happy_tenant_records_scope_updated_idx
     updated_at desc
   );
 
--- The policy helper derives the principal only from auth.uid(). Tenant IDs
+-- The policy helper derives the principal only from the verified JWT subject via
+-- private.happy_current_authenticated_user_id(), a non-exposed, narrowly granted
+-- SECURITY DEFINER accessor around auth.uid(). Tenant IDs
 -- are selectors, never proof of membership. It reads the canonical membership
 -- tables created by the separate identity-schema candidate.
 --
@@ -461,7 +463,8 @@ grant execute on function public.happy_delete_tenant_record(uuid, uuid, text, te
 --    grants it to service_role. This helper therefore needs a deliberately
 --    reviewed owner/privilege design; do not assume it can read those tables.
 -- 3. Verify function owners, BYPASSRLS, FORCE ROW LEVEL SECURITY behavior,
---    table grants, function grants, and auth.uid() with real user JWTs.
+--    table grants, function grants, and the private JWT-subject accessor with
+--    real user JWTs. The tenant RPC owner cannot call the managed auth schema directly.
 -- 4. Direct authenticated INSERT/UPDATE/DELETE is deliberately revoked; create
 --    and CAS RPCs lock the active tenant/membership rows before writing. Test cross-user,
 --    cross-workspace, suspended/revoked membership, duplicate create, stale CAS
