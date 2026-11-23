@@ -274,9 +274,11 @@ async function run(): Promise<void> {
       heartbeatCalls += 1;
       return "2026-11-21T10:05:00.000Z";
     },
-    async recordDispatchOutcome(input: { status: string; outcome: Record<string, unknown> }) {
+    async recordDispatchOutcome(
+      input: Parameters<WorkerDatabaseBroker["recordDispatchOutcome"]>[0],
+    ): Promise<WorkerDispatchOutbox> {
       outcomeCalls += 1;
-      return { ...queuedOutbox, status: input.status, outcome: input.outcome };
+      return { ...queuedOutbox, status: input.status, outcome: { ...input.outcome } };
     },
   };
   let durableProviderCalls = 0;
