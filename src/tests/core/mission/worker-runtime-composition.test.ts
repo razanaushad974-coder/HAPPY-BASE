@@ -176,6 +176,9 @@ async function run() {
         executionRequestId: "request-1", idempotencyKey: "idem-1",
         capability: "API", action: "GET", payloadDigest: "sha256:test", payload: {},
       }),
+      () => composed.broker.claimNextDispatch({
+        tenantScope: scope,
+      }),
       () => composed.broker.claimDispatch({
         tenantScope: scope, outboxId: "outbox-1", leaseId: "lease-1",
         ownerId: claims.subject, fencingToken: 1,
