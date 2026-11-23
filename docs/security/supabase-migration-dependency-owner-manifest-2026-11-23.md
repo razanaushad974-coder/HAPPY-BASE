@@ -18,8 +18,8 @@ The branch currently contains only `supabase/drafts/`; it has no checked-in `sup
 
 | Stage | Source draft(s) | Required predecessor | Intended owner / authority | Status / gate |
 |---|---|---|---|---|
-| 0. Canonical identity baseline | `20261119_file_mutation_atomic_consume_candidate.sql` | Supabase Auth baseline | Administrative migration executor for table bootstrap; runtime access must be separately reviewed | **BLOCKED**: contains legacy broad `service_role` private-table grants and file-mutation endpoint surface; split/rework before migration |
-| 1. Tenant persistence | `20261119_async_tenant_persistence_schema_candidate.sql` | Stage 0 identity tables | `happy_tenant_scope_rpc_owner` | **BLOCKED**: exact SQL, owner privileges, RLS, auth accessor and transaction tests required |
+| 0. Canonical identity baseline | **No approved standalone migration exists yet**; identity table definitions are currently embedded in `20261119_file_mutation_atomic_consume_candidate.sql` only as a blocked reference | Supabase Auth baseline | Administrative migration executor for identity-only table bootstrap; runtime access must be separately reviewed | **BLOCKED / P0**: author a minimal identity-only baseline for organizations, workspaces, organization memberships and workspace memberships. Do not apply the file-mutation candidate wholesale; its legacy broad `service_role` grants and unowned file-mutation endpoint remain excluded |
+| 1. Tenant persistence | `20261119_async_tenant_persistence_schema_candidate.sql` | New minimal Stage 0 identity-only baseline; then tenant owner role and privileges | `happy_tenant_scope_rpc_owner` | **BLOCKED**: current draft must not assume the blocked file-mutation candidate; exact SQL, owner privileges, RLS, auth accessor and transaction tests required |
 | 1a. Tenant owner provisioning | `20261123_tenant_scope_rpc_owner_role_candidate.sql` | Stage 0 | NOLOGIN/NOBYPASSRLS role; trusted `postgres` membership solely for ownership transfer | Design only; membership is not runtime authority |
 | 1b. Tenant owner privileges | `20261123_tenant_scope_rpc_owner_privilege_candidate.sql` | Stages 0–1 and 1a | `happy_tenant_scope_rpc_owner` | Design only; validate function signatures and lock-only RLS policies |
 | 2. Execution request + approval envelope | `20261121_authenticated_execution_envelope_candidate.sql` | Stages 0–1; persisted tenant records | Separate create and decision owners | **BLOCKED**: approval binding and immutable evidence tests required |
@@ -42,7 +42,7 @@ The branch currently contains only `supabase/drafts/`; it has no checked-in `sup
 
 - `20261121_authenticated_execution_request_rpc_candidate.sql` is a non-executable superseded note. Do not treat it as a schema prerequisite; final create/resolve RPC definitions are in the execution-envelope draft and must be audited there.
 - `20261121_authenticated_tenant_context_rpc_candidate.sql` is now a non-executable superseded note because its former BYPASSRLS owner suggestion conflicts with the current NOBYPASSRLS policy. Do not include it in a migration.
-- The canonical file-mutation candidate is not automatically approved merely because it is the earliest dated draft. Its broad `service_role` table grants and endpoint exposure require separate redesign/review.
+- The canonical file-mutation candidate is not an approved Stage 0 migration and is not a dependency to apply. Its broad `service_role` table grants and unowned endpoint exposure require separate redesign/review; extract only the minimum identity-table DDL into a new, separately reviewed baseline.
 - Worker registry and scheduler grant candidates remain operator-reviewed design drafts, not executable migrations.
 
 ## Global owner-role invariants
@@ -62,7 +62,7 @@ Every application function-owner role must be:
 ## Required acceptance evidence before staging apply
 
 1. Static draft contract passes, including exact function signature ↔ grant matching.
-2. Dependency manifest matches the actual SQL object references; no superseded draft is included.
+2. A new identity-only Stage 0 migration exists, and the dependency manifest matches actual SQL object references; no blocked or superseded draft is included.
 3. Each function owner has exact schema, table, column, and helper-function privileges; no excess privileges.
 4. PostgreSQL 17 adversarial tests pass for RLS, FOR SHARE locks, forbidden updates, owner role attributes, and membership graph.
 5. Authenticated tests pass with real Supabase JWTs: tenant isolation, revoked membership, self-approval denial, immutable envelope, stale CAS and transaction rollback.
