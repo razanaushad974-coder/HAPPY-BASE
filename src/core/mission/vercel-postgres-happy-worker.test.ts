@@ -35,12 +35,12 @@ const runtime = {
     capabilities: ["CONTROL", "VERIFY"] as const,
   },
   database: {
-    pool: {} as PgPoolLike,
+    pool: {} as unknown as PgPoolLike,
     expectedLoginRole: "happy_worker_preview",
   },
 };
 
-const tenantPersistence = {} as AsyncTenantPersistenceAdapter;
+const tenantPersistence = {} as unknown as AsyncTenantPersistenceAdapter;
 
 assert.throws(
   () => createVercelPostgresHappyWorker({
