@@ -58,7 +58,7 @@ fi
 if ! awk -v fn="happy_worker_claim_mission_task" '
   index($0, "create or replace function private." fn "(") > 0 { inside=1 }
   inside { print }
-  inside && /^\\$[a-z_]+\\$;$/ { exit }
+  inside && index($0, "$claim$;") > 0 { exit }
 ' "$SQL_FILE" | grep -q "not in ('PENDING','READY','RUNNING')"; then
   echo "Worker task claim must accept PENDING tasks whose dependencies are checked transactionally." >&2
   exit 1
