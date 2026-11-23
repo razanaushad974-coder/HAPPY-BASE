@@ -92,6 +92,30 @@ async function main(): Promise<void> {
         "default orchestration facade must fail closed until trusted worker dependencies are composed.",
     );
 
+    const disconnectedScheduler = await happy.runNextReadyMissionTaskDispatch({
+        scope: { organizationId: "org-a", workspaceId: "workspace-a", userId: "user-a" },
+        tenantScope: {
+            workerPrincipalId: "worker-principal-test",
+            organizationId: "org-a",
+            workspaceId: "workspace-a",
+            userId: "user-a",
+        },
+        ownerId: "worker-instance-test",
+        leaseMilliseconds: 30_000,
+        provider: {
+            providerId: "must-not-run",
+            supportsIdempotencyKeys: true,
+            async dispatch() {
+                throw new Error("scheduler without durable persistence must not call a provider");
+            },
+        },
+    });
+    assert(
+        disconnectedScheduler.status === "NOT_CONNECTED" &&
+            disconnectedScheduler.missing === "TENANT_PERSISTENCE",
+        "scheduler must distinguish missing durable persistence from an empty task queue.",
+    );
+
     const lowRisk =
         await happy.run({
             id:

@@ -185,7 +185,10 @@ export class HappyOrchestrationEngine {
         input: Omit<Parameters<MissionOrchestrator["runNextReadyMissionTaskDispatch"]>[0], "persistence">,
     ): ReturnType<MissionOrchestrator["runNextReadyMissionTaskDispatch"]> {
         if (!this.tenantPersistence) {
-            return Promise.resolve({ status: "NO_READY_TASK" });
+            return Promise.resolve({
+                status: "NOT_CONNECTED",
+                missing: "TENANT_PERSISTENCE",
+            });
         }
         return this.mission.runNextReadyMissionTaskDispatch({
             ...input,
