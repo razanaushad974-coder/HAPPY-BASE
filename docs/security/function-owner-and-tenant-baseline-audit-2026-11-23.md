@@ -122,3 +122,26 @@ References:
 `BLOCKED — DESIGN REVIEW REQUIRED`.
 
 No SQL was applied, no roles or credentials were created, and no grants were changed. Do not create the tenant baseline migration until the BYPASSRLS owner candidates are replaced, the four identity tables are cleanly separated from file-mutation concerns, and the exact per-function privilege matrix is approved by automated tests.
+
+
+## 2026-11-23 follow-up — replacement owner candidates and hosted rollback probes
+
+The earlier audit correctly identified the three BYPASSRLS owner definitions in the intermediate execution-request drafts as P0 blockers. Follow-up work has now removed the executable BYPASSRLS role creation from the final execution-envelope candidate and retired the intermediate `20261121_authenticated_execution_request_rpc_candidate.sql` (comments only; no executable SQL).
+
+Separate NOLOGIN/NOBYPASSRLS role and privilege candidates now exist for:
+- `happy_worker_registry_owner`
+- `happy_tenant_scope_rpc_owner`
+- `happy_execution_request_create_rpc_owner`
+- `happy_execution_request_decision_rpc_owner`
+
+Hosted PostgreSQL 17.12 rollback-only synthetic probes have passed for:
+- six-table worker registry/scope SELECT and FOR SHARE lock-only grants;
+- tenant-scope SECURITY DEFINER owner, tenant-bound create/CAS update/CAS delete, stale-version rejection, and cross-user denial;
+- execution-request create/resolve, same-user mission/task binding, idempotent retry and cross-user resolution denial;
+- founder decision FOR UPDATE locks, founder approval, self-approval denial, non-founder denial, and matching append-only approval evidence.
+
+The row-lock design is now explicitly **lock-only UPDATE policy**: `USING (true) WITH CHECK (false)`. A SELECT FOR SHARE/UPDATE without an UPDATE policy can silently return zero rows under RLS. The first probe did not assert `FOUND`; its original interpretation was wrong and was corrected in the subsequent tests and candidate files.
+
+The tenant and execution-request RPCs use `private.happy_current_authenticated_user_id()`, a private, fixed-search-path SECURITY DEFINER accessor that returns only `auth.uid()`. This is necessary because the hosted managed `auth` schema does not permit the custom NOLOGIN owner roles to call `auth.uid()` directly. The accessor is owned by trusted `postgres` and EXECUTE is limited to the intended owner roles.
+
+**These results validate synthetic PostgreSQL fixtures, not the actual HAPPY schema.** The staging project still has no HAPPY migrations/tables, and no candidate SQL, role, grant, credential, or application data was persisted. Real JWT/API, actual migration-chain, two-session membership-revocation, and hosted worker-pooler identity tests remain mandatory before any staging migration is promoted.
