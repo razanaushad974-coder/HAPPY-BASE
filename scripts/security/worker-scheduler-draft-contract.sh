@@ -23,7 +23,7 @@ trap 'rm -f "$tmp"' EXIT
 
 for function_name in "${functions[@]}"; do
   if ! awk -v fn="$function_name" '
-    $0 ~ "create or replace function private\." fn "\(" { inside=1 }
+    index($0, "create or replace function private." fn "(") > 0 { inside=1 }
     inside { print }
     inside && /^\$[a-z_]+\$;$/ { found_end=1; exit }
     END { if (!found_end) exit 2 }
