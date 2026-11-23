@@ -123,16 +123,17 @@ export class MissionOrchestrator {
       status: MissionTask["status"];
     },
   ): Promise<MissionSnapshot> {
-    requireCompleteScope(input.scope);
-    return input.persistence.transaction(input.scope, async (transaction) => {
+    const scope = input.scope;
+    requireCompleteScope(scope);
+    return input.persistence.transaction(scope, async (transaction) => {
       const missionRecord = await transaction.get<Mission>(
-        input.scope, "MISSION", input.missionId,
+        scope, "MISSION", input.missionId,
       );
       if (!missionRecord) throw new TenantPersistenceError("RECORD_NOT_FOUND", "Mission record was not found.");
 
       const taskRecords = await Promise.all(
         missionRecord.data.taskIds.map((id) =>
-          transaction.get<MissionTask>(input.scope, "TASK", id),
+          transaction.get<MissionTask>(scope, "TASK", id),
         ),
       );
       if (taskRecords.some((record) => !record)) {
@@ -152,12 +153,12 @@ export class MissionOrchestrator {
 
       if (JSON.stringify(previousTask.data) !== JSON.stringify(nextTask)) {
         await transaction.update(
-          input.scope, "TASK", input.taskId, previousTask.version, nextTask,
+          scope, "TASK", input.taskId, previousTask.version, nextTask,
         );
       }
       if (JSON.stringify(missionRecord.data) !== JSON.stringify(transition.mission)) {
         await transaction.update(
-          input.scope, "MISSION", input.missionId, missionRecord.version, transition.mission,
+          scope, "MISSION", input.missionId, missionRecord.version, transition.mission,
         );
       }
       return {
