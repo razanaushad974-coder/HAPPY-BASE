@@ -177,7 +177,7 @@ async function run() {
         capability: "API", action: "GET", payloadDigest: "sha256:test", payload: {},
       }),
       () => composed.broker.claimNextDispatch({
-        tenantScope: scope,
+        tenantScope: scope, ownerId: "worker-instance-1",
       }),
       () => composed.broker.claimDispatch({
         tenantScope: scope, outboxId: "outbox-1", leaseId: "lease-1",
