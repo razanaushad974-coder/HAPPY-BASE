@@ -22,7 +22,7 @@ Status: **DESIGN REVIEW — NOT DEPLOYABLE**. This document is a static review o
 
 All five roles must be explicitly provisioned as:
 - `NOLOGIN NOINHERIT NOBYPASSRLS NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION`
-- no role memberships (neither as member nor granted-role path), no database/schema ownership, and no ownership of application tables;
+- no application/API/worker role memberships, no database/schema ownership, and no ownership of application tables. The current role candidates intentionally grant each owner role to the trusted hosted `postgres` administrator solely so it can perform `ALTER FUNCTION ... OWNER TO`; that is a privileged migration-executor exception, not a runtime membership. The final migration must verify this exact membership graph and must not grant owner membership to `anon`, `authenticated`, `service_role`, `authenticator`, or worker LOGIN roles;
 - own only their assigned SECURITY DEFINER functions;
 - have a fixed, reviewed function `search_path` (prefer empty path with every object schema-qualified; current candidates generally pin `pg_catalog`, so extension/helper qualification must be verified);
 - receive only explicit schema USAGE, table/column privileges, policy access, and helper EXECUTE privileges listed in a final reviewed migration;
@@ -44,7 +44,7 @@ Owns the tenant scope and tenant-record SECURITY DEFINER RPCs. Required data pat
 - Read/write `public.happy_tenant_records` only through the scoped create/CAS operations; writes must be limited to mutable payload/version/timestamp fields. Tenant key columns (`organization_id`, `workspace_id`, `user_id`, `entity_type`, `record_id`) must never be writable through the UPDATE path.
 - Call the narrowly scoped authenticated-subject helper and the required tenant-scope helper functions.
 
-The `FOR SHARE` probe means each private identity relation needs a deliberately inert column-level UPDATE privilege for this owner if the final function retains `FOR SHARE`. That privilege must not be paired with an UPDATE RLS policy that permits row mutation. Prefer a dedicated lock-anchor column over reusing business columns, after confirming migration/trigger compatibility. The owner also needs SELECT RLS visibility for exactly the rows in the requested scope.
+The current privilege candidate uses column-level `UPDATE(status)` on the four identity relations together with owner-targeted `FOR UPDATE` policies `USING (true) WITH CHECK (false)`. This is the tested lock-only pattern: it permits `FOR SHARE` row locking but rejects UPDATE mutation. The owner also needs SELECT RLS visibility for exactly the rows in the requested scope. Do not replace this with a permissive `WITH CHECK` policy.
 
 ### 2. `happy_execution_request_create_rpc_owner`
 
@@ -64,7 +64,7 @@ Owns the authenticated founder/approver decision RPC. Required data paths:
 - Insert append-only rows into `private.execution_request_approval_events`; no UPDATE or DELETE on approval events.
 - Validate approver identity/role and exact tenant/request binding before writing.
 
-The row-lock probe applies here too: the identity/request rows need SELECT visibility and a lock-only privilege for `FOR SHARE`. Do not solve this with BYPASSRLS or table-wide UPDATE. Membership-revocation concurrency remains an explicit test gate.
+The current decision-owner candidate uses `UPDATE(status)` plus lock-only identity policies (`USING (true) WITH CHECK (false)`) for the four canonical identity relations; its request row has a separate scoped UPDATE policy and only the decision/lifecycle columns are granted. Do not solve this with BYPASSRLS or table-wide UPDATE. Membership-revocation concurrency remains an explicit test gate.
 
 ### 4. `happy_worker_registry_owner`
 
@@ -74,7 +74,7 @@ Owns only worker identity and worker tenant-grant validation helpers. Required d
 - Derive the actual worker identity from PostgreSQL `session_user`; supplied worker ID, user ID, tenant IDs, and capability are selectors only.
 - No worker registry or tenant-grant mutation path is owned by this role. Provisioning, activation, and revocation remain a separate trusted operator workflow.
 
-The current registry candidate already sketches SELECT RLS policies and a non-permissive UPDATE policy for lock semantics. It still needs a final column-level privilege design, explicit RLS policy coverage on all canonical relations, proof that the owner cannot mutate rows, and a live role/session test. The role must not be a member of `postgres`, `service_role`, or another privileged role.
+The current registry-owner privilege candidate grants SELECT on exact registry/grant/identity columns and `UPDATE(enabled)` / `UPDATE(status)` solely for row locks, with lock-only UPDATE policies (`USING (true) WITH CHECK (false)`). Its synthetic six-table probe passed on PostgreSQL 17.12. The role must not be a member of any application/API/worker role; the trusted `postgres` migration executor membership is the narrowly scoped owner-transfer exception described above.
 
 ### 5. `happy_worker_scheduler_rpc_owner`
 
@@ -85,7 +85,7 @@ Owns the eight worker-only scheduler RPCs. The static body scan found these writ
 - `public.happy_dispatch_reconciliation_evidence`: append-only evidence inserts; list operation is scoped read-only.
 - `private.execution_requests`: outcome-driven lifecycle/status update.
 
-This role also calls `happy_require_worker_tenant_scope`, canonical JSON/digest helpers, and related internal functions. Exact per-column INSERT/UPDATE/SELECT privileges and matching owner-targeted RLS policies must be derived from every statement in the eight function bodies before any grant SQL is authored. Do not grant table-wide UPDATE as a shortcut.
+This role also calls `happy_require_worker_tenant_scope`, canonical JSON/digest helpers, and related internal functions. The scheduler privilege candidate already defines per-table column grants and CONTROL/VERIFY RLS policies. Its synthetic matrix script exists, but the corrected full-batch SQL run disconnected before returning a result and is explicitly not counted as passed. Do not promote the scheduler candidate until that complete script passes and every policy/column grant is reviewed against the current eight RPC bodies.
 
 **Cross-domain concern:** the scheduler currently updates `private.execution_requests` directly. This couples the worker scheduler owner to approval-request storage and its RLS/ownership boundary. Before finalizing grants, choose and document one of:
 - split request-status reconciliation into a narrowly scoped internal RPC owned by the execution-request lifecycle boundary; or
@@ -116,3 +116,26 @@ Worker RPC capability split remains: six CONTROL functions and two VERIFY eviden
 ## Decision
 
 **BLOCKED — DESIGN REVIEW REQUIRED.** The row-lock behavior is now empirically known on PostgreSQL 17.12, but this does not justify applying the five-owner design. Staging remains empty and production remains untouched. No grants, roles, migrations, credentials, or worker runtime connection are live.
+
+
+## Second-pass correction — existing owner candidates and test evidence
+
+The first draft of this matrix was written before the full set of owner privilege candidates and test reports had been re-fetched. The following committed artifacts are present on this branch and are the authoritative next review targets:
+
+| Owner | Role candidate | Privilege candidate | Current test evidence |
+|---|---|---|---|
+| Tenant scope | `20261123_tenant_scope_rpc_owner_role_candidate.sql` | `20261123_tenant_scope_rpc_owner_privilege_candidate.sql` | Synthetic PostgreSQL 17.12 CAS/RLS probe PASS; actual HAPPY schema integration pending |
+| Execution create/resolve | `20261123_execution_request_create_owner_role_candidate.sql` | `20261123_execution_request_create_owner_privilege_candidate.sql` | Synthetic PostgreSQL 17.12 probe PASS; actual HAPPY schema integration pending |
+| Execution decision | `20261123_execution_request_decision_owner_role_candidate.sql` | `20261123_execution_request_decision_owner_privilege_candidate.sql` | Synthetic PostgreSQL 17.12 probe PASS; actual HAPPY schema integration pending |
+| Worker registry | `20261123_worker_registry_owner_role_candidate.sql` | `20261123_worker_registry_owner_privilege_candidate.sql` | Six-table synthetic PostgreSQL 17.12 lock-only grant probe PASS |
+| Worker scheduler | `20261123_worker_scheduler_rpc_owner_role_candidate.sql` | `20261123_worker_scheduler_rpc_owner_privilege_candidate.sql` | Focused VERIFY-only outbox lock/mutation probe PASS; full scheduler matrix remains UNVERIFIED after SQL runner disconnect |
+
+Relevant result reports:
+- `non-bypass-function-owner-rls-test-results-2026-11-23.md`
+- `tenant-scope-owner-grant-test-results-2026-11-23.md`
+- `execution-request-owner-rls-test-results-2026-11-23.md`
+- `worker-scheduler-owner-rls-test-results-2026-11-23.md`
+
+The existing role scripts grant the NOLOGIN owner role to hosted `postgres` for function-owner transfer. The synthetic probes show this is required in the hosted Supabase environment because `postgres` is not a superuser and cannot otherwise assume an arbitrary owner role. This membership must remain confined to the trusted migration executor and be rechecked after deployment; it must never extend to API roles or worker LOGIN roles.
+
+**Updated disposition:** the four non-scheduler owner patterns have synthetic PostgreSQL 17.12 evidence, but none has been tested against the actual HAPPY table definitions because staging is deliberately empty. The scheduler has a focused VERIFY lock-only PASS, while its full matrix remains unverified. The five-owner design remains **BLOCKED — DESIGN REVIEW REQUIRED**; no candidate is promoted to a migration.
