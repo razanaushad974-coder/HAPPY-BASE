@@ -1,7 +1,7 @@
 # HAPPY Supabase staging migration chain
 
 **Status:** generated for isolated local replay; NOT approved for hosted apply.
-**Generator:** Supabase CLI  and .
+**Generator:** Supabase CLI `supabase init` and `supabase migration new`.
 **PostgreSQL target:** local Supabase stack, PostgreSQL 17.
 
 ## Ordered source mapping
@@ -31,7 +31,7 @@
 
 - Superseded tenant-context and execution-request RPC design notes.
 - Legacy file-mutation atomic-consume candidate.
-- Worker registry and scheduler LOGIN grant candidates; worker EXECUTE grants remain withheld pending real dedicated-LOGIN and hosted-pooler  evidence.
+- Worker registry and scheduler LOGIN grant candidates; worker EXECUTE grants remain withheld pending real dedicated-LOGIN and hosted-pooler `session_user` evidence.
 
 ## Required gates
 
