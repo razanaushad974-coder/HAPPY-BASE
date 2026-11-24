@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+trap 'rc=$?; printf "ERROR: JWT harness line %s failed (exit %s): %s\\n" "$LINENO" "$rc" "$BASH_COMMAND" >&2; exit "$rc"' ERR
 
 # Real Supabase Auth JWT -> GoTrue -> PostgREST -> PostgreSQL/RLS integration.
 # Runs only against the disposable local stack started by supabase start.
