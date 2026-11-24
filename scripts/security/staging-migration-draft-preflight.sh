@@ -114,7 +114,6 @@ pass "superseded SQL notes are non-executable"
 line_stage0="$(grep -nF 'Stage 0. Canonical identity baseline' "$MANIFEST" | cut -d: -f1)"
 line_request_base="$(grep -nF 'Stage 2. Execution request base' "$MANIFEST" | cut -d: -f1)"
 line_envelope="$(grep -nF 'Stage 2a. Execution request + approval envelope' "$MANIFEST" | cut -d: -f1)"
-line_superseded="$(grep -nF '20261121_authenticated_execution_request_rpc_candidate.sql' "$MANIFEST" | tail -n 1 | cut -d: -f1)"
 test -n "$line_stage0" && test -n "$line_request_base" && test -n "$line_envelope" \
   || fail "manifest is missing canonical identity/request/envelope stages"
 (( line_stage0 < line_request_base && line_request_base < line_envelope )) \
