@@ -309,6 +309,7 @@ update private.workspace_memberships
  where organization_id = '10000000-0000-4000-8000-000000000001'
    and workspace_id = '20000000-0000-4000-8000-000000000002'
    and user_id = '30000000-0000-4000-8000-000000000003';
+SQL
 
 "${worker_psql[@]}" <<'SQL'
 do $revoked_membership$
@@ -347,6 +348,7 @@ reset role;
 update private.happy_worker_principal_registry
    set enabled = false, revoked_at = clock_timestamp(), updated_at = clock_timestamp()
  where db_login_role = 'happy_worker_dispatch';
+SQL
 
 "${worker_psql[@]}" <<'SQL'
 do $revoked_worker$
