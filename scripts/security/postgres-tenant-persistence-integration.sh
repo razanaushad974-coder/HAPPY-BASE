@@ -18,10 +18,11 @@ EXECUTION_CREATE_OWNER_ROLE_FILE="$ROOT_DIR/supabase/drafts/20261123_execution_r
 EXECUTION_CREATE_OWNER_PRIVILEGE_FILE="$ROOT_DIR/supabase/drafts/20261123_execution_request_create_owner_privilege_candidate.sql"
 EXECUTION_DECISION_OWNER_ROLE_FILE="$ROOT_DIR/supabase/drafts/20261123_execution_request_decision_owner_role_candidate.sql"
 EXECUTION_DECISION_OWNER_PRIVILEGE_FILE="$ROOT_DIR/supabase/drafts/20261123_execution_request_decision_owner_privilege_candidate.sql"
+EXECUTION_DECISION_OWNER_PROBE_FILE="$ROOT_DIR/scripts/security/test-execution-request-decision-owner-grants.sql"
 EXECUTION_ENVELOPE_FILE="$ROOT_DIR/supabase/drafts/20261121_authenticated_execution_envelope_candidate.sql"
 RACE_SCRIPT="$ROOT_DIR/scripts/security/postgres-tenant-cas-concurrency.sh"
 RECONCILIATION_RACE_SCRIPT="$ROOT_DIR/scripts/security/postgres-reconciliation-evidence-concurrency.sh"
-for required_file in "$IDENTITY_BASELINE_FILE" "$EXECUTION_REQUEST_BASE_FILE" "$SCHEMA_FILE" "$SCHEDULER_SCHEMA_FILE" "$TENANT_SCOPE_OWNER_ROLE_FILE" "$TENANT_SCOPE_OWNER_PRIVILEGE_FILE" "$EXECUTION_CREATE_OWNER_ROLE_FILE" "$EXECUTION_CREATE_OWNER_PRIVILEGE_FILE" "$EXECUTION_DECISION_OWNER_ROLE_FILE" "$EXECUTION_DECISION_OWNER_PRIVILEGE_FILE" "$EXECUTION_ENVELOPE_FILE" "$RACE_SCRIPT" "$RECONCILIATION_RACE_SCRIPT"; do
+for required_file in "$IDENTITY_BASELINE_FILE" "$EXECUTION_REQUEST_BASE_FILE" "$SCHEMA_FILE" "$SCHEDULER_SCHEMA_FILE" "$TENANT_SCOPE_OWNER_ROLE_FILE" "$TENANT_SCOPE_OWNER_PRIVILEGE_FILE" "$EXECUTION_CREATE_OWNER_ROLE_FILE" "$EXECUTION_CREATE_OWNER_PRIVILEGE_FILE" "$EXECUTION_DECISION_OWNER_ROLE_FILE" "$EXECUTION_DECISION_OWNER_PRIVILEGE_FILE" "$EXECUTION_DECISION_OWNER_PROBE_FILE" "$EXECUTION_ENVELOPE_FILE" "$RACE_SCRIPT" "$RECONCILIATION_RACE_SCRIPT"; do
   if [[ ! -f "$required_file" ]]; then
     echo "Required tenant persistence test file not found: $required_file" >&2
     exit 1
@@ -199,6 +200,10 @@ SQL
 "${psql_base[@]}" -f "$TENANT_SCOPE_OWNER_PRIVILEGE_FILE"
 "${psql_base[@]}" -f "$EXECUTION_CREATE_OWNER_PRIVILEGE_FILE"
 "${psql_base[@]}" -f "$EXECUTION_DECISION_OWNER_PRIVILEGE_FILE"
+
+# Rollback-only adversarial decision-owner probe: direct identity reads, helper
+# EXECUTE ACL, cross-tenant denial, owner membership and SECURITY DEFINER surface.
+"${psql_base[@]}" -f "$EXECUTION_DECISION_OWNER_PROBE_FILE"
 
 # Tenant-scope SECURITY DEFINER functions use the current NOLOGIN,
 # NOBYPASSRLS owner role and its separately tested least-privilege policies.
