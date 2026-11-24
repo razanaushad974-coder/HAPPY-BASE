@@ -235,6 +235,7 @@ select 'workspace-membership-lock' as check_name, status
    and user_id = '30000000-0000-4000-8000-000000000003'
  for share;
 reset role;
+SQL
 
 worker_database_url="$(printf '%s' "$DATABASE_URL" | sed -E "s#(://)[^/@]+@#\\1happy_worker_dispatch:${WORKER_TEST_PASSWORD}@#")"
 if [[ "$worker_database_url" == "$DATABASE_URL" ]]; then
@@ -302,6 +303,7 @@ end
 $worker_identity$;
 SQL
 
+"${psql[@]}" <<'SQL'
 update private.workspace_memberships
    set status = 'REVOKED'
  where organization_id = '10000000-0000-4000-8000-000000000001'
@@ -328,6 +330,7 @@ SQL
 
 -- A human/application DB role cannot resolve the worker principal, even if it
 -- attempts to use the same function. The session_user is the authority.
+"${psql[@]}" <<'SQL'
 set role authenticated;
 do $human_denial$
 begin
@@ -357,5 +360,6 @@ end
 $revoked_worker$;
 SQL
 
+"${psql[@]}" <<'SQL'
 select 'PostgreSQL worker principal registry integration: PASS (isolated PostgreSQL roles; no hosted Supabase)' as result;
 SQL
