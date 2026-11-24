@@ -31,7 +31,7 @@ grep -Eiq 'language[[:space:]]+sql[[:space:]]+stable[[:space:]]+security[[:space
 awk '
   /create[[:space:]]+(or[[:space:]]+replace[[:space:]]+)?function[[:space:]]+public\.decide_authenticated_execution_request/ { inside=1 }
   inside { print }
-  inside && /\$function\$;/ { exit }
+  inside && /\$decision\$;/ { exit }
 ' "$ENVELOPE" | grep -Eiq 'security[[:space:]]+definer[[:space:]]+set[[:space:]]+search_path[[:space:]]*=[[:space:]]*pg_catalog' \
   || fail "decision RPC is not SECURITY DEFINER with fixed pg_catalog search_path"
 
