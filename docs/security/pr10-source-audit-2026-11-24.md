@@ -39,3 +39,17 @@ This audit does **not** promote any draft to a migration, approve a staging appl
 ## Verification evidence boundary
 
 The current PR head's GitHub security-validation workflow completed successfully with 25/25 steps, and the reported Vercel checks were successful. Those results establish the configured CI/build checks only; they do not replace the database, JWT, pooler, or hosted scheduler gates above.
+
+### Founder-decision owner: broad identity SELECT policy review
+
+The decision-owner privilege candidate installs FOR SELECT policies with USING (true) on the four canonical identity relations and grants SELECT to happy_execution_request_decision_rpc_owner. This is deliberately broader than tenant-scoped SELECT at the RLS-policy layer, but the reviewed access path is bounded by the role/function boundary:
+
+- The owner role is declared NOLOGIN, NOINHERIT, and NOBYPASSRLS; the role candidate grants membership only to the trusted postgres migration executor for function ownership transfer. The privilege candidate asserts that anon, authenticated, service_role, authenticator, and happy_worker_% roles are not members.
+- The role owns the founder-decision SECURITY DEFINER RPC and its internal happy_is_active_founder_approval_scope helper. The helper returns only a boolean and checks the exact organization/workspace pair plus the current JWT subject's active organization FOUNDER membership, active workspace membership/role, and active organization/workspace state.
+- The decision RPC independently locks and validates the request, requester and approver membership rows, rejects self-approval, requires a pending FOUNDER approval, constrains the transition to APPROVED/READY or REJECTED/CANCELLED, and appends matching approval evidence.
+- The identity-table UPDATE policies are lock-only (USING (true) WITH CHECK (false)) with only UPDATE(status) anchor privileges. They permit the required row locks while preventing identity-row mutation through this owner path.
+- The committed rollback-only PostgreSQL 17.12 synthetic probe reports successful founder approval, self-approval denial, non-founder denial, exact decision state/evidence, and lock-only identity policies.
+
+**Assessment:** this is not, on the inspected source and synthetic evidence, a confirmed tenant-data disclosure or identity-mutation vulnerability. The broad SELECT policy remains a high-impact internal privilege and must not be described as tenant-scoped. Its safety depends on the NOLOGIN/membership boundary and the narrow SECURITY DEFINER function surface. The synthetic fixture is not the composed HAPPY schema and does not establish live Supabase JWT behavior.
+
+**Required follow-up before promotion:** add a composed-schema adversarial test proving (1) authenticated/API roles cannot directly read the four private identity tables or assume the owner role, (2) the owner role has no unexpected SECURITY DEFINER functions or callable entry points, (3) only the intended decision RPC is executable by authenticated, (4) cross-tenant/non-founder/self-approval requests fail without revealing identity rows, and (5) membership revocation races are serialized correctly. Keep this candidate blocked until these checks run against the exact ordered migration chain.
