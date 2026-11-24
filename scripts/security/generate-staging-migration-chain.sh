@@ -59,6 +59,7 @@ done
 
 mkdir -p "$repo_root/supabase/migrations"
 cp "$tmp/supabase/config.toml" "$repo_root/supabase/config.toml"
+sed -i 's/^project_id = .*/project_id = "happy-base-local"/' "$repo_root/supabase/config.toml"
 if [[ -f "$tmp/supabase/.gitignore" ]]; then
   cp "$tmp/supabase/.gitignore" "$repo_root/supabase/.gitignore"
 fi
@@ -101,5 +102,5 @@ mkdir -p "$(dirname "$manifest")"
   echo "- No remote project is linked or mutated by this generator."
 } > "$manifest"
 
-sha256sum "$repo_root"/supabase/migrations/*.sql > "$repo_root/docs/security/supabase-staging-migration-checksums.sha256"
+(cd "$repo_root" && sha256sum supabase/migrations/*.sql > docs/security/supabase-staging-migration-checksums.sha256)
 echo "Generated $(find "$repo_root/supabase/migrations" -maxdepth 1 -type f -name '*.sql' | wc -l | tr -d ' ') CLI migrations."
