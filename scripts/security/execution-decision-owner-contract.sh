@@ -29,7 +29,7 @@ grep -Eiq 'alter[[:space:]]+function[[:space:]]+private\.happy_is_active_founder
 grep -Eiq 'language[[:space:]]+sql[[:space:]]+stable[[:space:]]+security[[:space:]]+definer[[:space:]]+set[[:space:]]+search_path[[:space:]]*=[[:space:]]*pg_catalog' "$PRIVILEGES" \
   || fail "founder-scope helper is not SECURITY DEFINER with fixed pg_catalog search_path"
 awk '
-  /create[[:space:]]+function[[:space:]]+public\.decide_authenticated_execution_request/ { inside=1 }
+  /create[[:space:]]+(or[[:space:]]+replace[[:space:]]+)?function[[:space:]]+public\.decide_authenticated_execution_request/ { inside=1 }
   inside { print }
   inside && /\$function\$;/ { exit }
 ' "$ENVELOPE" | grep -Eiq 'security[[:space:]]+definer[[:space:]]+set[[:space:]]+search_path[[:space:]]*=[[:space:]]*pg_catalog' \
