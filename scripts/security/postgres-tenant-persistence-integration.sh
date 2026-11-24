@@ -23,7 +23,8 @@ EXECUTION_DECISION_COMPOSED_PROBE_FILE="$ROOT_DIR/scripts/security/test-composed
 EXECUTION_ENVELOPE_FILE="$ROOT_DIR/supabase/drafts/20261121_authenticated_execution_envelope_candidate.sql"
 RACE_SCRIPT="$ROOT_DIR/scripts/security/postgres-tenant-cas-concurrency.sh"
 RECONCILIATION_RACE_SCRIPT="$ROOT_DIR/scripts/security/postgres-reconciliation-evidence-concurrency.sh"
-for required_file in "$IDENTITY_BASELINE_FILE" "$EXECUTION_REQUEST_BASE_FILE" "$SCHEMA_FILE" "$SCHEDULER_SCHEMA_FILE" "$TENANT_SCOPE_OWNER_ROLE_FILE" "$TENANT_SCOPE_OWNER_PRIVILEGE_FILE" "$EXECUTION_CREATE_OWNER_ROLE_FILE" "$EXECUTION_CREATE_OWNER_PRIVILEGE_FILE" "$EXECUTION_DECISION_OWNER_ROLE_FILE" "$EXECUTION_DECISION_OWNER_PRIVILEGE_FILE" "$EXECUTION_DECISION_OWNER_PROBE_FILE" "$EXECUTION_DECISION_COMPOSED_PROBE_FILE" "$EXECUTION_ENVELOPE_FILE" "$RACE_SCRIPT" "$RECONCILIATION_RACE_SCRIPT"; do
+APPROVAL_MEMBERSHIP_RACE_SCRIPT="$ROOT_DIR/scripts/security/postgres-execution-approval-membership-race.sh"
+for required_file in "$IDENTITY_BASELINE_FILE" "$EXECUTION_REQUEST_BASE_FILE" "$SCHEMA_FILE" "$SCHEDULER_SCHEMA_FILE" "$TENANT_SCOPE_OWNER_ROLE_FILE" "$TENANT_SCOPE_OWNER_PRIVILEGE_FILE" "$EXECUTION_CREATE_OWNER_ROLE_FILE" "$EXECUTION_CREATE_OWNER_PRIVILEGE_FILE" "$EXECUTION_DECISION_OWNER_ROLE_FILE" "$EXECUTION_DECISION_OWNER_PRIVILEGE_FILE" "$EXECUTION_DECISION_OWNER_PROBE_FILE" "$EXECUTION_DECISION_COMPOSED_PROBE_FILE" "$EXECUTION_ENVELOPE_FILE" "$RACE_SCRIPT" "$RECONCILIATION_RACE_SCRIPT" "$APPROVAL_MEMBERSHIP_RACE_SCRIPT"; do
   if [[ ! -f "$required_file" ]]; then
     echo "Required tenant persistence test file not found: $required_file" >&2
     exit 1
@@ -215,6 +216,10 @@ SQL
 # Rollback-only synthetic adversarial decision-owner probe: cross-tenant denial,
 # founder/self-approval rules, decision state and append-only evidence behavior.
 "${psql_base[@]}" -f "$EXECUTION_DECISION_OWNER_PROBE_FILE"
+
+# Two real PostgreSQL sessions exercise both linearizable orderings of a
+# founder approval racing organization-membership revocation.
+bash "$APPROVAL_MEMBERSHIP_RACE_SCRIPT"
 
 # Tenant-scope SECURITY DEFINER functions use the current NOLOGIN,
 # NOBYPASSRLS owner role and its separately tested least-privilege policies.
