@@ -105,7 +105,7 @@ if [[ "$holder_status" -ne 0 || "$contender_status" -ne 0 ]] ||
 fi
 
 "${psql_base[@]}" <<SQL
-DO $verify_revoke_first$
+DO \\$verify_revoke_first\\$
 begin
   if (select status from private.organization_memberships
        where organization_id='$org_id' and user_id='$founder_id') <> 'REVOKED'
@@ -184,7 +184,7 @@ if [[ "$holder_status" -ne 0 || "$contender_status" -ne 0 ]] ||
 fi
 
 "${psql_base[@]}" <<SQL
-DO $verify_decision_first$
+DO \\$verify_decision_first\\$
 begin
   if (select status from private.organization_memberships
        where organization_id='$org_id' and user_id='$founder_id') <> 'REVOKED'
