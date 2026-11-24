@@ -118,6 +118,8 @@ jobs:
         run: bash scripts/security/postgres-worker-principal-registry-integration.sh
         env:
           DATABASE_URL: postgresql://postgres:happy_test@localhost:5432/happy_test
+      - name: PostgreSQL worker scheduler CONTROL and VERIFY RLS probe
+        run: psql -X -v ON_ERROR_STOP=1 -f scripts/security/test-worker-scheduler-owner-grants.sql
       - name: Async tenant memory contract
         run: npx --yes tsx@4.23.15 src/tests/core/persistence/async-persistent-memory.test.ts
       - name: Async HAPPY state store contract
