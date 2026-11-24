@@ -55,7 +55,7 @@ BEGIN
     WHERE p.proowner=v_owner AND p.prosecdef
       AND n.nspname='public'
       AND p.proname='decide_authenticated_execution_request'
-      AND pg_catalog.pg_get_function_identity_arguments(p.oid)='text, text, text'
+      AND pg_catalog.pg_get_function_identity_arguments(p.oid)='p_request_id text, p_decision text, p_reason text'
   ) THEN
     RAISE EXCEPTION 'decision owner does not own the exact intended SECURITY DEFINER functions';
   END IF;
