@@ -6,6 +6,7 @@ on:
       - security/staging-migration-chain
     paths:
       - "scripts/security/generate-staging-migration-chain.sh"
+      - "scripts/security/supabase-local-jwt-tenant-isolation.sh"
       - ".github/workflows/staging-migration-chain.yml"
       - "supabase/drafts/**"
 
@@ -51,6 +52,9 @@ jobs:
 
       - name: Replay every migration from an empty local database
         run: supabase db reset
+
+      - name: Verify real Supabase Auth JWT tenant isolation on local stack
+        run: bash scripts/security/supabase-local-jwt-tenant-isolation.sh
 
       - name: Verify local migration history
         run: supabase migration list
