@@ -183,7 +183,7 @@ if ! jq -e 'select(. == true)' "$tmp_dir/b-active-other-scope-result.json" >/dev
   exit 1
 fi
 rpc c-revoked-scope happy_has_active_tenant_scope "$token_c" "$scope_a" success
-jq -e 'select(. == false)' "$tmp_dir/c-revoked-scope-result.json" >/dev/null
+jq -e '. == false' "$tmp_dir/c-revoked-scope-result.json" >/dev/null
 
 create_a="$(jq -cn --arg org "$org_a" --arg ws "$workspace_a" --arg id "$record_a" \
   '{p_organization_id:$org,p_workspace_id:$ws,p_entity_type:"PROJECT",p_record_id:$id,p_data:{id:$id,owner:"user-a"}}')"
