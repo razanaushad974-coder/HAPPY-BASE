@@ -53,7 +53,7 @@ for table in organizations workspaces organization_memberships workspace_members
   grep -Eiq "grant[[:space:]]+update[[:space:]]*\(status\)[[:space:]]+on[[:space:]]+private\.$table[[:space:]]+to[[:space:]]+happy_execution_request_decision_rpc_owner" "$PRIVILEGES" \
     || fail "decision owner is missing the narrow lock-anchor UPDATE(status) grant on $table"
 done
-grep -Fq "FOR UPDATE TO %I USING (true) WITH CHECK (false)" "$PRIVILEGES" \
+grep -Fq "CREATE POLICY happy_execution_decision_owner_lock ON private.%I FOR UPDATE TO happy_execution_request_decision_rpc_owner USING (true) WITH CHECK (false)" "$PRIVILEGES" \
   || fail "decision owner lock-only UPDATE policy is missing"
 
 # Only authenticated receives the public decision RPC. Internal helper and
