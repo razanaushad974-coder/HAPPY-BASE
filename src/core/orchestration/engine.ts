@@ -759,6 +759,11 @@ contextSummary:
             taskId: string,
             status: import("../mission/types").TaskStatus,
             verificationRequestId?: string,
+            verificationEnvelope?: {
+                request: import("../verification/types").VerificationRequest;
+                evidence: import("../evidence/types").Evidence;
+                result: import("../verification/types").VerificationResult;
+            },
         ): Promise<{ mission: typeof currentMission; tasks: typeof currentTasks }> => {
             if (durableTenantScope && this.tenantPersistence) {
                 const persisted = await this.mission.transitionTaskDurable({
@@ -768,6 +773,7 @@ contextSummary:
                     taskId,
                     status,
                     ...(verificationRequestId ? { verificationRequestId } : {}),
+                    ...(verificationEnvelope ? { verificationEnvelope } : {}),
                 });
                 return { mission: persisted.mission, tasks: persisted.graph.tasks };
             }
@@ -1006,35 +1012,7 @@ contextSummary:
                         [executionEvidence.id],
                     );
 
-                if (durableTenantScope && this.tenantPersistence) {
-                    // Persist the complete verification envelope before allowing
-                    // transitionTaskDurable to mark a verification-gated task complete.
-                    // The subsequent version-checked mission transition is a separate
-                    // transaction; if it fails, the evidence remains available for recovery.
-                    await this.tenantPersistence.transaction(
-                        durableTenantScope,
-                        async (transaction) => {
-                            await transaction.create(
-                                durableTenantScope,
-                                "VERIFICATION_REQUEST",
-                                verificationRequest.id,
-                                verificationRequest,
-                            );
-                            await transaction.create(
-                                durableTenantScope,
-                                "EVIDENCE",
-                                executionEvidence.id,
-                                executionEvidence,
-                            );
-                            await transaction.create(
-                                durableTenantScope,
-                                "VERIFICATION",
-                                verificationRequest.id,
-                                verificationResult,
-                            );
-                        },
-                    );
-                } else {
+                if (!durableTenantScope || !this.tenantPersistence) {
                     await state.verification().create(
                         verificationRequest.id,
                         verificationRequest,
@@ -1101,6 +1079,13 @@ contextSummary:
                     task.id,
                     finalTaskStatus,
                     verificationRequest.id,
+                    durableTenantScope && this.tenantPersistence
+                        ? {
+                            request: verificationRequest,
+                            evidence: executionEvidence,
+                            result: verificationResult,
+                        }
+                        : undefined,
                 );
                 currentMission = finalized.mission;
                 currentTasks = finalized.tasks;
