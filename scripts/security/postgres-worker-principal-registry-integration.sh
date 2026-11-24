@@ -329,7 +329,7 @@ end
 $revoked_membership$;
 SQL
 
--- A human/application DB role cannot resolve the worker principal, even if it
+# A human/application DB role cannot resolve the worker principal, even if it
 -- attempts to use the same function. The session_user is the authority.
 "${psql[@]}" <<'SQL'
 set role authenticated;
