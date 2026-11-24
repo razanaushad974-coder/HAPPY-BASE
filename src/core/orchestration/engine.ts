@@ -758,6 +758,7 @@ contextSummary:
         const transitionTask = async (
             taskId: string,
             status: import("../mission/types").TaskStatus,
+            verificationRequestId?: string,
         ): Promise<{ mission: typeof currentMission; tasks: typeof currentTasks }> => {
             if (durableTenantScope && this.tenantPersistence) {
                 const persisted = await this.mission.transitionTaskDurable({
@@ -766,6 +767,7 @@ contextSummary:
                     missionId: currentMission.id,
                     taskId,
                     status,
+                    ...(verificationRequestId ? { verificationRequestId } : {}),
                 });
                 return { mission: persisted.mission, tasks: persisted.graph.tasks };
             }
@@ -974,12 +976,6 @@ contextSummary:
                 };
                 verificationRequestId = verificationRequest.id;
 
-                await state.verification().create(
-                    verificationRequest.id,
-                    verificationRequest,
-                    request.userId,
-                );
-
                 const executionEvidence =
                     evidenceService.capture({
                         verificationRequestId:
@@ -1004,22 +1000,56 @@ contextSummary:
                         isPrimary: true,
                     });
 
-                await state.evidence().create(
-                    executionEvidence.id,
-                    executionEvidence,
-                    request.userId,
-                );
-
                 const verificationResult =
                     verificationEngine.verify(
                         verificationRequest,
                         [executionEvidence.id],
                     );
 
-                await state.verification().update(
-                    verificationRequest.id,
-                    verificationResult,
-                );
+                if (durableTenantScope && this.tenantPersistence) {
+                    // Persist the complete verification envelope before allowing
+                    // transitionTaskDurable to mark a verification-gated task complete.
+                    // The subsequent version-checked mission transition is a separate
+                    // transaction; if it fails, the evidence remains available for recovery.
+                    await this.tenantPersistence.transaction(
+                        durableTenantScope,
+                        async (transaction) => {
+                            await transaction.create(
+                                durableTenantScope,
+                                "VERIFICATION_REQUEST",
+                                verificationRequest.id,
+                                verificationRequest,
+                            );
+                            await transaction.create(
+                                durableTenantScope,
+                                "EVIDENCE",
+                                executionEvidence.id,
+                                executionEvidence,
+                            );
+                            await transaction.create(
+                                durableTenantScope,
+                                "VERIFICATION",
+                                verificationRequest.id,
+                                verificationResult,
+                            );
+                        },
+                    );
+                } else {
+                    await state.verification().create(
+                        verificationRequest.id,
+                        verificationRequest,
+                        request.userId,
+                    );
+                    await state.evidence().create(
+                        executionEvidence.id,
+                        executionEvidence,
+                        request.userId,
+                    );
+                    await state.verification().update(
+                        verificationRequest.id,
+                        verificationResult,
+                    );
+                }
                 allEvidenceIds.push(
                     ...verificationResult.evidenceIds,
                 );
@@ -1067,7 +1097,11 @@ contextSummary:
                     sawBlocked = true;
                 }
 
-                const finalized = await transitionTask(task.id, finalTaskStatus);
+                const finalized = await transitionTask(
+                    task.id,
+                    finalTaskStatus,
+                    verificationRequest.id,
+                );
                 currentMission = finalized.mission;
                 currentTasks = finalized.tasks;
 
