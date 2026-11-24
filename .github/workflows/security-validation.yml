@@ -8,6 +8,7 @@ on:
       - happy/server-verified-pipeline-approval
       - security/durable-file-mutation-grants
       - platform/full-happy-audit-and-integration
+      - security/staging-migration-readiness
     paths:
       - "src/lib/supabase/**"
       - "src/app/auth/**"
@@ -47,6 +48,7 @@ on:
       - security/durable-file-mutation-grants
       - platform/full-happy-audit-and-integration
       - security/staging-migration-readiness
+      - fix/durable-verification-persistence-20261124
 
 permissions:
   contents: read

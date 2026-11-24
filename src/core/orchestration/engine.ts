@@ -758,6 +758,12 @@ contextSummary:
         const transitionTask = async (
             taskId: string,
             status: import("../mission/types").TaskStatus,
+            verificationRequestId?: string,
+            verificationEnvelope?: {
+                request: import("../verification/types").VerificationRequest;
+                evidence: import("../evidence/types").Evidence;
+                result: import("../verification/types").VerificationResult;
+            },
         ): Promise<{ mission: typeof currentMission; tasks: typeof currentTasks }> => {
             if (durableTenantScope && this.tenantPersistence) {
                 const persisted = await this.mission.transitionTaskDurable({
@@ -766,6 +772,8 @@ contextSummary:
                     missionId: currentMission.id,
                     taskId,
                     status,
+                    ...(verificationRequestId ? { verificationRequestId } : {}),
+                    ...(verificationEnvelope ? { verificationEnvelope } : {}),
                 });
                 return { mission: persisted.mission, tasks: persisted.graph.tasks };
             }
@@ -974,12 +982,6 @@ contextSummary:
                 };
                 verificationRequestId = verificationRequest.id;
 
-                await state.verification().create(
-                    verificationRequest.id,
-                    verificationRequest,
-                    request.userId,
-                );
-
                 const executionEvidence =
                     evidenceService.capture({
                         verificationRequestId:
@@ -1004,22 +1006,28 @@ contextSummary:
                         isPrimary: true,
                     });
 
-                await state.evidence().create(
-                    executionEvidence.id,
-                    executionEvidence,
-                    request.userId,
-                );
-
                 const verificationResult =
                     verificationEngine.verify(
                         verificationRequest,
                         [executionEvidence.id],
                     );
 
-                await state.verification().update(
-                    verificationRequest.id,
-                    verificationResult,
-                );
+                if (!durableTenantScope || !this.tenantPersistence) {
+                    await state.verification().create(
+                        verificationRequest.id,
+                        verificationRequest,
+                        request.userId,
+                    );
+                    await state.evidence().create(
+                        executionEvidence.id,
+                        executionEvidence,
+                        request.userId,
+                    );
+                    await state.verification().update(
+                        verificationRequest.id,
+                        verificationResult,
+                    );
+                }
                 allEvidenceIds.push(
                     ...verificationResult.evidenceIds,
                 );
@@ -1067,7 +1075,18 @@ contextSummary:
                     sawBlocked = true;
                 }
 
-                const finalized = await transitionTask(task.id, finalTaskStatus);
+                const finalized = await transitionTask(
+                    task.id,
+                    finalTaskStatus,
+                    verificationRequest.id,
+                    durableTenantScope && this.tenantPersistence
+                        ? {
+                            request: verificationRequest,
+                            evidence: executionEvidence,
+                            result: verificationResult,
+                        }
+                        : undefined,
+                );
                 currentMission = finalized.mission;
                 currentTasks = finalized.tasks;
 
