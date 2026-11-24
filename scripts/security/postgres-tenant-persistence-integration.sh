@@ -52,6 +52,12 @@ begin
 exception when duplicate_object then null;
 end
 $roles$;
+do $roles$
+begin
+  create role authenticator nologin;
+exception when duplicate_object then null;
+end
+$roles$;
 
 create schema if not exists auth;
 create schema if not exists private;
