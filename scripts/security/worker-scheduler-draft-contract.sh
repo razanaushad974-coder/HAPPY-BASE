@@ -50,7 +50,7 @@ if ! awk -v fn="happy_worker_claim_mission_task" '
   index($0, "create or replace function private." fn "(") > 0 { inside=1 }
   inside { print }
   inside && index($0, "$claim$;") > 0 { exit }
-' "$SQL_FILE" | grep -q "r.approval_status = 'APPROVED'"; then
+' "$SQL_FILE" | grep -F "r.approval_status = 'APPROVED'" >/dev/null; then
   echo "Task claim must return only a persisted founder-approved execution request." >&2
   exit 1
 fi
@@ -59,7 +59,7 @@ if ! awk -v fn="happy_worker_claim_next_dispatch_outbox" '
   index($0, "create or replace function private." fn "(") > 0 { inside=1 }
   inside { print }
   inside && /^\$[a-z_]+\$;$/ { exit }
-' "$SQL_FILE" | grep -q "v_request.approval_status <> 'APPROVED'"; then
+' "$SQL_FILE" | grep -F "v_request.approval_status <> 'APPROVED'" >/dev/null; then
   echo "Next-dispatch claim must revalidate persisted founder approval." >&2
   exit 1
 fi
@@ -68,7 +68,7 @@ if ! awk -v fn="happy_worker_claim_mission_task" '
   index($0, "create or replace function private." fn "(") > 0 { inside=1 }
   inside { print }
   inside && index($0, "$claim$;") > 0 { exit }
-' "$SQL_FILE" | grep -q "not in ('PENDING','READY','RUNNING')"; then
+' "$SQL_FILE" | grep -F "not in ('PENDING','READY','RUNNING')" >/dev/null; then
   echo "Worker task claim must accept PENDING tasks whose dependencies are checked transactionally." >&2
   exit 1
 fi
@@ -87,7 +87,7 @@ if ! awk -v fn="happy_worker_record_dispatch_outcome" '
   index($0, "create or replace function private." fn "(") > 0 { inside=1 }
   inside { print }
   inside && index($0, "$outcome$;") > 0 { exit }
-' "$SQL_FILE" | grep -q "when p_status = 'ACKNOWLEDGED' then 'VERIFYING'"; then
+' "$SQL_FILE" | grep -F "when p_status = 'ACKNOWLEDGED' then 'VERIFYING'" >/dev/null; then
   echo "Dispatch acknowledgement must move the task to VERIFYING, not COMPLETED." >&2
   exit 1
 fi
@@ -96,7 +96,7 @@ if ! awk -v fn="happy_worker_record_dispatch_outcome" '
   index($0, "create or replace function private." fn "(") > 0 { inside=1 }
   inside { print }
   inside && index($0, "$outcome$;") > 0 { exit }
-' "$SQL_FILE" | grep -q "MISSION_VERSION_CONFLICT"; then
+' "$SQL_FILE" | grep -F "MISSION_VERSION_CONFLICT" >/dev/null; then
   echo "Dispatch outcome must persist the aggregate mission snapshot with version fencing." >&2
   exit 1
 fi
