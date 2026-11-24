@@ -99,7 +99,7 @@ assert_jwt_subject() {
   local payload subject role
   local encoded
   encoded="$(cut -d. -f2 <<<"$token" | tr '_-' '/+')"
-  case $(('${#encoded}' % 4)) in
+  case $((${#encoded} % 4)) in
     2) encoded+="==" ;;
     3) encoded+="=" ;;
     1) echo "$label JWT payload has invalid base64url length." >&2; exit 1 ;;
