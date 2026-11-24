@@ -76,7 +76,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add supabase/config.toml supabase/.gitignore supabase/migrations docs/security/supabase-staging-migration-chain.md docs/security/supabase-staging-migration-checksums.sha256
+          git add supabase/config.toml supabase/migrations/*.sql docs/security/supabase-staging-migration-chain.md docs/security/supabase-staging-migration-checksums.sha256
           if git diff --cached --quiet; then
             echo "Generated migration chain is already committed."
             exit 0
