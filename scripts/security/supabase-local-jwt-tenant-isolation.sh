@@ -93,6 +93,37 @@ token_a="$(login_user a "$email_a")"
 token_b="$(login_user b "$email_b")"
 token_c="$(login_user c "$email_c")"
 
+# Assert the password-grant tokens carry the exact Auth user subjects and role.
+assert_jwt_subject() {
+  local label="$1" token="$2" expected_user="$3"
+  local payload subject role
+  payload="$(cut -d. -f2 <<<"$token" | tr '_-' '/+' | base64 -d 2>/dev/null)"
+  subject="$(jq -er '.sub' <<<"$payload")"
+  role="$(jq -er '.role' <<<"$payload")"
+  if [[ "$subject" != "$expected_user" || "$role" != "authenticated" ]]; then
+    echo "$label JWT subject/role mismatch (sub=$subject role=$role)." >&2
+    exit 1
+  fi
+}
+assert_jwt_subject a "$token_a" "$user_a"
+assert_jwt_subject b "$token_b" "$user_b"
+assert_jwt_subject c "$token_c" "$user_c"
+
+# Temporary local-only diagnostic RPC proves PostgREST exposes auth.uid() as
+# the JWT subject for each authenticated request. It is dropped at test end.
+psql "$DB_URL" -X -v ON_ERROR_STOP=1 <<'SQL'
+CREATE OR REPLACE FUNCTION public.happy_local_jwt_subject_probe()
+RETURNS uuid LANGUAGE sql STABLE SET search_path=pg_catalog
+AS $probe$ SELECT auth.uid(); $probe$;
+GRANT EXECUTE ON FUNCTION public.happy_local_jwt_subject_probe() TO authenticated;
+SQL
+rpc a-auth-subject happy_local_jwt_subject_probe "$token_a" '{}' success
+[[ "$(jq -r '.' "$tmp_dir/a-auth-subject-result.json")" == "$user_a" ]] || {
+  echo "PostgREST auth.uid() did not match user A's verified JWT subject." >&2
+  cat "$tmp_dir/a-auth-subject-result.json" >&2
+  exit 1
+}
+
 # Revoke C after issuing the JWT; live membership must override a valid token.
 psql "$DB_URL" -X -v ON_ERROR_STOP=1 -v user_c="$user_c" -v org_a="$org_a" <<'SQL'
 UPDATE private.organization_memberships SET status='REVOKED'
@@ -102,9 +133,15 @@ SQL
 scope_a="$(jq -cn --arg org "$org_a" --arg ws "$workspace_a" '{p_organization_id:$org,p_workspace_id:$ws}')"
 scope_b="$(jq -cn --arg org "$org_b" --arg ws "$workspace_b" '{p_organization_id:$org,p_workspace_id:$ws}')"
 rpc a-active happy_has_active_tenant_scope "$token_a" "$scope_a" success
-jq -e 'select(. == true)' "$tmp_dir/a-active-result.json" >/dev/null
+if ! jq -e 'select(. == true)' "$tmp_dir/a-active-result.json" >/dev/null; then
+  echo "User A active-scope probe returned: $(cat "$tmp_dir/a-active-result.json")" >&2
+  exit 1
+fi
 rpc b-active-other-scope happy_has_active_tenant_scope "$token_b" "$scope_b" success
-jq -e 'select(. == true)' "$tmp_dir/b-active-other-scope-result.json" >/dev/null
+if ! jq -e 'select(. == true)' "$tmp_dir/b-active-other-scope-result.json" >/dev/null; then
+  echo "User B active-scope probe returned: $(cat "$tmp_dir/b-active-other-scope-result.json")" >&2
+  exit 1
+fi
 rpc c-revoked-scope happy_has_active_tenant_scope "$token_c" "$scope_a" success
 jq -e 'select(. == false)' "$tmp_dir/c-revoked-scope-result.json" >/dev/null
 
@@ -144,6 +181,10 @@ anon_status="$(curl -sS -o "$tmp_dir/anon-read.json" -w '%{http_code}' \
 if grep -Fq "$record_a" "$tmp_dir/anon-read.json"; then
   echo "Anonymous request disclosed a tenant record (HTTP $anon_status)." >&2; cat "$tmp_dir/anon-read.json" >&2; exit 1
 fi
+
+psql "$DB_URL" -X -v ON_ERROR_STOP=1 <<'SQL'
+DROP FUNCTION public.happy_local_jwt_subject_probe();
+SQL
 
 echo "PASS: real local Supabase Auth JWTs enforced subject, tenant, workspace, row-owner, and live-membership boundaries."
 echo "PASS: cross-tenant create, cross-user read/update, revoked membership, direct INSERT, and anonymous read probes denied."
