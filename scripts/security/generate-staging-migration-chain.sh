@@ -45,7 +45,7 @@ done
 
 (
   cd "$tmp"
-  supabase init
+  printf '\n' | supabase init
   for entry in "${entries[@]}"; do
     migration_name="${entry%%|*}"
     source_name="${entry#*|}"
