@@ -97,7 +97,14 @@ token_c="$(login_user c "$email_c")"
 assert_jwt_subject() {
   local label="$1" token="$2" expected_user="$3"
   local payload subject role
-  payload="$(cut -d. -f2 <<<"$token" | tr '_-' '/+' | base64 -d 2>/dev/null)"
+  local encoded
+  encoded="$(cut -d. -f2 <<<"$token" | tr '_-' '/+')"
+  case $(('${#encoded}' % 4)) in
+    2) encoded+="==" ;;
+    3) encoded+="=" ;;
+    1) echo "$label JWT payload has invalid base64url length." >&2; exit 1 ;;
+  esac
+  payload="$(printf '%s' "$encoded" | base64 -d 2>/dev/null)"
   subject="$(jq -er '.sub' <<<"$payload")"
   role="$(jq -er '.role' <<<"$payload")"
   if [[ "$subject" != "$expected_user" || "$role" != "authenticated" ]]; then
