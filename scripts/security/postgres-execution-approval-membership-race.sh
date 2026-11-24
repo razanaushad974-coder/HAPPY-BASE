@@ -199,4 +199,10 @@ end
 \$verify_decision_first\$;
 SQL
 
+# Restore the shared integration fixture for later end-to-end lifecycle tests.
+"${psql_base[@]}" <<SQL
+update private.organization_memberships set status='ACTIVE'
+ where organization_id='$org_id' and user_id='$founder_id';
+SQL
+
 echo "PostgreSQL concurrent founder-approval/membership-revocation serialization: PASS"
