@@ -111,9 +111,9 @@ pass "superseded SQL notes are non-executable"
 # The dependency manifest must reflect the split identity/request/envelope
 # baseline. Reject stale ordering or any attempt to resurrect the inert RPC
 # placeholder as a schema-producing prerequisite.
-line_stage0="$(grep -nF 'Stage 0. Canonical identity baseline' "$MANIFEST" | cut -d: -f1)"
-line_request_base="$(grep -nF 'Stage 2. Execution request base' "$MANIFEST" | cut -d: -f1)"
-line_envelope="$(grep -nF 'Stage 2a. Execution request + approval envelope' "$MANIFEST" | cut -d: -f1)"
+line_stage0="$(grep -nF '| 0. Canonical identity baseline |' "$MANIFEST" | cut -d: -f1 || true)"
+line_request_base="$(grep -nF '| 2. Execution request base |' "$MANIFEST" | cut -d: -f1 || true)"
+line_envelope="$(grep -nF '| 2a. Execution request + approval envelope |' "$MANIFEST" | cut -d: -f1 || true)"
 test -n "$line_stage0" && test -n "$line_request_base" && test -n "$line_envelope" \
   || fail "manifest is missing canonical identity/request/envelope stages"
 (( line_stage0 < line_request_base && line_request_base < line_envelope )) \
