@@ -48,6 +48,7 @@ on:
       - security/durable-file-mutation-grants
       - platform/full-happy-audit-and-integration
       - security/staging-migration-readiness
+      - security/migration-dependency-preflight
       - fix/durable-verification-persistence-20261124
 
 permissions:
