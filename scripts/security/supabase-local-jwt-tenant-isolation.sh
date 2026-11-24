@@ -123,7 +123,17 @@ CREATE OR REPLACE FUNCTION public.happy_local_jwt_subject_probe()
 RETURNS uuid LANGUAGE sql STABLE SET search_path=pg_catalog
 AS $probe$ SELECT auth.uid(); $probe$;
 GRANT EXECUTE ON FUNCTION public.happy_local_jwt_subject_probe() TO authenticated;
+NOTIFY pgrst, 'reload schema';
 SQL
+# Give PostgREST a bounded window to refresh its schema cache after DDL.
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
+  if curl --silent --show-error --fail "$API_URL/rest/v1/" \
+    --header "apikey: $ANON_KEY" --header "Authorization: Bearer $ANON_KEY" \
+    >/dev/null; then
+    break
+  fi
+  sleep 1
+done
 rpc a-auth-subject happy_local_jwt_subject_probe "$token_a" '{}' success
 [[ "$(jq -r '.' "$tmp_dir/a-auth-subject-result.json")" == "$user_a" ]] || {
   echo "PostgREST auth.uid() did not match user A's verified JWT subject." >&2
