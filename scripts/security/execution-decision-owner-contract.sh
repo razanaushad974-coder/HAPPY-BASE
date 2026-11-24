@@ -16,7 +16,7 @@ done
 
 # Bind the exact public decision RPC and internal scope helper to the
 # dedicated non-login owner. A name-only assertion would miss overload drift.
-grep -Eiq 'create[[:space:]]+function[[:space:]]+public\.decide_authenticated_execution_request[[:space:]]*\([[:space:]]*p_request_id[[:space:]]+text[[:space:]]*,[[:space:]]*p_decision[[:space:]]+text[[:space:]]*,[[:space:]]*p_reason[[:space:]]+text' "$ENVELOPE" \
+perl -0777 -ne 'exit(/create\\s+or\\s+replace\\s+function\\s+public\\.decide_authenticated_execution_request\\s*\\(\\s*p_request_id\\s+text\\s*,\\s*p_decision\\s+text\\s*,\\s*p_reason\\s+text/is ? 0 : 1)' "$ENVELOPE" \
   || fail "public founder decision RPC definition/signature is missing"
 grep -Eiq 'alter[[:space:]]+function[[:space:]]+public\.decide_authenticated_execution_request\(text,text,text\)[[:space:]]+owner[[:space:]]+to[[:space:]]+happy_execution_request_decision_rpc_owner' "$PRIVILEGES" \
   || fail "exact public decision RPC overload is not transferred to the decision owner"
@@ -67,7 +67,7 @@ grep -Eiq 'revoke[[:space:]]+all[[:space:]]+on[[:space:]]+function[[:space:]]+pr
 
 # The owner role must be NOLOGIN/NOBYPASSRLS and its only membership grant
 # must be the trusted migration executor used for ALTER FUNCTION OWNER.
-grep -Eiq 'create[[:space:]]+role[[:space:]]+happy_execution_request_decision_rpc_owner[[:space:]]+nologin[[:space:]]+noinherit[[:space:]]+nosuperuser' "$ROLE" \
+perl -0777 -ne 'exit(/create\\s+role\\s+happy_execution_request_decision_rpc_owner\\s+nologin\\s+noinherit\\s+nosuperuser/is ? 0 : 1)' "$ROLE" \
   || fail "decision owner role is not provisioned with restrictive attributes"
 grep -Eiq 'nobypassrls' "$ROLE" || fail "decision owner role must not bypass RLS"
 if grep -Eiq 'grant[[:space:]]+happy_execution_request_decision_rpc_owner[[:space:]]+to[[:space:]]+(anon|authenticated|service_role|authenticator|happy_worker_[a-z0-9_]*)' "$ROLE"; then
