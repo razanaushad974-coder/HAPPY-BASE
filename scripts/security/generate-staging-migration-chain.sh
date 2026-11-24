@@ -5,7 +5,14 @@ repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
 if [[ -e supabase/config.toml || -d supabase/migrations ]]; then
-  echo "Refusing to overwrite an existing Supabase CLI bootstrap or migration chain." >&2
+  existing_count="$(find supabase/migrations -maxdepth 1 -type f -name '*.sql' 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ -f supabase/config.toml && "$existing_count" == "18" \
+        && -f docs/security/supabase-staging-migration-chain.md \
+        && -f docs/security/supabase-staging-migration-checksums.sha256 ]]; then
+    echo "Complete committed migration chain detected; preserve timestamps and replay it as-is."
+    exit 0
+  fi
+  echo "Refusing to overwrite an incomplete Supabase CLI bootstrap or migration chain." >&2
   exit 2
 fi
 
@@ -72,7 +79,7 @@ mkdir -p "$(dirname "$manifest")"
   echo "# HAPPY Supabase staging migration chain"
   echo
   echo "**Status:** generated for isolated local replay; NOT approved for hosted apply."
-  echo "**Generator:** Supabase CLI `supabase init` and `supabase migration new`."
+  echo '**Generator:** Supabase CLI `supabase init` and `supabase migration new`.'
   echo "**PostgreSQL target:** local Supabase stack, PostgreSQL 17."
   echo
   echo "## Ordered source mapping"
@@ -93,7 +100,7 @@ mkdir -p "$(dirname "$manifest")"
   echo
   echo "- Superseded tenant-context and execution-request RPC design notes."
   echo "- Legacy file-mutation atomic-consume candidate."
-  echo "- Worker registry and scheduler LOGIN grant candidates; worker EXECUTE grants remain withheld pending real dedicated-LOGIN and hosted-pooler `session_user` evidence."
+  echo '- Worker registry and scheduler LOGIN grant candidates; worker EXECUTE grants remain withheld pending real dedicated-LOGIN and hosted-pooler `session_user` evidence.'
   echo
   echo "## Required gates"
   echo
