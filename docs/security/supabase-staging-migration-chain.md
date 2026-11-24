@@ -37,5 +37,5 @@
 
 - This chain is a faithful CLI-generated staging candidate, not a declaration that the SQL is safe to deploy.
 - Clean local replay, owner/grant/RLS tests, and migration checksums must pass before any staging consideration.
-- Real Supabase JWT tenant-isolation tests and hosted worker identity verification remain outstanding.
+- Real Supabase Auth JWT tenant-isolation tests now pass on the disposable local Supabase stack (migration replay run #15). Hosted Supabase JWT validation and hosted worker LOGIN/pooler `session_user` identity verification remain outstanding.
 - No remote project is linked or mutated by this generator.
