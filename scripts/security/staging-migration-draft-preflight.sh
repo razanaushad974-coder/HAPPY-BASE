@@ -122,10 +122,9 @@ grep -Fq '20261123_canonical_tenant_identity_schema_candidate.sql' "$MANIFEST" >
   || fail "manifest does not identify the isolated canonical identity baseline"
 grep -Fq '20261123_execution_request_base_schema_candidate.sql' "$MANIFEST" >/dev/null \
   || fail "manifest does not identify the isolated execution-request base"
-grep -Fq 'superseded and inert' "$MANIFEST" >/dev/null \
-  || grep -Fq 'superseded placeholder' "$MANIFEST" >/dev/null \
-  || fail "manifest does not explicitly exclude the superseded execution-request RPC note"
-grep -Fq 'Do not treat it as a schema prerequisite' "$MANIFEST" >/dev/null \
+grep -Fq 'non-executable superseded note' "$MANIFEST" >/dev/null \\
+  || fail "manifest does not explicitly mark the intermediate execution-request RPC as superseded and inert"
+grep -Fq 'Do not treat it as a schema prerequisite' "$MANIFEST" >/dev/null \\
   || fail "manifest does not prohibit the superseded RPC note as a schema prerequisite"
 
 ENVELOPE="$DRAFTS/20261121_authenticated_execution_envelope_candidate.sql"
