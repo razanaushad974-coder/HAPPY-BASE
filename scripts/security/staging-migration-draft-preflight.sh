@@ -170,4 +170,6 @@ else
   echo "INFO: Supabase config and migration directory exist; ordered migration review is still required."
 fi
 
+bash "$ROOT_DIR/scripts/security/execution-decision-owner-contract.sh"
+
 echo "PASS: static staging draft preflight complete; this script does not apply SQL or certify staging readiness."
