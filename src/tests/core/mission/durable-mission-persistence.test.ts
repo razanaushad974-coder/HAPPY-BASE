@@ -110,43 +110,64 @@ async function main(): Promise<void> {
 
   const verificationRequestId = `verification-${rootTaskId}`;
   const evidenceId = `evidence-${rootTaskId}`;
-  if (rootTask.verificationRequired) {
-    await persistence.transaction(scope, async (tx) => {
-      await tx.create(scope, "VERIFICATION_REQUEST", verificationRequestId, {
-        id: verificationRequestId,
+  const verificationEnvelope = rootTask.verificationRequired ? {
+    request: {
+      id: verificationRequestId,
+      missionId: snapshot.mission.id,
+      taskId: rootTaskId,
+      description: "Verify the durable root task.",
+      criteria: [{ id: "criterion-1", description: "Result verified", expected: "PASS", required: true }],
+      preferredMethods: ["TEST" as const],
+      requiresEvidence: true,
+      createdAt: new Date().toISOString(),
+    },
+    evidence: {
+      id: evidenceId,
+      verificationRequestId,
+      missionId: snapshot.mission.id,
+      taskId: rootTaskId,
+      type: "TEST_RESULT" as const,
+      source: "TEST" as const,
+      title: "Durable task verification evidence",
+      content: "PASS",
+      capturedAt: new Date().toISOString(),
+      isPrimary: true,
+    },
+    result: {
+      id: `verification-result-${verificationRequestId}`,
+      requestId: verificationRequestId,
+      status: "PASSED" as const,
+      confidence: "HIGH" as const,
+      passedCriteria: ["criterion-1"],
+      failedCriteria: [],
+      partialCriteria: [],
+      evidenceIds: [evidenceId],
+      summary: "Persisted verification passed.",
+      verifiedAt: new Date().toISOString(),
+    },
+  } : undefined;
+
+  if (verificationEnvelope) {
+    let invalidTransitionRolledBack = false;
+    try {
+      await orchestrator.transitionTaskDurable({
+        scope,
+        persistence,
         missionId: snapshot.mission.id,
         taskId: rootTaskId,
-        description: "Verify the durable root task.",
-        criteria: [{ id: "criterion-1", description: "Result verified", expected: "PASS", required: true }],
-        preferredMethods: ["TEST"],
-        requiresEvidence: true,
-        createdAt: new Date().toISOString(),
-      });
-      await tx.create(scope, "EVIDENCE", evidenceId, {
-        id: evidenceId,
+        status: "PENDING",
         verificationRequestId,
-        missionId: snapshot.mission.id,
-        taskId: rootTaskId,
-        type: "TEST_RESULT",
-        source: "TEST",
-        title: "Durable task verification evidence",
-        content: "PASS",
-        capturedAt: new Date().toISOString(),
-        isPrimary: true,
+        verificationEnvelope,
       });
-      await tx.create(scope, "VERIFICATION", verificationRequestId, {
-        id: `verification-result-${verificationRequestId}`,
-        requestId: verificationRequestId,
-        status: "PASSED",
-        confidence: "HIGH",
-        passedCriteria: ["criterion-1"],
-        failedCriteria: [],
-        partialCriteria: [],
-        evidenceIds: [evidenceId],
-        summary: "Persisted verification passed.",
-        verifiedAt: new Date().toISOString(),
-      });
-    });
+    } catch {
+      invalidTransitionRolledBack =
+        !(await persistence.get(scope, "VERIFICATION_REQUEST", verificationRequestId)) &&
+        !(await persistence.get(scope, "EVIDENCE", evidenceId)) &&
+        !(await persistence.get(scope, "VERIFICATION", verificationRequestId));
+    }
+    if (!invalidTransitionRolledBack) {
+      throw new Error("Verification envelope was not rolled back with a rejected task transition.");
+    }
   }
 
   await orchestrator.transitionTaskDurable({
@@ -155,7 +176,7 @@ async function main(): Promise<void> {
     missionId: snapshot.mission.id,
     taskId: rootTaskId,
     status: "COMPLETED",
-    ...(rootTask.verificationRequired ? { verificationRequestId } : {}),
+    ...(rootTask.verificationRequired ? { verificationRequestId, verificationEnvelope } : {}),
   });
   const persistedCompletedTask = await persistence.get<{ status: string }>(scope, "TASK", rootTaskId);
   if (persistedCompletedTask?.data.status !== "COMPLETED") {
