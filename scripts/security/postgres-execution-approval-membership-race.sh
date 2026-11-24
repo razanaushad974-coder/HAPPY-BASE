@@ -105,7 +105,7 @@ if [[ "$holder_status" -ne 0 || "$contender_status" -ne 0 ]] ||
 fi
 
 "${psql_base[@]}" <<SQL
-DO \\$verify_revoke_first\\$
+DO \$verify_revoke_first\$
 begin
   if (select status from private.organization_memberships
        where organization_id='$org_id' and user_id='$founder_id') <> 'REVOKED'
@@ -116,7 +116,7 @@ begin
     raise exception 'revocation-first serialization produced an approval or inconsistent state';
   end if;
 end
-$verify_revoke_first$;
+\$verify_revoke_first\$;
 update private.organization_memberships set status='ACTIVE'
  where organization_id='$org_id' and user_id='$founder_id';
 SQL
@@ -184,7 +184,7 @@ if [[ "$holder_status" -ne 0 || "$contender_status" -ne 0 ]] ||
 fi
 
 "${psql_base[@]}" <<SQL
-DO \\$verify_decision_first\\$
+DO \$verify_decision_first\$
 begin
   if (select status from private.organization_memberships
        where organization_id='$org_id' and user_id='$founder_id') <> 'REVOKED'
@@ -196,7 +196,7 @@ begin
     raise exception 'decision-first serialization did not preserve committed approval then revocation';
   end if;
 end
-$verify_decision_first$;
+\$verify_decision_first\$;
 SQL
 
 echo "PostgreSQL concurrent founder-approval/membership-revocation serialization: PASS"
