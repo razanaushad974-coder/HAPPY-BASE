@@ -234,12 +234,8 @@ begin
      and r.capability in ('CODE','FILE','API','BROWSER','SHELL','DATABASE','AI','DEPLOYMENT','PUBLISH','AUTOMATION')
      and r.action is not null and length(btrim(r.action)) > 0
      and jsonb_typeof(r.input) = 'object'
-     and r.input_digest ~ '^[0-9a-f]{64}
-end;
-$claim$;
-     and r.envelope_digest ~ '^[0-9a-f]{64}
-end;
-$claim$;
+     and r.input_digest ~ '^[0-9a-f]{64}$'
+     and r.envelope_digest ~ '^[0-9a-f]{64}$'
      and r.idempotency_key is not null and length(btrim(r.idempotency_key)) > 0
    order by r.created_at desc
    limit 1

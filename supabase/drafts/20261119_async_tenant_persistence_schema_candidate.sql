@@ -1,15 +1,19 @@
 -- DESIGN-ONLY schema candidate for HAPPY async tenant persistence.
 -- DO NOT APPLY to a connected/shared/production Supabase project.
 --
--- Depends on the tenant identity tables defined by the separate
--- file-mutation candidate:
+-- Depends on a separately reviewed Stage 0 canonical identity baseline:
 --   private.organizations
 --   private.workspaces
 --   private.organization_memberships
 --   private.workspace_memberships
 --
--- This draft intentionally does not create or mutate those identity tables.
--- Reconcile ownership, schema grants, migration order, and RLS before use.
+-- NO approved standalone Stage 0 baseline migration currently exists.
+-- 20261119_file_mutation_atomic_consume_candidate.sql is NOT an approved
+-- substitute: it contains legacy broad service_role grants and an unowned
+-- file-mutation SECURITY DEFINER surface. Do not apply it wholesale.
+-- This draft intentionally does not create or mutate identity tables.
+-- Author and adversarially test a minimal identity-only baseline before
+-- promoting this draft into an ordered migration.
 --
 -- Storage contract:
 --   key = organization_id + workspace_id + user_id + entity_type + id
@@ -88,7 +92,9 @@ create index happy_tenant_records_scope_updated_idx
     updated_at desc
   );
 
--- The policy helper derives the principal only from auth.uid(). Tenant IDs
+-- The policy helper derives the principal only from the verified JWT subject via
+-- private.happy_current_authenticated_user_id(), a non-exposed, narrowly granted
+-- SECURITY DEFINER accessor around auth.uid(). Tenant IDs
 -- are selectors, never proof of membership. It reads the canonical membership
 -- tables created by the separate identity-schema candidate.
 --
@@ -119,7 +125,7 @@ as $scope$
        and wm.user_id = om.user_id
      where o.organization_id = p_organization_id
        and w.workspace_id = p_workspace_id
-       and om.user_id = auth.uid()
+       and om.user_id = private.happy_current_authenticated_user_id()
        and o.status = 'ACTIVE'
        and w.status = 'ACTIVE'
        and om.status = 'ACTIVE'
@@ -227,7 +233,7 @@ as $lock_scope$
 declare
   v_actor uuid;
 begin
-  v_actor := auth.uid();
+  v_actor := private.happy_current_authenticated_user_id();
   if v_actor is null then return false; end if;
 
   perform 1
@@ -287,7 +293,7 @@ declare
   v_actor uuid;
   v_record public.happy_tenant_records%rowtype;
 begin
-  v_actor := auth.uid();
+  v_actor := private.happy_current_authenticated_user_id();
   if v_actor is null
      or not public.happy_lock_active_tenant_scope(p_organization_id, p_workspace_id) then
     raise exception 'TENANT_SCOPE_DENIED' using errcode = '42501';
@@ -334,7 +340,7 @@ declare
   v_record public.happy_tenant_records%rowtype;
   v_exists boolean;
 begin
-  v_actor := auth.uid();
+  v_actor := private.happy_current_authenticated_user_id();
   if v_actor is null
      or not public.happy_lock_active_tenant_scope(p_organization_id, p_workspace_id) then
     raise exception 'TENANT_SCOPE_DENIED' using errcode = '42501';
@@ -397,7 +403,7 @@ declare
   v_deleted boolean;
   v_exists boolean;
 begin
-  v_actor := auth.uid();
+  v_actor := private.happy_current_authenticated_user_id();
   if v_actor is null
      or not public.happy_lock_active_tenant_scope(p_organization_id, p_workspace_id) then
     raise exception 'TENANT_SCOPE_DENIED' using errcode = '42501';
@@ -461,7 +467,8 @@ grant execute on function public.happy_delete_tenant_record(uuid, uuid, text, te
 --    grants it to service_role. This helper therefore needs a deliberately
 --    reviewed owner/privilege design; do not assume it can read those tables.
 -- 3. Verify function owners, BYPASSRLS, FORCE ROW LEVEL SECURITY behavior,
---    table grants, function grants, and auth.uid() with real user JWTs.
+--    table grants, function grants, and the private JWT-subject accessor with
+--    real user JWTs. The tenant RPC owner cannot call the managed auth schema directly.
 -- 4. Direct authenticated INSERT/UPDATE/DELETE is deliberately revoked; create
 --    and CAS RPCs lock the active tenant/membership rows before writing. Test cross-user,
 --    cross-workspace, suspended/revoked membership, duplicate create, stale CAS

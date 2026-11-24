@@ -7,6 +7,8 @@ on:
       - security/file-mutation-authorizer
       - happy/server-verified-pipeline-approval
       - security/durable-file-mutation-grants
+      - platform/full-happy-audit-and-integration
+      - security/staging-migration-readiness
     paths:
       - "src/lib/supabase/**"
       - "src/app/auth/**"
@@ -45,6 +47,8 @@ on:
     branches:
       - security/durable-file-mutation-grants
       - platform/full-happy-audit-and-integration
+      - security/staging-migration-readiness
+      - fix/durable-verification-persistence-20261124
 
 permissions:
   contents: read
@@ -100,8 +104,10 @@ jobs:
         run: npx --yes tsx@4.23.15 src/tests/core/persistence/postgres-tenant-adapter.test.ts
       - name: PostgreSQL reconciliation evidence store contract
         run: npx --yes tsx@4.23.15 src/tests/core/persistence/postgres-provider-reconciliation-evidence-store.test.ts
-      - name: Validate PostgreSQL harness shell syntax
-        run: bash -n scripts/security/postgres-tenant-persistence-integration.sh scripts/security/postgres-tenant-cas-concurrency.sh scripts/security/postgres-reconciliation-evidence-concurrency.sh scripts/security/postgres-worker-principal-registry-integration.sh scripts/security/worker-scheduler-draft-contract.sh
+      - name: Validate PostgreSQL and staging preflight shell syntax
+        run: bash -n scripts/security/postgres-tenant-persistence-integration.sh scripts/security/postgres-tenant-cas-concurrency.sh scripts/security/postgres-reconciliation-evidence-concurrency.sh scripts/security/postgres-worker-principal-registry-integration.sh scripts/security/worker-scheduler-draft-contract.sh scripts/security/staging-migration-draft-preflight.sh
+      - name: Static Supabase staging migration draft preflight
+        run: bash scripts/security/staging-migration-draft-preflight.sh
       - name: Worker scheduler draft contract
         run: bash scripts/security/worker-scheduler-draft-contract.sh
       - name: Install PostgreSQL client
@@ -112,6 +118,8 @@ jobs:
         run: bash scripts/security/postgres-worker-principal-registry-integration.sh
         env:
           DATABASE_URL: postgresql://postgres:happy_test@localhost:5432/happy_test
+      - name: PostgreSQL worker scheduler CONTROL and VERIFY RLS probe
+        run: psql -X -v ON_ERROR_STOP=1 -f scripts/security/test-worker-scheduler-owner-grants.sql
       - name: Async tenant memory contract
         run: npx --yes tsx@4.23.15 src/tests/core/persistence/async-persistent-memory.test.ts
       - name: Async HAPPY state store contract

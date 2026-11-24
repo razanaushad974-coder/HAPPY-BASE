@@ -8,14 +8,23 @@ set -euo pipefail
 : "${PGDATABASE:?PGDATABASE is required}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+IDENTITY_BASELINE_FILE="$ROOT_DIR/supabase/drafts/20261123_canonical_tenant_identity_schema_candidate.sql"
+EXECUTION_REQUEST_BASE_FILE="$ROOT_DIR/supabase/drafts/20261123_execution_request_base_schema_candidate.sql"
 SCHEMA_FILE="$ROOT_DIR/supabase/drafts/20261119_async_tenant_persistence_schema_candidate.sql"
 SCHEDULER_SCHEMA_FILE="$ROOT_DIR/supabase/drafts/20261121_durable_mission_scheduler_candidate.sql"
-TENANT_CONTEXT_RPC_FILE="$ROOT_DIR/supabase/drafts/20261121_authenticated_tenant_context_rpc_candidate.sql"
-EXECUTION_REQUEST_RPC_FILE="$ROOT_DIR/supabase/drafts/20261121_authenticated_execution_request_rpc_candidate.sql"
+TENANT_SCOPE_OWNER_ROLE_FILE="$ROOT_DIR/supabase/drafts/20261123_tenant_scope_rpc_owner_role_candidate.sql"
+TENANT_SCOPE_OWNER_PRIVILEGE_FILE="$ROOT_DIR/supabase/drafts/20261123_tenant_scope_rpc_owner_privilege_candidate.sql"
+EXECUTION_CREATE_OWNER_ROLE_FILE="$ROOT_DIR/supabase/drafts/20261123_execution_request_create_owner_role_candidate.sql"
+EXECUTION_CREATE_OWNER_PRIVILEGE_FILE="$ROOT_DIR/supabase/drafts/20261123_execution_request_create_owner_privilege_candidate.sql"
+EXECUTION_DECISION_OWNER_ROLE_FILE="$ROOT_DIR/supabase/drafts/20261123_execution_request_decision_owner_role_candidate.sql"
+EXECUTION_DECISION_OWNER_PRIVILEGE_FILE="$ROOT_DIR/supabase/drafts/20261123_execution_request_decision_owner_privilege_candidate.sql"
+EXECUTION_DECISION_OWNER_PROBE_FILE="$ROOT_DIR/scripts/security/test-execution-request-decision-owner-grants.sql"
+EXECUTION_DECISION_COMPOSED_PROBE_FILE="$ROOT_DIR/scripts/security/test-composed-execution-decision-owner-boundary.sql"
 EXECUTION_ENVELOPE_FILE="$ROOT_DIR/supabase/drafts/20261121_authenticated_execution_envelope_candidate.sql"
 RACE_SCRIPT="$ROOT_DIR/scripts/security/postgres-tenant-cas-concurrency.sh"
 RECONCILIATION_RACE_SCRIPT="$ROOT_DIR/scripts/security/postgres-reconciliation-evidence-concurrency.sh"
-for required_file in "$SCHEMA_FILE" "$SCHEDULER_SCHEMA_FILE" "$TENANT_CONTEXT_RPC_FILE" "$EXECUTION_REQUEST_RPC_FILE" "$EXECUTION_ENVELOPE_FILE" "$RACE_SCRIPT" "$RECONCILIATION_RACE_SCRIPT"; do
+APPROVAL_MEMBERSHIP_RACE_SCRIPT="$ROOT_DIR/scripts/security/postgres-execution-approval-membership-race.sh"
+for required_file in "$IDENTITY_BASELINE_FILE" "$EXECUTION_REQUEST_BASE_FILE" "$SCHEMA_FILE" "$SCHEDULER_SCHEMA_FILE" "$TENANT_SCOPE_OWNER_ROLE_FILE" "$TENANT_SCOPE_OWNER_PRIVILEGE_FILE" "$EXECUTION_CREATE_OWNER_ROLE_FILE" "$EXECUTION_CREATE_OWNER_PRIVILEGE_FILE" "$EXECUTION_DECISION_OWNER_ROLE_FILE" "$EXECUTION_DECISION_OWNER_PRIVILEGE_FILE" "$EXECUTION_DECISION_OWNER_PROBE_FILE" "$EXECUTION_DECISION_COMPOSED_PROBE_FILE" "$EXECUTION_ENVELOPE_FILE" "$RACE_SCRIPT" "$RECONCILIATION_RACE_SCRIPT" "$APPROVAL_MEMBERSHIP_RACE_SCRIPT"; do
   if [[ ! -f "$required_file" ]]; then
     echo "Required tenant persistence test file not found: $required_file" >&2
     exit 1
@@ -44,6 +53,12 @@ begin
 exception when duplicate_object then null;
 end
 $roles$;
+do $roles$
+begin
+  create role authenticator nologin;
+exception when duplicate_object then null;
+end
+$roles$;
 
 create schema if not exists auth;
 create schema if not exists private;
@@ -61,63 +76,99 @@ as $uid$
 $uid$;
 grant execute on function auth.uid() to authenticated, anon, service_role;
 
-create table private.organizations (
-  organization_id uuid primary key,
-  status text not null check (status in ('ACTIVE','SUSPENDED','REVOKED'))
-);
-create table private.workspaces (
-  workspace_id uuid primary key,
-  organization_id uuid not null references private.organizations(organization_id),
-  status text not null check (status in ('ACTIVE','SUSPENDED','REVOKED')),
-  unique (organization_id, workspace_id)
-);
-create table private.organization_memberships (
-  organization_id uuid not null references private.organizations(organization_id),
-  user_id uuid not null references auth.users(id),
-  status text not null check (status in ('ACTIVE','SUSPENDED','REVOKED')),
-  role text not null,
-  primary key (organization_id, user_id)
-);
-create table private.workspace_memberships (
-  organization_id uuid not null,
-  workspace_id uuid not null,
-  user_id uuid not null references auth.users(id),
-  status text not null check (status in ('ACTIVE','SUSPENDED','REVOKED')),
-  role text not null,
-  primary key (organization_id, workspace_id, user_id),
-  foreign key (organization_id, workspace_id)
-    references private.workspaces(organization_id, workspace_id)
-);
-create table private.execution_requests (
-  request_id text primary key,
-  task_id text not null,
-  mission_id text not null,
-  requester_user_id uuid not null references auth.users(id),
-  executor_user_id uuid not null references auth.users(id),
-  organization_id uuid not null references private.organizations(organization_id),
-  workspace_id uuid not null,
-  status text not null check (status in ('READY','CANCELLED','COMPLETED')),
-  foreign key (organization_id, workspace_id)
-    references private.workspaces(organization_id, workspace_id)
-);
+-- The current tenant persistence schema references the canonical JWT-subject
+-- accessor. In hosted Supabase this accessor is provisioned by the separate
+-- tenant-scope owner candidate; create the minimal equivalent in this
+-- disposable PostgreSQL fixture so schema compilation exercises the same
+-- function dependency without pretending the hosted owner/grant model passed.
+create or replace function private.happy_current_authenticated_user_id()
+returns uuid
+language sql
+stable
+security definer
+set search_path = pg_catalog
+as $current_user$
+  select auth.uid();
+$current_user$;
 
+SQL
+
+# Apply the exact isolated design drafts used by the staging dependency plan.
+# This is a disposable PostgreSQL CI database, not the hosted staging project.
+"${psql_base[@]}" -f "$IDENTITY_BASELINE_FILE"
+
+"${psql_base[@]}" <<'SQL'
+DO $identity_baseline$
+DECLARE
+  v_table text;
+BEGIN
+  FOREACH v_table IN ARRAY ARRAY[
+    'private.organizations',
+    'private.workspaces',
+    'private.organization_memberships',
+    'private.workspace_memberships'
+  ] LOOP
+    IF NOT (SELECT c.relrowsecurity FROM pg_catalog.pg_class c
+             WHERE c.oid = v_table::regclass) THEN
+      RAISE EXCEPTION 'RLS is not enabled on %',v_table;
+    END IF;
+    IF has_table_privilege('service_role',v_table,'SELECT')
+       OR has_table_privilege('service_role',v_table,'INSERT')
+       OR has_table_privilege('service_role',v_table,'UPDATE')
+       OR has_table_privilege('service_role',v_table,'DELETE')
+       OR has_table_privilege('authenticated',v_table,'SELECT')
+       OR has_table_privilege('anon',v_table,'SELECT') THEN
+      RAISE EXCEPTION 'API role has direct table privileges on %',v_table;
+    END IF;
+  END LOOP;
+  IF has_schema_privilege('service_role','private','USAGE')
+     OR has_schema_privilege('authenticated','private','USAGE')
+     OR has_schema_privilege('anon','private','USAGE') THEN
+    RAISE EXCEPTION 'API role has private schema USAGE';
+  END IF;
+END
+$identity_baseline$;
+SQL
+
+"${psql_base[@]}" -f "$EXECUTION_REQUEST_BASE_FILE"
+
+"${psql_base[@]}" <<'SQL'
+DO $request_baseline$
+BEGIN
+  IF NOT (SELECT c.relrowsecurity FROM pg_catalog.pg_class c
+           WHERE c.oid='private.execution_requests'::regclass) THEN
+    RAISE EXCEPTION 'RLS is not enabled on private.execution_requests';
+  END IF;
+  IF has_table_privilege('service_role','private.execution_requests','SELECT')
+     OR has_table_privilege('service_role','private.execution_requests','INSERT')
+     OR has_table_privilege('service_role','private.execution_requests','UPDATE')
+     OR has_table_privilege('service_role','private.execution_requests','DELETE')
+     OR has_table_privilege('authenticated','private.execution_requests','SELECT')
+     OR has_table_privilege('anon','private.execution_requests','SELECT') THEN
+    RAISE EXCEPTION 'API role has direct execution request table privileges';
+  END IF;
+END
+$request_baseline$;
+SQL
+
+"${psql_base[@]}" <<'SQL'
 insert into auth.users(id) values
   ('30000000-0000-4000-8000-000000000003'),
   ('40000000-0000-4000-8000-000000000004'),
   ('50000000-0000-4000-8000-000000000005');
-insert into private.organizations values
+insert into private.organizations(organization_id,status) values
   ('10000000-0000-4000-8000-000000000001', 'ACTIVE');
-insert into private.workspaces values
+insert into private.workspaces(workspace_id,organization_id,status) values
   ('20000000-0000-4000-8000-000000000002',
    '10000000-0000-4000-8000-000000000001', 'ACTIVE');
-insert into private.organization_memberships values
+insert into private.organization_memberships(organization_id,user_id,status,role) values
   ('10000000-0000-4000-8000-000000000001',
    '30000000-0000-4000-8000-000000000003', 'ACTIVE', 'MEMBER'),
   ('10000000-0000-4000-8000-000000000001',
    '40000000-0000-4000-8000-000000000004', 'ACTIVE', 'FOUNDER'),
   ('10000000-0000-4000-8000-000000000001',
    '50000000-0000-4000-8000-000000000005', 'ACTIVE', 'MEMBER');
-insert into private.workspace_memberships values
+insert into private.workspace_memberships(organization_id,workspace_id,user_id,status,role) values
   ('10000000-0000-4000-8000-000000000001',
    '20000000-0000-4000-8000-000000000002',
    '30000000-0000-4000-8000-000000000003', 'ACTIVE', 'MEMBER'),
@@ -127,18 +178,10 @@ insert into private.workspace_memberships values
   ('10000000-0000-4000-8000-000000000001',
    '20000000-0000-4000-8000-000000000002',
    '50000000-0000-4000-8000-000000000005', 'REVOKED', 'MEMBER');
-
-alter table private.organizations enable row level security;
-alter table private.workspaces enable row level security;
-alter table private.organization_memberships enable row level security;
-alter table private.workspace_memberships enable row level security;
-revoke all on schema private from public, anon, authenticated;
-revoke all on all tables in schema private from public, anon, authenticated;
-grant usage on schema private to service_role;
-grant select, insert, update on private.organizations, private.workspaces,
-  private.organization_memberships, private.workspace_memberships,
-  private.execution_requests to service_role;
-insert into private.execution_requests values
+insert into private.execution_requests(
+  request_id,task_id,mission_id,requester_user_id,executor_user_id,
+  organization_id,workspace_id,status
+) values
   ('request-for-executor','task-1','mission-1',
    '40000000-0000-4000-8000-000000000004',
    '30000000-0000-4000-8000-000000000003',
@@ -158,74 +201,151 @@ SQL
 
 "${psql_base[@]}" -f "$SCHEMA_FILE"
 "${psql_base[@]}" -f "$SCHEDULER_SCHEMA_FILE"
-"${psql_base[@]}" -f "$TENANT_CONTEXT_RPC_FILE"
-"${psql_base[@]}" -f "$EXECUTION_REQUEST_RPC_FILE"
 "${psql_base[@]}" -f "$EXECUTION_ENVELOPE_FILE"
+"${psql_base[@]}" -f "$EXECUTION_CREATE_OWNER_ROLE_FILE"
+"${psql_base[@]}" -f "$EXECUTION_DECISION_OWNER_ROLE_FILE"
+"${psql_base[@]}" -f "$TENANT_SCOPE_OWNER_ROLE_FILE"
+"${psql_base[@]}" -f "$TENANT_SCOPE_OWNER_PRIVILEGE_FILE"
+"${psql_base[@]}" -f "$EXECUTION_CREATE_OWNER_PRIVILEGE_FILE"
+"${psql_base[@]}" -f "$EXECUTION_DECISION_OWNER_PRIVILEGE_FILE"
 
-# Exercise the SECURITY DEFINER RPC under a deliberately narrow, non-login
-# function owner instead of silently relying on the migration/superuser owner.
-# BYPASSRLS is constrained by SELECT-only grants on the four identity tables.
+# Composed-schema decision-owner boundary: exact owner function surface, API-role
+# direct-read denial, helper EXECUTE denial, and non-assumable owner membership.
+"${psql_base[@]}" -f "$EXECUTION_DECISION_COMPOSED_PROBE_FILE"
+
+# Rollback-only synthetic adversarial decision-owner probe: cross-tenant denial,
+# founder/self-approval rules, decision state and append-only evidence behavior.
+"${psql_base[@]}" -f "$EXECUTION_DECISION_OWNER_PROBE_FILE"
+
+# Two real PostgreSQL sessions exercise both linearizable orderings of a
+# founder approval racing organization-membership revocation.
+bash "$APPROVAL_MEMBERSHIP_RACE_SCRIPT"
+
+# Tenant-scope SECURITY DEFINER functions use the current NOLOGIN,
+# NOBYPASSRLS owner role and its separately tested least-privilege policies.
 "${psql_base[@]}" <<'SQL'
-do $owner_role$
-begin
-  create role happy_tenant_context_owner nologin bypassrls;
-exception when duplicate_object then null;
-end
-$owner_role$;
-grant usage on schema private, auth to happy_tenant_context_owner;
-grant select on private.organizations, private.workspaces,
-  private.organization_memberships, private.workspace_memberships
-  to happy_tenant_context_owner;
-grant execute on function auth.uid() to happy_tenant_context_owner;
-alter function public.resolve_authenticated_tenant_context(uuid,uuid)
-  owner to happy_tenant_context_owner;
 do $execution_owner_privileges$
+declare
+  v_role record;
 begin
-  if not has_table_privilege('happy_execution_request_rpc_owner',
+  for v_role in
+    select rolname, rolcanlogin, rolinherit, rolsuper, rolcreatedb,
+           rolcreaterole, rolreplication, rolbypassrls
+      from pg_catalog.pg_roles
+     where rolname in (
+       'happy_execution_request_create_rpc_owner',
+       'happy_execution_request_decision_rpc_owner'
+     )
+  loop
+    if v_role.rolcanlogin or v_role.rolinherit or v_role.rolsuper
+       or v_role.rolcreatedb or v_role.rolcreaterole
+       or v_role.rolreplication or v_role.rolbypassrls then
+      raise exception 'execution request owner role has unsafe attributes: %', v_role.rolname;
+    end if;
+  end loop;
+
+  if not exists (select 1 from pg_catalog.pg_roles where rolname='happy_execution_request_create_rpc_owner')
+     or not exists (select 1 from pg_catalog.pg_roles where rolname='happy_execution_request_decision_rpc_owner') then
+    raise exception 'execution request owner role provisioning incomplete';
+  end if;
+
+  -- INSERT is intentionally column-scoped in the privilege candidate.
+  -- has_table_privilege(..., 'INSERT') must therefore be false; verify every
+  -- allowed column directly and reject any INSERT privilege on other columns.
+  if not has_table_privilege('happy_execution_request_create_rpc_owner',
       'private.execution_requests', 'SELECT')
-     or has_table_privilege('happy_execution_request_rpc_owner',
-      'private.execution_requests', 'INSERT,UPDATE,DELETE') then
-    raise exception 'execution request RPC owner privileges are not SELECT-only';
+     or has_table_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests', 'INSERT')
+     or has_table_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests', 'UPDATE')
+     or has_table_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests', 'DELETE')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','request_id','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','task_id','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','mission_id','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','requester_user_id','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','executor_user_id','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','organization_id','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','workspace_id','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','status','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','capability','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','action','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','input','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','target_reference','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','requires_approval','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','risk','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','approval_status','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','required_approval_role','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','input_digest','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','envelope_digest','INSERT')
+     or not has_column_privilege('happy_execution_request_create_rpc_owner',
+      'private.execution_requests','idempotency_key','INSERT')
+     or exists (
+       select 1
+         from pg_catalog.pg_attribute a
+        where a.attrelid = 'private.execution_requests'::regclass
+          and a.attnum > 0
+          and not a.attisdropped
+          and a.attname <> all (array[
+            'request_id','task_id','mission_id','requester_user_id','executor_user_id',
+            'organization_id','workspace_id','status','capability','action','input',
+            'target_reference','requires_approval','risk','approval_status',
+            'required_approval_role','input_digest','envelope_digest','idempotency_key'
+          ]::name[])
+          and has_column_privilege('happy_execution_request_create_rpc_owner',
+            a.attrelid, a.attnum, 'INSERT')
+     ) then
+    raise exception 'execution request create owner INSERT/SELECT privileges are not least-privilege';
+  end if;
+  if not has_table_privilege('happy_execution_request_decision_rpc_owner',
+      'private.execution_requests', 'SELECT')
+     or has_table_privilege('happy_execution_request_decision_rpc_owner',
+      'private.execution_requests', 'INSERT,DELETE') then
+    raise exception 'execution request decision owner table privileges are not least-privilege';
+  end if;
+  if not has_column_privilege('happy_execution_request_decision_rpc_owner',
+      'private.execution_requests','approval_status','UPDATE')
+     or not has_column_privilege('happy_execution_request_decision_rpc_owner',
+      'private.execution_requests','status','UPDATE')
+     or has_column_privilege('happy_execution_request_decision_rpc_owner',
+      'private.execution_requests','request_id','UPDATE') then
+    raise exception 'execution request decision owner UPDATE columns are not exact';
   end if;
   if not has_function_privilege('authenticated',
       'public.resolve_authenticated_execution_request(text)', 'EXECUTE')
      or has_function_privilege('anon',
       'public.resolve_authenticated_execution_request(text)', 'EXECUTE')
      or has_function_privilege('service_role',
-      'public.resolve_authenticated_execution_request(text)', 'EXECUTE') then
+      'public.resolve_authenticated_execution_request(text)', 'EXECUTE')
+     or not has_function_privilege('authenticated',
+      'public.decide_authenticated_execution_request(text,text,text)', 'EXECUTE')
+     or has_function_privilege('anon',
+      'public.decide_authenticated_execution_request(text,text,text)', 'EXECUTE')
+     or has_function_privilege('service_role',
+      'public.decide_authenticated_execution_request(text,text,text)', 'EXECUTE') then
     raise exception 'execution request RPC grants are not least-privilege';
   end if;
 end
 $execution_owner_privileges$;
 
-do $owner_privileges$
-begin
-  if not has_table_privilege('happy_tenant_context_owner',
-      'private.organizations', 'SELECT')
-     or not has_table_privilege('happy_tenant_context_owner',
-      'private.workspaces', 'SELECT')
-     or not has_table_privilege('happy_tenant_context_owner',
-      'private.organization_memberships', 'SELECT')
-     or not has_table_privilege('happy_tenant_context_owner',
-      'private.workspace_memberships', 'SELECT') then
-    raise exception 'tenant context function owner is missing required narrow SELECT grants';
-  end if;
-  if has_table_privilege('happy_tenant_context_owner',
-      'private.organization_memberships', 'INSERT,UPDATE,DELETE')
-     or has_table_privilege('happy_tenant_context_owner',
-      'private.workspace_memberships', 'INSERT,UPDATE,DELETE') then
-    raise exception 'tenant context function owner unexpectedly has membership write privileges';
-  end if;
-  if not has_function_privilege('authenticated',
-      'public.resolve_authenticated_tenant_context(uuid,uuid)', 'EXECUTE')
-     or has_function_privilege('anon',
-      'public.resolve_authenticated_tenant_context(uuid,uuid)', 'EXECUTE')
-     or has_function_privilege('service_role',
-      'public.resolve_authenticated_tenant_context(uuid,uuid)', 'EXECUTE') then
-    raise exception 'tenant context RPC execution grants are not least-privilege';
-  end if;
-end
-$owner_privileges$;
 SQL
 
 # Real PostgreSQL 17 roles/RLS/functions; auth.uid() is stubbed from a local
@@ -235,25 +355,10 @@ set role authenticated;
 select set_config('request.jwt.claim.sub',
   '30000000-0000-4000-8000-000000000003', false);
 
-do $tenant_context_rpc$
+do $execution_request_rpc$
 declare
-  v_context record;
   v_count bigint;
 begin
-  select * into v_context
-    from public.resolve_authenticated_tenant_context(
-      '10000000-0000-4000-8000-000000000001',
-      '20000000-0000-4000-8000-000000000002'
-    );
-  if not found
-     or v_context.user_id <> auth.uid()
-     or v_context.organization_id <> '10000000-0000-4000-8000-000000000001'
-     or v_context.workspace_id <> '20000000-0000-4000-8000-000000000002'
-     or v_context.organization_role <> 'MEMBER'
-     or v_context.workspace_role <> 'MEMBER' then
-    raise exception 'authenticated tenant context RPC did not return the exact active scope';
-  end if;
-
   select count(*) into v_count
     from public.resolve_authenticated_execution_request('request-for-executor');
   if v_count <> 0 then
@@ -279,20 +384,103 @@ begin
   end if;
 
   perform set_config('request.jwt.claim.sub',
-    '50000000-0000-4000-8000-000000000005', false);
-  select count(*) into v_count
-    from public.resolve_authenticated_tenant_context(
+    '30000000-0000-4000-8000-000000000003', false);
+end
+$execution_request_rpc$;
+
+-- Exercise the complete authenticated intent -> founder approval lifecycle,
+-- including task/mission binding, idempotency, self-approval denial and the
+-- immutable approval event. These calls run as the real authenticated DB role.
+do $execution_request_lifecycle$
+declare
+  v_request_id text;
+  v_status text;
+  v_count bigint;
+  v_approved boolean;
+begin
+  perform public.happy_create_tenant_record(
+    '10000000-0000-4000-8000-000000000001',
+    '20000000-0000-4000-8000-000000000002',
+    'MISSION', 'mission-envelope-001',
+    '{"id":"mission-envelope-001","status":"READY","taskIds":["task-envelope-001"]}'::jsonb
+  );
+  perform public.happy_create_tenant_record(
+    '10000000-0000-4000-8000-000000000001',
+    '20000000-0000-4000-8000-000000000002',
+    'TASK', 'task-envelope-001',
+    '{"id":"task-envelope-001","missionId":"mission-envelope-001","status":"PENDING"}'::jsonb
+  );
+
+  select r.request_id,r.status into v_request_id,v_status
+    from public.create_authenticated_execution_request(
+      'exec-envelope-001','task-envelope-001','mission-envelope-001',
       '10000000-0000-4000-8000-000000000001',
-      '20000000-0000-4000-8000-000000000002'
-    );
-  if v_count <> 0 then
-    raise exception 'revoked workspace member received tenant context';
+      '20000000-0000-4000-8000-000000000002',
+      'AI','summarize','{"prompt":"test"}'::jsonb,null::jsonb,'idem-envelope-001'
+    ) r;
+  if v_request_id <> 'exec-envelope-001' or v_status <> 'WAITING_APPROVAL' then
+    raise exception 'new execution request did not persist as inert pending intent';
   end if;
+
+  -- Same key + same immutable payload resolves to the original request even
+  -- when the retry proposes a different request ID.
+  select r.request_id into v_request_id
+    from public.create_authenticated_execution_request(
+      'exec-envelope-retry','task-envelope-001','mission-envelope-001',
+      '10000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000002',
+      'AI','summarize','{"prompt":"test"}'::jsonb,null::jsonb,'idem-envelope-001'
+    ) r;
+  if v_request_id <> 'exec-envelope-001' then
+    raise exception 'idempotent retry did not return the original execution request';
+  end if;
+
+  begin
+    perform * from public.create_authenticated_execution_request(
+      'exec-envelope-conflict','task-envelope-001','mission-envelope-001',
+      '10000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000002',
+      'AI','summarize','{"prompt":"different"}'::jsonb,null::jsonb,'idem-envelope-001'
+    );
+    raise exception 'idempotency key payload conflict unexpectedly succeeded';
+  exception when raise_exception then
+    if sqlerrm <> 'IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_EXECUTION' then raise; end if;
+  end;
+
+  select count(*) into v_count
+    from public.resolve_authenticated_execution_request('exec-envelope-001');
+  if v_count <> 1 then raise exception 'executor cannot resolve its own pending immutable request'; end if;
+
+  -- Requester and executor are the same user in v1; self-approval must fail.
+  select public.decide_authenticated_execution_request(
+    'exec-envelope-001','APPROVED','self approval must be denied'
+  ) into v_approved;
+  if v_approved then raise exception 'self-approval unexpectedly succeeded'; end if;
+
+  perform set_config('request.jwt.claim.sub',
+    '40000000-0000-4000-8000-000000000004', false);
+  select public.decide_authenticated_execution_request(
+    'exec-envelope-001','APPROVED','founder approved integration test'
+  ) into v_approved;
+  if not v_approved then raise exception 'active founder could not approve pending request'; end if;
 
   perform set_config('request.jwt.claim.sub',
     '30000000-0000-4000-8000-000000000003', false);
+  select r.status into v_status
+    from public.resolve_authenticated_execution_request('exec-envelope-001') r;
+  if v_status <> 'READY' then raise exception 'founder approval did not transition request to READY'; end if;
+
+  perform set_config('request.jwt.claim.sub',
+    '40000000-0000-4000-8000-000000000004', false);
+  select public.decide_authenticated_execution_request(
+    'exec-envelope-001','REJECTED','duplicate decision must be denied'
+  ) into v_approved;
+  if v_approved then raise exception 'second founder decision unexpectedly succeeded'; end if;
 end
-$tenant_context_rpc$;
+$execution_request_lifecycle$;
+
+select set_config('request.jwt.claim.sub',
+  '30000000-0000-4000-8000-000000000003', false);
 
 select * from public.happy_create_tenant_record(
   '10000000-0000-4000-8000-000000000001',
@@ -427,6 +615,25 @@ $revoked$;
 
 reset role;
 
+do $approval_evidence$
+declare v_count bigint;
+begin
+  select count(*) into v_count
+    from private.execution_request_approval_events
+   where request_id='exec-envelope-001'
+     and actor_user_id='40000000-0000-4000-8000-000000000004'
+     and decision='APPROVED'
+     and reason='founder approved integration test';
+  if v_count <> 1 then
+    raise exception 'immutable founder approval evidence was not appended exactly once';
+  end if;
+  if (select count(*) from private.execution_request_approval_events
+       where request_id='exec-envelope-001') <> 1 then
+    raise exception 'duplicate decision changed append-only approval evidence';
+  end if;
+end
+$approval_evidence$;
+
 do $privileges$
 begin
   if has_schema_privilege('authenticated', 'private', 'USAGE') then
@@ -434,13 +641,6 @@ begin
   end if;
   if has_table_privilege('authenticated', 'private.organization_memberships', 'SELECT') then
     raise exception 'authenticated has direct private membership SELECT';
-  end if;
-  if not has_function_privilege('authenticated', 'public.resolve_authenticated_tenant_context(uuid,uuid)', 'EXECUTE') then
-    raise exception 'authenticated cannot execute the user-scoped tenant context RPC';
-  end if;
-  if has_function_privilege('anon', 'public.resolve_authenticated_tenant_context(uuid,uuid)', 'EXECUTE')
-     or has_function_privilege('service_role', 'public.resolve_authenticated_tenant_context(uuid,uuid)', 'EXECUTE') then
-    raise exception 'tenant context RPC is executable by anon or service_role';
   end if;
   if has_table_privilege('authenticated', 'public.happy_tenant_records', 'INSERT') then
     raise exception 'authenticated has direct INSERT privilege';
