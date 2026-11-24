@@ -134,7 +134,29 @@ for attempt in 1 2 3 4 5 6 7 8 9 10; do
   fi
   sleep 1
 done
-rpc a-auth-subject happy_local_jwt_subject_probe "$token_a" '{}' success
+# PostgREST may accept the schema-reload notification before its cache is
+# refreshed. Retry this exact RPC for a bounded period; fail on any non-cache
+# error and never treat a missing function as a successful auth probe.
+probe_status="000"
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
+  probe_status="$(curl -sS -o "$tmp_dir/a-auth-subject-result.json" -w '%{http_code}' \
+    -X POST "$API_URL/rest/v1/rpc/happy_local_jwt_subject_probe" \
+    -H "apikey: $ANON_KEY" -H "Authorization: Bearer $token_a" \
+    -H 'Content-Type: application/json' --data '{}')"
+  if [[ "$probe_status" =~ ^2 ]]; then break; fi
+  if grep -Fq 'PGRST202' "$tmp_dir/a-auth-subject-result.json"; then
+    sleep 1
+  else
+    echo "JWT subject RPC failed with HTTP $probe_status." >&2
+    cat "$tmp_dir/a-auth-subject-result.json" >&2
+    exit 1
+  fi
+done
+if [[ ! "$probe_status" =~ ^2 ]]; then
+  echo "PostgREST did not refresh the local JWT subject RPC schema cache." >&2
+  cat "$tmp_dir/a-auth-subject-result.json" >&2
+  exit 1
+fi
 [[ "$(jq -r '.' "$tmp_dir/a-auth-subject-result.json")" == "$user_a" ]] || {
   echo "PostgREST auth.uid() did not match user A's verified JWT subject." >&2
   cat "$tmp_dir/a-auth-subject-result.json" >&2
