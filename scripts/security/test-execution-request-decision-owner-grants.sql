@@ -31,20 +31,29 @@ CREATE TABLE happy_exec_decision_probe.approval_events(
  actor_user_id uuid NOT NULL, decision text NOT NULL, reason text NOT NULL, occurred_at timestamptz NOT NULL
 );
 
-INSERT INTO happy_exec_decision_probe.organizations VALUES ('00000000-0000-0000-0000-000000000002','ACTIVE');
-INSERT INTO happy_exec_decision_probe.workspaces VALUES ('00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000003','ACTIVE');
+INSERT INTO happy_exec_decision_probe.organizations VALUES
+ ('00000000-0000-0000-0000-000000000002','ACTIVE'),
+ ('00000000-0000-0000-0000-000000000009','ACTIVE');
+INSERT INTO happy_exec_decision_probe.workspaces VALUES
+ ('00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000003','ACTIVE'),
+ ('00000000-0000-0000-0000-000000000009','00000000-0000-0000-0000-000000000010','ACTIVE');
 INSERT INTO happy_exec_decision_probe.organization_memberships VALUES
  ('00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000004','ACTIVE','MEMBER'),
  ('00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000005','ACTIVE','FOUNDER'),
- ('00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000006','ACTIVE','MEMBER');
+ ('00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000006','ACTIVE','MEMBER'),
+ ('00000000-0000-0000-0000-000000000009','00000000-0000-0000-0000-000000000007','ACTIVE','MEMBER'),
+ ('00000000-0000-0000-0000-000000000009','00000000-0000-0000-0000-000000000008','ACTIVE','FOUNDER');
 INSERT INTO happy_exec_decision_probe.workspace_memberships VALUES
  ('00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000003','00000000-0000-0000-0000-000000000004','ACTIVE','MEMBER'),
  ('00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000003','00000000-0000-0000-0000-000000000005','ACTIVE','FOUNDER'),
- ('00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000003','00000000-0000-0000-0000-000000000006','ACTIVE','MEMBER');
+ ('00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000003','00000000-0000-0000-0000-000000000006','ACTIVE','MEMBER'),
+ ('00000000-0000-0000-0000-000000000009','00000000-0000-0000-0000-000000000010','00000000-0000-0000-0000-000000000007','ACTIVE','MEMBER'),
+ ('00000000-0000-0000-0000-000000000009','00000000-0000-0000-0000-000000000010','00000000-0000-0000-0000-000000000008','ACTIVE','FOUNDER');
 INSERT INTO happy_exec_decision_probe.execution_requests VALUES
  ('req-1','00000000-0000-0000-0000-000000000004','00000000-0000-0000-0000-000000000004','00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000003','WAITING_APPROVAL',true,'PENDING','FOUNDER',null,null,null),
  ('req-2','00000000-0000-0000-0000-000000000005','00000000-0000-0000-0000-000000000005','00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000003','WAITING_APPROVAL',true,'PENDING','FOUNDER',null,null,null),
- ('req-3','00000000-0000-0000-0000-000000000004','00000000-0000-0000-0000-000000000004','00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000003','WAITING_APPROVAL',true,'PENDING','FOUNDER',null,null,null);
+ ('req-3','00000000-0000-0000-0000-000000000004','00000000-0000-0000-0000-000000000004','00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000003','WAITING_APPROVAL',true,'PENDING','FOUNDER',null,null,null),
+ ('req-4','00000000-0000-0000-0000-000000000007','00000000-0000-0000-0000-000000000007','00000000-0000-0000-0000-000000000009','00000000-0000-0000-0000-000000000010','WAITING_APPROVAL',true,'PENDING','FOUNDER',null,null,null);
 
 DO $rls$
 DECLARE t text;
@@ -165,7 +174,8 @@ $decide$;
 ALTER FUNCTION happy_exec_decision_probe.founder_scope(uuid,uuid) OWNER TO happy_execution_request_decision_owner_probe;
 ALTER FUNCTION happy_exec_decision_probe.decide(text,text,text) OWNER TO happy_execution_request_decision_owner_probe;
 REVOKE CREATE ON SCHEMA happy_exec_decision_probe FROM happy_execution_request_decision_owner_probe;
-REVOKE ALL ON FUNCTION happy_exec_decision_probe.decide(text,text,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION happy_exec_decision_probe.founder_scope(uuid,uuid) FROM PUBLIC,anon,authenticated,service_role;
+REVOKE ALL ON FUNCTION happy_exec_decision_probe.decide(text,text,text) FROM PUBLIC,anon,service_role;
 GRANT EXECUTE ON FUNCTION happy_exec_decision_probe.decide(text,text,text) TO authenticated;
 
 SELECT set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000005',true);
@@ -173,10 +183,29 @@ SET LOCAL ROLE authenticated;
 DO $calls$
 DECLARE ok boolean;
 BEGIN
+ -- API sessions cannot read the identity tables directly or invoke the internal
+ -- boolean scope helper. Only the decision entry point is exposed to authenticated.
+ BEGIN
+  PERFORM 1 FROM happy_exec_decision_probe.organizations LIMIT 1;
+  RAISE EXCEPTION 'authenticated unexpectedly read identity rows directly';
+ EXCEPTION WHEN insufficient_privilege THEN NULL;
+ END;
+ BEGIN
+  PERFORM happy_exec_decision_probe.founder_scope(
+   '00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000003');
+  RAISE EXCEPTION 'authenticated unexpectedly executed internal founder scope helper';
+ EXCEPTION WHEN insufficient_privilege THEN NULL;
+ END;
+ IF NOT has_function_privilege('authenticated',
+   'happy_exec_decision_probe.decide(text,text,text)','EXECUTE') THEN
+  RAISE EXCEPTION 'authenticated cannot execute decision entry point';
+ END IF;
  ok:=happy_exec_decision_probe.decide('req-1','APPROVED','founder approval');
  IF ok IS DISTINCT FROM true THEN RAISE EXCEPTION 'valid founder approval failed'; END IF;
  ok:=happy_exec_decision_probe.decide('req-2','APPROVED','self approval');
  IF ok IS DISTINCT FROM false THEN RAISE EXCEPTION 'self approval was not denied'; END IF;
+ ok:=happy_exec_decision_probe.decide('req-4','APPROVED','cross tenant approval');
+ IF ok IS DISTINCT FROM false THEN RAISE EXCEPTION 'cross-tenant approval was not denied'; END IF;
 END
 $calls$;
 RESET ROLE;
@@ -193,8 +222,28 @@ $nonfounder$;
 RESET ROLE;
 
 DO $verify$
-DECLARE status_value text; decision_value text; event_count bigint;
+DECLARE status_value text; decision_value text; event_count bigint; owned_definer_count bigint; member_count bigint;
 BEGIN
+ SELECT count(*) INTO owned_definer_count
+ FROM pg_catalog.pg_proc p
+ JOIN pg_catalog.pg_roles r ON r.oid=p.proowner
+ WHERE r.rolname='happy_execution_request_decision_owner_probe'
+   AND p.prosecdef;
+ IF owned_definer_count<>2 THEN
+  RAISE EXCEPTION 'unexpected SECURITY DEFINER function count for decision owner: %',owned_definer_count;
+ END IF;
+ SELECT count(*) INTO member_count
+ FROM pg_catalog.pg_auth_members m
+ JOIN pg_catalog.pg_roles granted ON granted.oid=m.roleid
+ JOIN pg_catalog.pg_roles member ON member.oid=m.member
+ WHERE granted.rolname='happy_execution_request_decision_owner_probe'
+   AND member.rolname<>'postgres';
+ IF member_count<>0 THEN RAISE EXCEPTION 'unexpected API/worker membership in decision owner'; END IF;
+ IF has_function_privilege('anon','happy_exec_decision_probe.decide(text,text,text)','EXECUTE')
+    OR has_function_privilege('service_role','happy_exec_decision_probe.decide(text,text,text)','EXECUTE')
+    OR has_function_privilege('authenticated','happy_exec_decision_probe.founder_scope(uuid,uuid)','EXECUTE') THEN
+  RAISE EXCEPTION 'decision/helper EXECUTE ACL is broader than intended';
+ END IF;
  SELECT status,approval_status INTO status_value,decision_value
  FROM happy_exec_decision_probe.execution_requests WHERE request_id='req-1';
  IF status_value<>'READY' OR decision_value<>'APPROVED' THEN RAISE EXCEPTION 'request state incorrect'; END IF;
