@@ -9,7 +9,8 @@ if [[ -e supabase/config.toml || -d supabase/migrations ]]; then
   if [[ -f supabase/config.toml && "$existing_count" == "18" \
         && -f docs/security/supabase-staging-migration-chain.md \
         && -f docs/security/supabase-staging-migration-checksums.sha256 ]]; then
-    echo "Complete committed migration chain detected; preserve timestamps and replay it as-is."
+    sha256sum supabase/migrations/*.sql > docs/security/supabase-staging-migration-checksums.sha256
+    echo "Complete committed migration chain detected; preserve SQL and refresh checksums."
     exit 0
   fi
   echo "Refusing to overwrite an incomplete Supabase CLI bootstrap or migration chain." >&2
