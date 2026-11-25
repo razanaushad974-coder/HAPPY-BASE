@@ -308,6 +308,7 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'API or worker LOGIN is a member of scheduler owner';
   END IF;
-END
+END;
+$assert$;
 
 COMMIT;
