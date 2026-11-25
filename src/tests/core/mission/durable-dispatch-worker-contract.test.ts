@@ -571,6 +571,35 @@ async function run(): Promise<void> {
   assert(reconciliationEvidenceCalls === 1,
     "provider reconciliation must append exactly one immutable evidence record");
 
+  let mismatchedProviderLookupCalls = 0;
+  const mismatchedProviderRun = await runNextDurableDispatch({
+    broker: ambiguousBroker,
+    tenantScope,
+    ownerId: "worker-instance-42",
+    leaseMilliseconds: 30_000,
+    identityProvider: { async getVerifiedWorkerIdentity() { return workerIdentity; } },
+    provider: {
+      providerId: "dispatch-provider-a",
+      supportsIdempotencyKeys: true,
+      async dispatch() { throw new Error("transport closed after provider accepted request"); },
+    },
+    reconciliationProvider: {
+      providerId: "different-provider-b",
+      supportsIdempotencyKeys: true,
+      async lookupByIdempotencyKey() {
+        mismatchedProviderLookupCalls += 1;
+        return { status: "SUCCEEDED", providerRequestId: "wrong-provider-remote", result: {} };
+      },
+    },
+    now: () => workerNow * 1000,
+  });
+  assert(mismatchedProviderRun.status === "PROCESSED" &&
+    mismatchedProviderRun.result.status === "RECORDED" &&
+    mismatchedProviderRun.reconciliation?.status === "RECONCILIATION_REQUIRED" &&
+    mismatchedProviderRun.reconciliation.reason === "RECONCILIATION_PROVIDER_MISMATCH" &&
+    mismatchedProviderLookupCalls === 0 && reconciliationEvidenceCalls === 1,
+  "reconciliation must fail closed without querying or recording evidence from a different provider");
+
   // A provider response arriving after the worker deadline must never overwrite
   // the already-persisted ambiguous outcome or trigger an automatic replay.
   let lateProviderCalls = 0;
