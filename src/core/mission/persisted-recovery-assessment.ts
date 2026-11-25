@@ -35,7 +35,7 @@ export function createWorkerBrokerRecoveryEvidenceReader(
     throw new Error("MISSION_RECOVERY_WORKER_SCOPE_INVALID");
   }
   return Object.freeze({
-    async listForExecution(binding) {
+    async listForExecution(binding: Parameters<RecoveryEvidenceReader["listForExecution"]>[0]) {
       if (!binding || typeof binding !== "object" ||
           typeof binding.outboxId !== "string" || !binding.outboxId.trim() ||
           typeof binding.missionId !== "string" || !binding.missionId.trim() ||
