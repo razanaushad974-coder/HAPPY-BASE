@@ -9,6 +9,7 @@ on:
       - "scripts/security/supabase-local-jwt-tenant-isolation.sh"
       - ".github/workflows/staging-migration-chain.yml"
       - "supabase/drafts/**"
+      - "supabase/migrations/**"
 
 permissions:
   contents: write
