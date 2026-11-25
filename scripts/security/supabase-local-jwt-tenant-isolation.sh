@@ -327,8 +327,12 @@ if [[ ! "$replay_status" =~ ^2 ]] || ! jq -e '. == false' "$tmp_dir/founder-repl
   cat "$tmp_dir/founder-replay.json" >&2
   exit 1
 fi
-event_actor="$(psql "$DB_URL" -XAt -v ON_ERROR_STOP=1 -v request_id="$founder_request_id" -c \
-  "SELECT actor_user_id::text || ':' || decision FROM private.execution_request_approval_events WHERE request_id=:'request_id'")"
+event_actor="$(psql "$DB_URL" -XAt -v ON_ERROR_STOP=1 -v request_id="$founder_request_id" <<'SQL'
+SELECT actor_user_id::text || ':' || decision
+FROM private.execution_request_approval_events
+WHERE request_id=:'request_id';
+SQL
+)"
 [[ "$event_actor" == "$user_b:APPROVED" ]] || {
   echo "Founder approval event actor/decision mismatch: $event_actor" >&2
   exit 1
