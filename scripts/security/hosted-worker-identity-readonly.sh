@@ -71,7 +71,8 @@ BEGIN
      OR pg_catalog.has_table_privilege(session_user, 'public.happy_execution_dispatch_outbox', 'SELECT')
      OR pg_catalog.has_table_privilege(session_user, 'private.execution_requests', 'SELECT')
      OR pg_catalog.has_table_privilege(session_user, 'private.happy_worker_principal_registry', 'SELECT')
-     OR pg_catalog.has_table_privilege(session_user, 'private.happy_worker_tenant_grants', 'SELECT') THEN
+     OR pg_catalog.has_table_privilege(session_user, 'private.happy_worker_tenant_grants', 'SELECT')
+     OR pg_catalog.has_table_privilege(session_user, 'public.happy_dispatch_reconciliation_evidence', 'SELECT') THEN
     RAISE EXCEPTION 'Worker LOGIN has direct table SELECT; access must remain behind scoped RPCs';
   END IF;
 END
