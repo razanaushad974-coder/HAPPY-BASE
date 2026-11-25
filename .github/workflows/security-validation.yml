@@ -38,6 +38,7 @@ on:
       - "src/tests/core/state/**"
       - "scripts/security/**"
       - "supabase/drafts/**"
+      - "supabase/migrations/**"
       - "docs/architecture/**"
       - "package.json"
       - "package-lock.json"
