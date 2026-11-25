@@ -3,6 +3,7 @@ import type { EntityType } from "../../../core/persistence/types";
 import type { TenantScope } from "../../../core/state/types";
 import type { Mission } from "../../../core/mission/types";
 import { assessPersistedMissionRecovery } from "../../../core/mission/persisted-recovery-assessment";
+import { MissionOrchestrator } from "../../../core/mission/orchestrator";
 
 const scope: TenantScope & { userId: string } = {
   organizationId: "org-1", workspaceId: "workspace-1", userId: "user-1",
@@ -45,8 +46,11 @@ const persistence: AsyncTenantPersistenceAdapter = {
 async function main(): Promise<void> {
 const evidenceCalls: unknown[] = [];
 const before = JSON.stringify([...records.entries()]);
-const result = await assessPersistedMissionRecovery(scope, "mission-1", persistence, {
-  async listForExecution(binding) { evidenceCalls.push(binding); return []; },
+const result = await new MissionOrchestrator().assessDurableMissionRecovery({
+  scope, missionId: "mission-1", persistence,
+  evidenceReader: {
+    async listForExecution(binding) { evidenceCalls.push(binding); return []; },
+  },
 });
 if (result.assessments.length !== 1 ||
     result.assessments[0].disposition !== "EXECUTION_OUTCOME_UNKNOWN" ||
