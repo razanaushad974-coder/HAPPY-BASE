@@ -68,6 +68,37 @@ if (calls.join("|") !== "get:MISSION:mission-1|get:TASK:task-1|list:EXECUTION") 
 }
 if (before !== JSON.stringify([...records.entries()])) throw new Error("Recovery mutated persisted state.");
 
+let missingEvidenceReaderDenied = false;
+try {
+  await assessPersistedMissionRecovery(scope, "mission-1", persistence);
+} catch (error) {
+  missingEvidenceReaderDenied = error instanceof Error &&
+    error.message === "MISSION_RECOVERY_EVIDENCE_READER_REQUIRED";
+}
+if (!missingEvidenceReaderDenied) {
+  throw new Error("Outbox-bound ambiguous execution must fail closed when its evidence reader is missing.");
+}
+
+let mismatchedEvidenceDenied = false;
+try {
+  await assessPersistedMissionRecovery(scope, "mission-1", persistence, {
+    async listForExecution() {
+      return [{
+        evidenceId: "evidence-1", outboxId: "different-outbox",
+        idempotencyKey: "key-1", providerId: "provider-1",
+        observationStatus: "SUCCEEDED", observedAt: "2026-11-22T00:00:00.000Z",
+        observation: { status: "SUCCEEDED" },
+      }];
+    },
+  });
+} catch (error) {
+  mismatchedEvidenceDenied = error instanceof Error &&
+    error.message === "MISSION_RECOVERY_EVIDENCE_BINDING_INVALID";
+}
+if (!mismatchedEvidenceDenied) {
+  throw new Error("Recovery must reject evidence bound to a different outbox.");
+}
+
 // This is the actual orchestration crash window: task is RUNNING and the
 // persisted execution request exists, but the result update has not happened.
 const initialRequestRecords = new Map(records);
