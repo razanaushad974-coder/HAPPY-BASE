@@ -78,5 +78,5 @@ BEGIN
 END
 $identity$;
 
-SELECT 'PASS: authenticated worker pooler identity and least-privilege role attributes verified (read-only)' AS result;
+SELECT 1 AS hosted_worker_identity_readonly_check_passed;
 SQL
