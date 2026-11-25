@@ -420,35 +420,43 @@ export async function runNextDurableDispatch(input: {
     result.status === "RECORDED" &&
     (result.outcome === "AMBIGUOUS" || result.outcome === "RECONCILIATION_REQUIRED")
   ) {
-    const evidenceStore: ProviderReconciliationEvidenceStore = {
-      async append(evidence) {
-        await input.broker.appendReconciliationEvidence({
-          tenantScope: input.tenantScope,
-          outboxId: evidence.outboxId,
-          evidenceId: crypto.randomUUID(),
-          idempotencyKey: evidence.idempotencyKey,
-          providerId: evidence.providerId,
-          observedAt: evidence.observedAt,
-          status: evidence.observation.status,
-          observation: { ...evidence.observation },
-        });
-      },
-    };
-    const observedAtMs = (input.now ?? Date.now)();
-    if (!Number.isFinite(observedAtMs) || observedAtMs < 0) {
-      reconciliation = { status: "RECONCILIATION_REQUIRED", reason: "RECONCILIATION_CLOCK_UNAVAILABLE" };
+    if (input.reconciliationProvider.providerId !== input.provider.providerId) {
+      // Never look up an idempotency key against a different provider account.
+      reconciliation = {
+        status: "RECONCILIATION_REQUIRED",
+        reason: "RECONCILIATION_PROVIDER_MISMATCH",
+      };
     } else {
-      reconciliation = await reconcileProviderDispatch(
-        {
-          outboxId: outbox.outboxId,
-          idempotencyKey: outbox.idempotencyKey,
-          providerId: input.reconciliationProvider.providerId,
-          originalOutcome: result.outcome,
+      const evidenceStore: ProviderReconciliationEvidenceStore = {
+        async append(evidence) {
+          await input.broker.appendReconciliationEvidence({
+            tenantScope: input.tenantScope,
+            outboxId: evidence.outboxId,
+            evidenceId: crypto.randomUUID(),
+            idempotencyKey: evidence.idempotencyKey,
+            providerId: evidence.providerId,
+            observedAt: evidence.observedAt,
+            status: evidence.observation.status,
+            observation: { ...evidence.observation },
+          });
         },
-        input.reconciliationProvider,
-        evidenceStore,
-        new Date(observedAtMs).toISOString(),
-      );
+      };
+      const observedAtMs = (input.now ?? Date.now)();
+      if (!Number.isFinite(observedAtMs) || observedAtMs < 0) {
+        reconciliation = { status: "RECONCILIATION_REQUIRED", reason: "RECONCILIATION_CLOCK_UNAVAILABLE" };
+      } else {
+        reconciliation = await reconcileProviderDispatch(
+          {
+            outboxId: outbox.outboxId,
+            idempotencyKey: outbox.idempotencyKey,
+            providerId: input.provider.providerId,
+            originalOutcome: result.outcome,
+          },
+          input.reconciliationProvider,
+          evidenceStore,
+          new Date(observedAtMs).toISOString(),
+        );
+      }
     }
   }
   return {
