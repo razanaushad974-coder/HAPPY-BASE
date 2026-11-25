@@ -87,6 +87,40 @@ async function run() {
   assert(defaultWorkerStatus.status === "NOT_CONNECTED",
     "default mission orchestrator must not claim a worker runtime is connected");
 
+  const disconnectedRecovery = await defaultOrchestrator.assessWorkerMissionRecovery({
+    scope: { organizationId: "org-1", workspaceId: "ws-1", userId: "user-1" },
+    tenantScope: {
+      workerPrincipalId: "principal-1",
+      organizationId: "org-1",
+      workspaceId: "ws-1",
+      userId: "user-1",
+    },
+    persistence: {} as never,
+    missionId: "mission-1",
+  });
+  assert(disconnectedRecovery.status === "NOT_CONNECTED",
+    "worker recovery assessment must remain disconnected without trusted worker dependencies");
+
+  let mismatchedRecoveryScopeDenied = false;
+  try {
+    await defaultOrchestrator.assessWorkerMissionRecovery({
+      scope: { organizationId: "org-1", workspaceId: "ws-1", userId: "user-1" },
+      tenantScope: {
+        workerPrincipalId: "principal-1",
+        organizationId: "other-org",
+        workspaceId: "ws-1",
+        userId: "user-1",
+      },
+      persistence: {} as never,
+      missionId: "mission-1",
+    });
+  } catch (error) {
+    mismatchedRecoveryScopeDenied =
+      error instanceof Error && error.message.includes("INVALID_TENANT_SCOPE");
+  }
+  assert(mismatchedRecoveryScopeDenied,
+    "worker recovery must reject mismatched scheduler and worker tenant scopes before composition");
+
   const configuredOrchestrator = new MissionOrchestrator(complete);
   const orchestratorWorkerStatus = await configuredOrchestrator.prepareWorkerRuntimeOperation(
     "claim_task",
