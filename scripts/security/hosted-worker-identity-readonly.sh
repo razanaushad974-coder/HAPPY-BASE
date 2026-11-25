@@ -5,7 +5,9 @@ set -euo pipefail
 
 # READ-ONLY diagnostic. This script issues SELECT/DO assertions only.
 # It does not create roles, grant privileges, alter schema, or mutate rows.
-exec psql "$HAPPY_STAGING_WORKER_DATABASE_URL" -X -v ON_ERROR_STOP=1 <<'SQL'
+# Pass the connection URI through libpq's environment instead of argv so it
+# does not appear in the psql process argument list.
+PGDATABASE="$HAPPY_STAGING_WORKER_DATABASE_URL" exec psql -X -v ON_ERROR_STOP=1 <<'SQL'
 \echo 'HAPPY hosted worker identity diagnostic (read-only)'
 SELECT
   session_user::text AS authenticated_session_user,
