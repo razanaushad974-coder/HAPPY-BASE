@@ -87,4 +87,9 @@ jobs:
             exit 0
           fi
           git commit -m "Add CLI-generated Supabase staging migration chain"
+          # A developer or parallel validation push may advance this branch
+          # while the disposable replay is running. Rebase the generated
+          # checksum-only commit onto the latest branch tip; never force-push.
+          git fetch origin "${GITHUB_REF_NAME}"
+          git rebase "origin/${GITHUB_REF_NAME}"
           git push origin "HEAD:${GITHUB_REF_NAME}"
