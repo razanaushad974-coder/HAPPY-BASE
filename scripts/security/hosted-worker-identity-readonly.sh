@@ -23,6 +23,20 @@ DECLARE
   worker pg_catalog.pg_roles%ROWTYPE;
   registry_owner pg_catalog.pg_roles%ROWTYPE;
   scheduler_owner pg_catalog.pg_roles%ROWTYPE;
+  v_relation text;
+  v_privilege text;
+  v_relations text[] := ARRAY[
+    'public.happy_tenant_records',
+    'public.happy_mission_task_leases',
+    'public.happy_execution_dispatch_outbox',
+    'private.execution_requests',
+    'private.happy_worker_principal_registry',
+    'private.happy_worker_tenant_grants',
+    'public.happy_dispatch_reconciliation_evidence'
+  ];
+  v_table_privileges text[] := ARRAY[
+    'SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'
+  ];
 BEGIN
   IF session_user::text <> 'happy_worker_dispatch' THEN
     RAISE EXCEPTION 'Expected authenticated session_user happy_worker_dispatch; got %', session_user;
@@ -68,15 +82,20 @@ BEGIN
     RAISE EXCEPTION 'Worker LOGIN must not be a member of a SECURITY DEFINER owner role';
   END IF;
 
-  IF pg_catalog.has_table_privilege(session_user, 'public.happy_tenant_records', 'SELECT')
-     OR pg_catalog.has_table_privilege(session_user, 'public.happy_mission_task_leases', 'SELECT')
-     OR pg_catalog.has_table_privilege(session_user, 'public.happy_execution_dispatch_outbox', 'SELECT')
-     OR pg_catalog.has_table_privilege(session_user, 'private.execution_requests', 'SELECT')
-     OR pg_catalog.has_table_privilege(session_user, 'private.happy_worker_principal_registry', 'SELECT')
-     OR pg_catalog.has_table_privilege(session_user, 'private.happy_worker_tenant_grants', 'SELECT')
-     OR pg_catalog.has_table_privilege(session_user, 'public.happy_dispatch_reconciliation_evidence', 'SELECT') THEN
-    RAISE EXCEPTION 'Worker LOGIN has direct table SELECT; access must remain behind scoped RPCs';
-  END IF;
+  -- Worker LOGIN must have no direct table or column privileges. The
+  -- SECURITY DEFINER owner roles carry the narrowly scoped RLS grants instead.
+  FOREACH v_relation IN ARRAY v_relations LOOP
+    FOREACH v_privilege IN ARRAY v_table_privileges LOOP
+      IF pg_catalog.has_table_privilege(session_user, v_relation, v_privilege)
+         OR (
+           v_privilege IN ('SELECT','INSERT','UPDATE','REFERENCES')
+           AND pg_catalog.has_any_column_privilege(session_user, v_relation, v_privilege)
+         ) THEN
+        RAISE EXCEPTION 'Worker LOGIN has direct % privilege on %; access must remain behind scoped RPCs',
+          v_privilege, v_relation;
+      END IF;
+    END LOOP;
+  END LOOP;
 END
 $identity$;
 
