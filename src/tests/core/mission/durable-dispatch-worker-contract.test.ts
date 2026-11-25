@@ -571,6 +571,53 @@ async function run(): Promise<void> {
   assert(reconciliationEvidenceCalls === 1,
     "provider reconciliation must append exactly one immutable evidence record");
 
+  // A provider response arriving after the worker deadline must never overwrite
+  // the already-persisted ambiguous outcome or trigger an automatic replay.
+  let lateProviderCalls = 0;
+  let lateProviderCompleted = false;
+  const lateOutcomes: PersistedDispatchOutcome[] = [];
+  const lateResponseRun = await runNextDurableDispatch({
+    broker: {
+      async claimNextDispatch() { return queuedOutbox; },
+      async heartbeatLease() { return "2026-11-21T10:05:00.000Z"; },
+      async recordDispatchOutcome(input) {
+        lateOutcomes.push({ status: input.status, outcome: { ...input.outcome } });
+        return { ...queuedOutbox, status: input.status, outcome: { ...input.outcome } };
+      },
+      async appendReconciliationEvidence() { return "unused"; },
+    },
+    tenantScope,
+    ownerId: "worker-instance-42",
+    leaseMilliseconds: 5_000,
+    heartbeatIntervalMilliseconds: 100,
+    dispatchTimeoutMilliseconds: 1_000,
+    identityProvider: { async getVerifiedWorkerIdentity() { return workerIdentity; } },
+    provider: {
+      providerId: "late-response-provider",
+      supportsIdempotencyKeys: true,
+      async dispatch() {
+        lateProviderCalls += 1;
+        await new Promise((resolve) => setTimeout(resolve, 1_150));
+        lateProviderCompleted = true;
+        return {
+          kind: "ACKNOWLEDGED",
+          provider: "late-response-provider",
+          providerRequestId: "late-ack-1",
+          response: { accepted: true },
+        };
+      },
+    },
+  });
+  assert(lateResponseRun.status === "PROCESSED" &&
+    lateResponseRun.result.status === "RECORDED" &&
+    lateResponseRun.result.outcome === "AMBIGUOUS",
+  "provider timeout must persist an ambiguous outcome instead of treating a late acknowledgement as success");
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert(lateProviderCompleted && lateProviderCalls === 1,
+    "late provider response test did not complete exactly one original provider call");
+  assert(lateOutcomes.length === 1 && lateOutcomes[0].status === "AMBIGUOUS",
+    "late provider acknowledgement must not overwrite the fenced ambiguous outcome");
+
   const emptyQueueResult = await runNextDurableDispatch({
     broker: {
       async claimNextDispatch() { return null; },
