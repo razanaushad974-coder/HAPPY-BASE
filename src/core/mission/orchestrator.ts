@@ -30,6 +30,7 @@ import {
 import type { ProviderStatusReader } from "./provider-dispatch-reconciliation";
 import {
   assessPersistedMissionRecovery,
+  createWorkerBrokerRecoveryEvidenceReader,
   type PersistedMissionRecoveryResult,
   type RecoveryEvidenceReader,
 } from "./persisted-recovery-assessment";
@@ -263,6 +264,48 @@ export class MissionOrchestrator {
       input.persistence,
       input.evidenceReader,
     );
+  }
+
+  /**
+   * Runs the read-only persisted recovery assessment through the authenticated
+   * worker broker. The worker principal and tenant tuple must match the live
+   * registry snapshot; evidence reads are re-authorized by the broker facade.
+   */
+  async assessWorkerMissionRecovery(input: {
+    scope: TenantScope & { userId: string };
+    tenantScope: WorkerTenantScope;
+    persistence: AsyncTenantPersistenceAdapter;
+    missionId: string;
+    now?: () => number;
+  }): Promise<WorkerRuntimeComposition | PersistedMissionRecoveryResult> {
+    requireCompleteScope(input.scope);
+    if (input.scope.organizationId !== input.tenantScope.organizationId ||
+        input.scope.workspaceId !== input.tenantScope.workspaceId ||
+        input.scope.userId !== input.tenantScope.userId) {
+      throw new TenantPersistenceError(
+        "INVALID_TENANT_SCOPE",
+        "Recovery assessment and worker evidence reader must use the same tenant scope.",
+      );
+    }
+    const composition = await this.prepareWorkerRuntimeOperation(
+      "list_reconciliation_evidence",
+      input.now,
+    );
+    if (composition.status !== "COMPOSITION_AVAILABLE") return composition;
+    if (composition.registration.principalId !== input.tenantScope.workerPrincipalId) {
+      return { status: "DENIED", reason: "PRINCIPAL_NOT_AUTHORIZED" };
+    }
+    const evidenceReader = createWorkerBrokerRecoveryEvidenceReader(
+      composition.broker,
+      input.tenantScope,
+      input.scope,
+    );
+    return this.assessDurableMissionRecovery({
+      scope: input.scope,
+      persistence: input.persistence,
+      missionId: input.missionId,
+      evidenceReader,
+    });
   }
 
   /**
