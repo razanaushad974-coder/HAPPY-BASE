@@ -97,6 +97,28 @@ try {
 if (!brokerScopeMismatchDenied) {
   throw new Error("Worker evidence adapter must reject a mismatched tenant scope.");
 }
+const mutableWorkerScope = {
+  workerPrincipalId: "worker-1",
+  organizationId: scope.organizationId,
+  workspaceId: scope.workspaceId,
+  userId: scope.userId,
+};
+const capturedWorkerCalls: unknown[] = [];
+const immutableReader = createWorkerBrokerRecoveryEvidenceReader({
+  async listReconciliationEvidence(input) {
+    capturedWorkerCalls.push(input);
+    return [];
+  },
+}, mutableWorkerScope, scope);
+mutableWorkerScope.organizationId = "attacker-org";
+await immutableReader.listForExecution({
+  outboxId: "outbox-1", missionId: "mission-1",
+  taskId: "task-1", executionRequestId: "execution-1",
+});
+const capturedBinding = capturedWorkerCalls[0] as { tenantScope: { organizationId: string } };
+if (capturedBinding.tenantScope.organizationId !== scope.organizationId) {
+  throw new Error("Recovery evidence reader must snapshot, not retain a mutable worker tenant scope.");
+}
 const result = await new MissionOrchestrator().assessDurableMissionRecovery({
   scope, missionId: "mission-1", persistence,
   evidenceReader: {
