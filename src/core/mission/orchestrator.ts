@@ -28,6 +28,11 @@ import {
   type IdempotentDispatchProvider,
 } from "./durable-dispatch-worker-contract";
 import type { ProviderStatusReader } from "./provider-dispatch-reconciliation";
+import {
+  assessPersistedMissionRecovery,
+  type PersistedMissionRecoveryResult,
+  type RecoveryEvidenceReader,
+} from "./persisted-recovery-assessment";
 import type { TenantScope } from "../state/types";
 import type { VerificationRequest, VerificationResult } from "../verification/types";
 import type { Evidence } from "../evidence/types";
@@ -238,6 +243,26 @@ export class MissionOrchestrator {
       ...(input.reconciliationProvider ? { reconciliationProvider: input.reconciliationProvider } : {}),
       ...(input.now ? { now: input.now } : {}),
     });
+  }
+
+  /**
+   * Exposes the persisted crash-recovery assessment through the orchestrator.
+   * This is deliberately read-only: it never retries, dispatches, or changes
+   * mission/task state. Ambiguous external side effects remain review-gated.
+   */
+  async assessDurableMissionRecovery(input: {
+    scope: TenantScope & { userId: string };
+    persistence: AsyncTenantPersistenceAdapter;
+    missionId: string;
+    evidenceReader?: RecoveryEvidenceReader;
+  }): Promise<PersistedMissionRecoveryResult> {
+    requireCompleteScope(input.scope);
+    return assessPersistedMissionRecovery(
+      input.scope,
+      input.missionId,
+      input.persistence,
+      input.evidenceReader,
+    );
   }
 
   /**
