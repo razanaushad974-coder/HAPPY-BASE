@@ -165,6 +165,7 @@ export class MissionOrchestrator {
     ApprovedTaskEnqueueResult |
     DurableDispatchPollResult |
     { status: "NO_READY_TASK" } |
+    { status: "SCHEDULER_SCAN_INCOMPLETE"; missionCount: number; taskCount: number } |
     { status: "NOT_CONNECTED"; missing: "TENANT_PERSISTENCE" }
   > {
     // Resolve trusted workload identity and the live principal registry
@@ -187,6 +188,17 @@ export class MissionOrchestrator {
       input.persistence.list<Mission>(scope, { entityType: "MISSION", limit: 200 }),
       input.persistence.list<MissionTask>(scope, { entityType: "TASK", limit: 1000 }),
     ]);
+    // list() exposes a hard limit but no cursor/total count. Reaching either
+    // limit means the candidate set may be truncated; never report NO_READY_TASK
+    // or dispatch from an incomplete scheduler snapshot.
+    if (missions.length >= 200 || tasks.length >= 1000) {
+      return {
+        status: "SCHEDULER_SCAN_INCOMPLETE",
+        missionCount: missions.length,
+        taskCount: tasks.length,
+      };
+    }
+
     const tasksByMission = new Map<string, MissionTask[]>();
     for (const record of tasks) {
       const task = record.data;
