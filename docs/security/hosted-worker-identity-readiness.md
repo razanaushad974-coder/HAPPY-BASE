@@ -19,7 +19,7 @@ Do not enable worker scheduler EXECUTE grants or claim hosted worker readiness u
 bash scripts/security/hosted-worker-identity-readonly.sh
 ```
 
-The script performs only connection metadata reads and catalog privilege checks. It does not issue DDL, DCL, DML, migration commands, or role changes.
+The script performs only connection metadata reads and catalog privilege checks. It does not issue DDL, DCL, DML, migration commands, or role changes. The connection URI is passed to libpq through the `PGDATABASE` environment variable rather than as a `psql` command-line argument.
 
 ## Required evidence
 
@@ -30,7 +30,7 @@ A successful run must show:
 - The worker role is LOGIN, NOINHERIT, NOSUPERUSER, NOCREATEDB, NOCREATEROLE, NOREPLICATION, and NOBYPASSRLS.
 - `happy_worker_registry_owner` and `happy_worker_scheduler_rpc_owner` exist as NOLOGIN, NOINHERIT, NOSUPERUSER, NOBYPASSRLS roles.
 - The worker LOGIN is not a member of either SECURITY DEFINER owner role.
-- The worker LOGIN has no direct SELECT on tenant records, leases, dispatch outbox, execution requests, or worker registry tables.
+- The worker LOGIN has no direct table-level or column-level SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, or TRIGGER privileges on tenant records, leases, dispatch outbox, execution requests, worker principal registry, worker tenant grants, or reconciliation evidence. Scoped SECURITY DEFINER owner roles carry the narrowly granted RLS access instead.
 
 Capture the sanitized output with project reference, pooler mode/region, timestamp, commit SHA, and operator identity. Redact hostnames if required by the organization's security policy; never capture the connection string or password.
 
