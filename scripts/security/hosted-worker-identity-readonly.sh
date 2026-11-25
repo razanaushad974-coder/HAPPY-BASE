@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${HAPPY_STAGING_WORKER_DATABASE_URL:?Set HAPPY_STAGING_WORKER_DATABASE_URL to the dedicated worker's exact hosted pooler connection string}"
+: "${HAPPY_STAGING_WORKER_DATABASE_URL:?Set HAPPY_STAGING_WORKER_DATABASE_URL to the exact dedicated worker hosted pooler connection string}"
 
 # READ-ONLY diagnostic. This script issues SELECT/DO assertions only.
 # It does not create roles, grant privileges, alter schema, or mutate rows.
