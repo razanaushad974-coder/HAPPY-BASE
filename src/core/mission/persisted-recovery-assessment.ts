@@ -124,24 +124,37 @@ export async function assessPersistedMissionRecovery(
 
   const assessments = assessMissionRecovery(mission, tasks, executions);
   const evidenceByTask: Record<string, PersistedProviderReconciliationEvidence[]> = {};
-  if (evidenceReader) {
-    for (const assessment of assessments) {
-      if (assessment.disposition !== "RECONCILIATION_REQUIRED" &&
-          assessment.disposition !== "EXECUTION_OUTCOME_UNKNOWN") continue;
-      const binding = executionBindings.find((item) =>
-        item.taskId === assessment.taskId && item.executionId === assessment.executionId
-      );
-      // The current synchronous orchestration producer does not create a
-      // durable outbox ID. Evidence lookup is only allowed when one is truly
-      // present on the persisted record; never synthesize an outbox binding.
-      if (!binding?.outboxId) continue;
-      evidenceByTask[assessment.taskId] = await evidenceReader.listForExecution({
-        outboxId: binding.outboxId,
-        missionId,
-        taskId: assessment.taskId,
-        executionRequestId: binding.requestId,
-      });
+  for (const assessment of assessments) {
+    if (assessment.disposition !== "RECONCILIATION_REQUIRED" &&
+        assessment.disposition !== "EXECUTION_OUTCOME_UNKNOWN") continue;
+    const binding = executionBindings.find((item) =>
+      item.taskId === assessment.taskId && item.executionId === assessment.executionId
+    );
+    // The current synchronous orchestration producer does not create a
+    // durable outbox ID. Evidence lookup is only allowed when one is truly
+    // present on the persisted record; never synthesize an outbox binding.
+    if (!binding?.outboxId) continue;
+    // An outbox-bound ambiguous execution must not silently look like it has
+    // no reconciliation evidence merely because the caller omitted its reader.
+    if (!evidenceReader) throw new Error("MISSION_RECOVERY_EVIDENCE_READER_REQUIRED");
+    const evidence = await evidenceReader.listForExecution({
+      outboxId: binding.outboxId,
+      missionId,
+      taskId: assessment.taskId,
+      executionRequestId: binding.requestId,
+    });
+    if (!Array.isArray(evidence) || evidence.some((item) =>
+      !item || typeof item !== "object" ||
+      item.outboxId !== binding.outboxId ||
+      typeof item.evidenceId !== "string" || !item.evidenceId.trim() ||
+      typeof item.idempotencyKey !== "string" || !item.idempotencyKey.trim() ||
+      typeof item.providerId !== "string" || !item.providerId.trim() ||
+      !Number.isFinite(Date.parse(item.observedAt)) ||
+      !["SUCCEEDED", "FAILED", "PROCESSING", "NOT_FOUND", "UNKNOWN"].includes(item.observationStatus)
+    )) {
+      throw new Error("MISSION_RECOVERY_EVIDENCE_BINDING_INVALID");
     }
+    evidenceByTask[assessment.taskId] = evidence;
   }
 
   return { missionId, assessments, evidenceByTask };
