@@ -4,6 +4,7 @@ import type { TenantScope } from "../../../core/state/types";
 import type { Mission } from "../../../core/mission/types";
 import { assessPersistedMissionRecovery } from "../../../core/mission/persisted-recovery-assessment";
 import { MissionOrchestrator } from "../../../core/mission/orchestrator";
+import { createWorkerBrokerRecoveryEvidenceReader } from "../../../core/mission/persisted-recovery-assessment";
 
 const scope: TenantScope & { userId: string } = {
   organizationId: "org-1", workspaceId: "workspace-1", userId: "user-1",
@@ -46,6 +47,56 @@ const persistence: AsyncTenantPersistenceAdapter = {
 async function main(): Promise<void> {
 const evidenceCalls: unknown[] = [];
 const before = JSON.stringify([...records.entries()]);
+
+const brokerEvidenceCalls: unknown[] = [];
+const workerEvidenceReader = createWorkerBrokerRecoveryEvidenceReader({
+  async listReconciliationEvidence(input) {
+    brokerEvidenceCalls.push(input);
+    return [{
+      evidenceId: "evidence-1", outboxId: input.outboxId,
+      idempotencyKey: "key-1", providerId: "provider-1",
+      observationStatus: "SUCCEEDED" as const,
+      observedAt: "2026-11-22T00:00:00.000Z",
+      observation: { status: "SUCCEEDED", providerRequestId: "remote-1" },
+    }];
+  },
+}, {
+  workerPrincipalId: "worker-1",
+  organizationId: scope.organizationId,
+  workspaceId: scope.workspaceId,
+  userId: scope.userId,
+}, scope);
+const brokerBackedAssessment = await assessPersistedMissionRecovery(
+  scope, "mission-1", persistence, workerEvidenceReader,
+);
+if (brokerEvidenceCalls.length !== 1 ||
+    brokerBackedAssessment.evidenceByTask["task-1"]?.[0]?.evidenceId !== "evidence-1") {
+  throw new Error("Durable worker broker evidence must be exposed to mission recovery.");
+}
+const brokerBinding = brokerEvidenceCalls[0] as Record<string, unknown>;
+if (brokerBinding.outboxId !== "outbox-1" ||
+    brokerBinding.missionId !== "mission-1" ||
+    brokerBinding.taskId !== "task-1" ||
+    brokerBinding.executionRequestId !== "execution-1") {
+  throw new Error("Worker evidence adapter must preserve exact persisted execution binding.");
+}
+let brokerScopeMismatchDenied = false;
+try {
+  createWorkerBrokerRecoveryEvidenceReader({
+    async listReconciliationEvidence() { return []; },
+  }, {
+    workerPrincipalId: "worker-1",
+    organizationId: "other-org",
+    workspaceId: scope.workspaceId,
+    userId: scope.userId,
+  }, scope);
+} catch (error) {
+  brokerScopeMismatchDenied = error instanceof Error &&
+    error.message === "MISSION_RECOVERY_WORKER_SCOPE_INVALID";
+}
+if (!brokerScopeMismatchDenied) {
+  throw new Error("Worker evidence adapter must reject a mismatched tenant scope.");
+}
 const result = await new MissionOrchestrator().assessDurableMissionRecovery({
   scope, missionId: "mission-1", persistence,
   evidenceReader: {
