@@ -222,6 +222,153 @@ if grep -Fq "$record_a" "$tmp_dir/anon-read.json"; then
   echo "Anonymous request disclosed a tenant record (HTTP $anon_status)." >&2; cat "$tmp_dir/anon-read.json" >&2; exit 1
 fi
 
+
+# Exercise the generated founder-decision owner boundary with real Auth JWTs.
+# User A is the requester; user B is elevated only within this disposable fixture.
+psql "$DB_URL" -X -v ON_ERROR_STOP=1 \
+  -v user_a="$user_a" -v user_b="$user_b" -v org_a="$org_a" -v workspace_a="$workspace_a" <<'SQL'
+UPDATE private.organization_memberships
+   SET role='FOUNDER'
+ WHERE organization_id=:'org_a' AND user_id=:'user_b' AND status='ACTIVE';
+UPDATE private.workspace_memberships
+   SET role='OWNER'
+ WHERE organization_id=:'org_a' AND workspace_id=:'workspace_a'
+   AND user_id=:'user_b' AND status='ACTIVE';
+
+INSERT INTO public.happy_tenant_records
+  (organization_id,workspace_id,user_id,entity_type,record_id,version,data)
+VALUES
+  (:'org_a',:'workspace_a',:'user_a','MISSION','jwt-founder-mission',1,
+   '{"id":"jwt-founder-mission","status":"READY","taskIds":["jwt-founder-task"]}'::jsonb),
+  (:'org_a',:'workspace_a',:'user_a','TASK','jwt-founder-task',1,
+   '{"id":"jwt-founder-task","missionId":"jwt-founder-mission","status":"READY"}'::jsonb);
+SQL
+
+# Verify the exact function owners and EXECUTE surface, not just the RPC result.
+decision_owner_audit="$(psql "$DB_URL" -XAt -F '|' -v ON_ERROR_STOP=1 -c "
+SELECT
+  (SELECT rolcanlogin::text || ':' || rolinherit::text || ':' || rolsuper::text || ':' || rolbypassrls::text
+     FROM pg_catalog.pg_roles WHERE rolname='happy_execution_request_decision_rpc_owner'),
+  pg_catalog.pg_get_userbyid(p.proowner),
+  pg_catalog.pg_get_userbyid(h.proowner),
+  has_function_privilege('authenticated','public.decide_authenticated_execution_request(text,text,text)','EXECUTE')::text,
+  has_function_privilege('anon','public.decide_authenticated_execution_request(text,text,text)','EXECUTE')::text,
+  has_function_privilege('service_role','public.decide_authenticated_execution_request(text,text,text)','EXECUTE')::text,
+  has_function_privilege('authenticated','private.happy_is_active_founder_approval_scope(uuid,uuid)','EXECUTE')::text
+FROM pg_catalog.pg_proc p
+JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+JOIN pg_catalog.pg_proc h ON h.oid='private.happy_is_active_founder_approval_scope(uuid,uuid)'::regprocedure
+WHERE n.nspname='public' AND p.oid='public.decide_authenticated_execution_request(text,text,text)'::regprocedure
+")"
+expected_owner_audit="false:false:false:false|happy_execution_request_decision_rpc_owner|happy_execution_request_decision_rpc_owner|true|false|false|false"
+if [[ "$decision_owner_audit" != "$expected_owner_audit" ]]; then
+  echo "Founder decision owner/grant audit mismatch." >&2
+  echo "Expected: $expected_owner_audit" >&2
+  echo "Actual:   $decision_owner_audit" >&2
+  exit 1
+fi
+
+request_payload="$(jq -cn --arg req "jwt-founder-request-\${run_suffix}" \
+  --arg task "jwt-founder-task" --arg mission "jwt-founder-mission" \
+  --arg org "$org_a" --arg ws "$workspace_a" --arg idem "jwt-founder-idem-\${run_suffix}" \
+  '{p_request_id:$req,p_task_id:$task,p_mission_id:$mission,p_organization_id:$org,p_workspace_id:$ws,p_capability:"FILE",p_action:"READ",p_input:{path:"README.md"},p_target_reference:null,p_idempotency_key:$idem}')"
+request_status="$(curl -sS -o "$tmp_dir/founder-create.json" -w '%{http_code}' \
+  -X POST "$API_URL/rest/v1/rpc/create_authenticated_execution_request" \
+  -H "apikey: $ANON_KEY" -H "Authorization: Bearer $token_a" \
+  -H 'Content-Type: application/json' --data "$request_payload")"
+if [[ ! "$request_status" =~ ^2 ]] || ! jq -e '.[0].status == "WAITING_APPROVAL" and .[0].approval_status == "PENDING" and .[0].required_approval_role == "FOUNDER" and .[0].risk == "HIGH"' "$tmp_dir/founder-create.json" >/dev/null; then
+  echo "Authenticated request did not persist as pending founder approval (HTTP $request_status)." >&2
+  cat "$tmp_dir/founder-create.json" >&2
+  exit 1
+fi
+founder_request_id="$(jq -er '.[0].request_id' "$tmp_dir/founder-create.json")"
+decision_payload="$(jq -cn --arg req "$founder_request_id" '{p_request_id:$req,p_decision:"APPROVED",p_reason:"Verified local JWT founder approval"}')"
+
+# The requester cannot approve their own request, even with a valid JWT.
+self_decision_status="$(curl -sS -o "$tmp_dir/founder-self-decision.json" -w '%{http_code}' \
+  -X POST "$API_URL/rest/v1/rpc/decide_authenticated_execution_request" \
+  -H "apikey: $ANON_KEY" -H "Authorization: Bearer $token_a" \
+  -H 'Content-Type: application/json' --data "$decision_payload")"
+if [[ ! "$self_decision_status" =~ ^2 ]] || ! jq -e '. == false' "$tmp_dir/founder-self-decision.json" >/dev/null; then
+  echo "Requester self-approval was not denied (HTTP $self_decision_status)." >&2
+  cat "$tmp_dir/founder-self-decision.json" >&2
+  exit 1
+fi
+
+# The active founder/owner in the same tenant can decide the exact request.
+founder_decision_status="$(curl -sS -o "$tmp_dir/founder-decision.json" -w '%{http_code}' \
+  -X POST "$API_URL/rest/v1/rpc/decide_authenticated_execution_request" \
+  -H "apikey: $ANON_KEY" -H "Authorization: Bearer $token_b" \
+  -H 'Content-Type: application/json' --data "$decision_payload")"
+if [[ ! "$founder_decision_status" =~ ^2 ]] || ! jq -e '. == true' "$tmp_dir/founder-decision.json" >/dev/null; then
+  echo "Active founder decision failed (HTTP $founder_decision_status)." >&2
+  cat "$tmp_dir/founder-decision.json" >&2
+  exit 1
+fi
+
+resolve_payload="$(jq -cn --arg req "$founder_request_id" '{p_request_id:$req}')"
+resolve_status="$(curl -sS -o "$tmp_dir/founder-resolve.json" -w '%{http_code}' \
+  -X POST "$API_URL/rest/v1/rpc/resolve_authenticated_execution_request" \
+  -H "apikey: $ANON_KEY" -H "Authorization: Bearer $token_a" \
+  -H 'Content-Type: application/json' --data "$resolve_payload")"
+if [[ ! "$resolve_status" =~ ^2 ]] || ! jq -e '.[0].status == "READY" and .[0].approval_status == "APPROVED" and .[0].required_approval_role == "FOUNDER"' "$tmp_dir/founder-resolve.json" >/dev/null; then
+  echo "Requester could not resolve the approved immutable request (HTTP $resolve_status)." >&2
+  cat "$tmp_dir/founder-resolve.json" >&2
+  exit 1
+fi
+
+# The decision is one-shot and its append-only evidence records the JWT actor.
+replay_status="$(curl -sS -o "$tmp_dir/founder-replay.json" -w '%{http_code}' \
+  -X POST "$API_URL/rest/v1/rpc/decide_authenticated_execution_request" \
+  -H "apikey: $ANON_KEY" -H "Authorization: Bearer $token_b" \
+  -H 'Content-Type: application/json' --data "$decision_payload")"
+if [[ ! "$replay_status" =~ ^2 ]] || ! jq -e '. == false' "$tmp_dir/founder-replay.json" >/dev/null; then
+  echo "Founder decision replay was not denied (HTTP $replay_status)." >&2
+  cat "$tmp_dir/founder-replay.json" >&2
+  exit 1
+fi
+event_actor="$(psql "$DB_URL" -XAt -v ON_ERROR_STOP=1 -v request_id="$founder_request_id" -c \
+  "SELECT actor_user_id::text || ':' || decision FROM private.execution_request_approval_events WHERE request_id=:'request_id'")"
+[[ "$event_actor" == "$user_b:APPROVED" ]] || {
+  echo "Founder approval event actor/decision mismatch: $event_actor" >&2
+  exit 1
+}
+
+# A still-valid JWT loses founder authority immediately after membership revocation.
+revoked_request_payload="$(jq -cn --arg req "jwt-founder-revoked-\${run_suffix}" \
+  --arg task "jwt-founder-task" --arg mission "jwt-founder-mission" \
+  --arg org "$org_a" --arg ws "$workspace_a" --arg idem "jwt-founder-revoked-idem-\${run_suffix}" \
+  '{p_request_id:$req,p_task_id:$task,p_mission_id:$mission,p_organization_id:$org,p_workspace_id:$ws,p_capability:"FILE",p_action:"READ",p_input:{path:"README.md"},p_target_reference:null,p_idempotency_key:$idem}')"
+revoked_create_status="$(curl -sS -o "$tmp_dir/founder-revoked-create.json" -w '%{http_code}' \
+  -X POST "$API_URL/rest/v1/rpc/create_authenticated_execution_request" \
+  -H "apikey: $ANON_KEY" -H "Authorization: Bearer $token_a" \
+  -H 'Content-Type: application/json' --data "$revoked_request_payload")"
+if [[ ! "$revoked_create_status" =~ ^2 ]] || ! jq -e '.[0].status == "WAITING_APPROVAL"' "$tmp_dir/founder-revoked-create.json" >/dev/null; then
+  echo "Second founder request could not be created for revocation test." >&2
+  cat "$tmp_dir/founder-revoked-create.json" >&2
+  exit 1
+fi
+revoked_request_id="$(jq -er '.[0].request_id' "$tmp_dir/founder-revoked-create.json")"
+psql "$DB_URL" -X -v ON_ERROR_STOP=1 -v user_b="$user_b" -v org_a="$org_a" -v workspace_a="$workspace_a" <<'SQL'
+UPDATE private.organization_memberships SET status='REVOKED'
+ WHERE organization_id=:'org_a' AND user_id=:'user_b';
+UPDATE private.workspace_memberships SET status='REVOKED'
+ WHERE organization_id=:'org_a' AND workspace_id=:'workspace_a' AND user_id=:'user_b';
+SQL
+revoked_decision_payload="$(jq -cn --arg req "$revoked_request_id" '{p_request_id:$req,p_decision:"APPROVED",p_reason:"This JWT must not survive membership revocation"}')"
+revoked_decision_status="$(curl -sS -o "$tmp_dir/founder-revoked-decision.json" -w '%{http_code}' \
+  -X POST "$API_URL/rest/v1/rpc/decide_authenticated_execution_request" \
+  -H "apikey: $ANON_KEY" -H "Authorization: Bearer $token_b" \
+  -H 'Content-Type: application/json' --data "$revoked_decision_payload")"
+if [[ ! "$revoked_decision_status" =~ ^2 ]] || ! jq -e '. == false' "$tmp_dir/founder-revoked-decision.json" >/dev/null; then
+  echo "Revoked founder retained decision authority (HTTP $revoked_decision_status)." >&2
+  cat "$tmp_dir/founder-revoked-decision.json" >&2
+  exit 1
+fi
+
+echo "PASS: founder decision RPC uses a NOLOGIN/NOBYPASSRLS owner and authenticated-only EXECUTE."
+echo "PASS: real requester/founder JWTs enforce pending approval, no self-approval, one-shot decision, append-only actor evidence, and live membership revocation."
+
 psql "$DB_URL" -X -v ON_ERROR_STOP=1 <<'SQL'
 DROP FUNCTION public.happy_local_jwt_subject_probe();
 SQL
