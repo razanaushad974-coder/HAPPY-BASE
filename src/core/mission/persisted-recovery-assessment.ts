@@ -4,6 +4,7 @@ import type { TenantScope } from "../state/types";
 import type { Mission, MissionTask } from "./types";
 import { assessMissionRecovery, type MissionRecoveryExecution, type MissionTaskRecoveryAssessment } from "./recovery-assessment";
 import type { PersistedProviderReconciliationEvidence } from "../persistence/postgres-provider-reconciliation-evidence-store";
+import type { WorkerDatabaseBroker, WorkerTenantScope } from "./worker-database-broker";
 
 export interface RecoveryEvidenceReader {
   listForExecution(binding: {
@@ -12,6 +13,70 @@ export interface RecoveryEvidenceReader {
     taskId: string;
     executionRequestId: string;
   }): Promise<PersistedProviderReconciliationEvidence[]>;
+}
+
+/**
+ * Adapts the authenticated durable worker broker to the mission recovery
+ * reader. The broker RPC performs the authoritative tenant/outbox/mission/
+ * task/request binding in PostgreSQL; this adapter additionally rejects any
+ * response that escapes the requested outbox binding.
+ */
+export function createWorkerBrokerRecoveryEvidenceReader(
+  broker: Pick<WorkerDatabaseBroker, "listReconciliationEvidence">,
+  tenantScope: WorkerTenantScope,
+  scope: TenantScope & { userId: string },
+): RecoveryEvidenceReader {
+  if (!broker || typeof broker.listReconciliationEvidence !== "function" ||
+      !tenantScope || typeof tenantScope.workerPrincipalId !== "string" ||
+      !tenantScope.workerPrincipalId.trim() ||
+      tenantScope.organizationId !== scope.organizationId ||
+      tenantScope.workspaceId !== scope.workspaceId ||
+      tenantScope.userId !== scope.userId) {
+    throw new Error("MISSION_RECOVERY_WORKER_SCOPE_INVALID");
+  }
+  return Object.freeze({
+    async listForExecution(binding) {
+      if (!binding || typeof binding !== "object" ||
+          typeof binding.outboxId !== "string" || !binding.outboxId.trim() ||
+          typeof binding.missionId !== "string" || !binding.missionId.trim() ||
+          typeof binding.taskId !== "string" || !binding.taskId.trim() ||
+          typeof binding.executionRequestId !== "string" || !binding.executionRequestId.trim()) {
+        throw new Error("MISSION_RECOVERY_EVIDENCE_BINDING_INVALID");
+      }
+      const rows = await broker.listReconciliationEvidence({
+        tenantScope,
+        outboxId: binding.outboxId,
+        missionId: binding.missionId,
+        taskId: binding.taskId,
+        executionRequestId: binding.executionRequestId,
+      });
+      if (!Array.isArray(rows) || rows.some((row) =>
+        !row || typeof row !== "object" ||
+        row.outboxId !== binding.outboxId ||
+        typeof row.evidenceId !== "string" || !row.evidenceId.trim() ||
+        typeof row.idempotencyKey !== "string" || !row.idempotencyKey.trim() ||
+        typeof row.providerId !== "string" || !row.providerId.trim() ||
+        typeof row.observedAt !== "string" || !Number.isFinite(Date.parse(row.observedAt)) ||
+        !["SUCCEEDED", "FAILED", "PROCESSING", "NOT_FOUND", "UNKNOWN"].includes(row.observationStatus) ||
+        !row.observation || typeof row.observation !== "object" || Array.isArray(row.observation)
+      )) {
+        throw new Error("MISSION_RECOVERY_EVIDENCE_BINDING_INVALID");
+      }
+      return rows.map((row) => ({
+        evidenceId: row.evidenceId,
+        outboxId: row.outboxId,
+        idempotencyKey: row.idempotencyKey,
+        providerId: row.providerId,
+        observationStatus: row.observationStatus,
+        observedAt: row.observedAt,
+        observation: Object.fromEntries(
+          Object.entries(row.observation).filter((entry): entry is [string, string] =>
+            typeof entry[1] === "string"
+          ),
+        ),
+      }));
+    },
+  });
 }
 
 interface PersistedExecutionSnapshot {
