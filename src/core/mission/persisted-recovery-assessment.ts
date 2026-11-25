@@ -34,6 +34,14 @@ export function createWorkerBrokerRecoveryEvidenceReader(
       tenantScope.userId !== scope.userId) {
     throw new Error("MISSION_RECOVERY_WORKER_SCOPE_INVALID");
   }
+  // Snapshot the authenticated tenant binding so callers cannot mutate the
+  // scope after construction and redirect a later evidence lookup.
+  const workerScope: WorkerTenantScope = Object.freeze({
+    workerPrincipalId: tenantScope.workerPrincipalId,
+    organizationId: tenantScope.organizationId,
+    workspaceId: tenantScope.workspaceId,
+    userId: tenantScope.userId,
+  });
   return Object.freeze({
     async listForExecution(binding: Parameters<RecoveryEvidenceReader["listForExecution"]>[0]) {
       if (!binding || typeof binding !== "object" ||
@@ -44,7 +52,7 @@ export function createWorkerBrokerRecoveryEvidenceReader(
         throw new Error("MISSION_RECOVERY_EVIDENCE_BINDING_INVALID");
       }
       const rows = await broker.listReconciliationEvidence({
-        tenantScope,
+        tenantScope: workerScope,
         outboxId: binding.outboxId,
         missionId: binding.missionId,
         taskId: binding.taskId,
