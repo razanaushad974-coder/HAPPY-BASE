@@ -119,6 +119,8 @@ const capturedBinding = capturedWorkerCalls[0] as { tenantScope: { organizationI
 if (capturedBinding.tenantScope.organizationId !== scope.organizationId) {
   throw new Error("Recovery evidence reader must snapshot, not retain a mutable worker tenant scope.");
 }
+// Isolate the orchestrator assertion from the preceding broker-adapter assessment.
+calls.length = 0;
 const result = await new MissionOrchestrator().assessDurableMissionRecovery({
   scope, missionId: "mission-1", persistence,
   evidenceReader: {
