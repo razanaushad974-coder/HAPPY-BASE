@@ -256,7 +256,7 @@ async function run() {
       error.reason === "PRINCIPAL_NOT_AUTHORIZED";
   }
   assert(revokedCallDenied, "revocation after composition must deny subsequent broker calls");
-  assert(brokerCalls === 2, "revoked call must not reach the raw broker after the earlier recovery and authorized claim calls");
+  assert(Number(brokerCalls) === 2, "revoked call must not reach the raw broker after the earlier recovery and authorized claim calls");
 
   if (composed.status === "COMPOSITION_AVAILABLE") {
     const scope = {
@@ -311,7 +311,7 @@ async function run() {
       assert(denied, "every broker method must recheck and reject a revoked principal");
     }
   }
-  assert(brokerCalls === 2,
+  assert(Number(brokerCalls) === 2,
     "revocation must block every guarded broker method before any raw broker operation");
   liveRegistration = { ...liveRegistration, enabled: true };
 
