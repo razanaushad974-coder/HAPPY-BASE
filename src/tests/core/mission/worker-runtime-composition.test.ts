@@ -241,7 +241,7 @@ async function run() {
       missionId: "mission-1", taskId: "task-1", ownerId: claims.subject, leaseMilliseconds: 30_000,
     });
   }
-  assert(brokerCalls === 2, "authorized broker call should reach the underlying broker after the recovery evidence read");
+  assert(Number(brokerCalls) === 2, "authorized broker call should reach the underlying broker after the recovery evidence read");
   liveRegistration = { ...liveRegistration, enabled: false };
   let revokedCallDenied = false;
   try {
