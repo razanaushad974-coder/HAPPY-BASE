@@ -129,6 +129,62 @@ async function run() {
   assert(orchestratorWorkerStatus.status === "COMPOSITION_AVAILABLE",
     "configured orchestrator must expose the explicit worker authorization seam");
 
+  let orchestratorEvidenceReads = 0;
+  const recoveryMission = {
+    id: "mission-recovery", goal: "recover", planId: "plan-recovery",
+    status: "RUNNING", taskIds: ["task-recovery"], rootTaskIds: ["task-recovery"],
+    completedTaskIds: [], failedTaskIds: [], blockedTaskIds: [], progressPercent: 0,
+    createdAt: new Date(now * 1000).toISOString(),
+    updatedAt: new Date(now * 1000).toISOString(),
+  };
+  const recoveryTask = {
+    id: "task-recovery", missionId: "mission-recovery", action: "BUILD",
+    title: "Recovery task", description: "Test recovery evidence",
+    status: "RUNNING", dependencyIds: [], dependentTaskIds: [], order: 1,
+    retryCount: 0, maxRetries: 3, requiresApproval: false,
+    verificationRequired: true, createdAt: recoveryMission.createdAt,
+    updatedAt: recoveryMission.updatedAt,
+  };
+  const recoveryPersistence = {
+    async get(_scope: unknown, entityType: string) {
+      const data = entityType === "MISSION" ? recoveryMission :
+        entityType === "TASK" ? recoveryTask : undefined;
+      if (!data) return undefined;
+      return {
+        id: data.id, entityType, version: 1,
+        createdAt: recoveryMission.createdAt, updatedAt: recoveryMission.updatedAt,
+        organizationId: "org-1", workspaceId: "ws-1", userId: "user-1", data,
+      };
+    },
+    async list() {
+      return [{
+        id: "execution-recovery", entityType: "EXECUTION", version: 1,
+        createdAt: recoveryMission.createdAt, updatedAt: recoveryMission.updatedAt,
+        organizationId: "org-1", workspaceId: "ws-1", userId: "user-1",
+        data: {
+          id: "result-recovery", missionId: "mission-recovery",
+          taskId: "task-recovery", requestId: "execution-recovery",
+          outboxId: "outbox-recovery", status: "RUNNING",
+        },
+      }];
+    },
+  } as never;
+  const workerRecovery = await configuredOrchestrator.assessWorkerMissionRecovery({
+    scope: { organizationId: "org-1", workspaceId: "ws-1", userId: "user-1" },
+    tenantScope: {
+      workerPrincipalId: "principal-1", organizationId: "org-1",
+      workspaceId: "ws-1", userId: "user-1",
+    },
+    persistence: recoveryPersistence,
+    missionId: "mission-recovery",
+    now: () => now * 1000,
+  });
+  assert("assessments" in workerRecovery &&
+    workerRecovery.assessments[0]?.disposition === "EXECUTION_OUTCOME_UNKNOWN",
+    "configured orchestrator must return the read-only recovery assessment");
+  assert(brokerCalls === 1 + 1,
+    "orchestrator recovery must retrieve evidence through the guarded worker broker");
+
   const missingIdentity = await composeTrustedWorkerRuntime({
     dependencies: { ...complete, identityProvider: null },
     operation: "claim_task",
