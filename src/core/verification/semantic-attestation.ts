@@ -193,6 +193,7 @@ export function canonicalSemanticAttestationPayload(
     passedCriteria: [...payload.passedCriteria].sort(),
     failedCriteria: [...payload.failedCriteria].sort(),
     partialCriteria: [...payload.partialCriteria].sort(),
+    outcome: payload.outcome,
     confidence: payload.confidence,
     summary: payload.summary,
     verifiedAt: payload.verifiedAt,
