@@ -19,6 +19,11 @@ export class AsyncHappyStateStore {
     this.scope = { ...scope, userId: scope.userId };
   }
 
+  /** Returns a defensive snapshot of the tenant scope bound at construction. */
+  getTenantScope(): TenantScope & { userId: string } {
+    return { ...this.scope };
+  }
+
   async transaction<T>(
     operation: (transactionStore: AsyncHappyStateStore) => Promise<T>,
   ): Promise<T> {
