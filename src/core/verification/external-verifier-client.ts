@@ -3,6 +3,39 @@ import type { TenantScope } from "../state/types";
 import type { VerificationRequest } from "./types";
 import type { SignedSemanticAttestation } from "./semantic-attestation";
 
+async function readBoundedUtf8Response(response: Response, maximumBytes: number): Promise<string> {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > maximumBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error("SEMANTIC_VERIFIER_RESPONSE_TOO_LARGE");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const combined = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(combined);
+  } catch {
+    throw new Error("SEMANTIC_VERIFIER_RESPONSE_ENCODING_INVALID");
+  }
+}
+
 export interface ExternalSemanticVerifierInput {
   readonly scope: TenantScope & { readonly userId: string };
   readonly request: VerificationRequest;
@@ -149,14 +182,18 @@ export class HttpExternalSemanticVerifierClient implements ExternalSemanticVerif
       if (!contentType.toLowerCase().includes("application/json")) {
         throw new Error("SEMANTIC_VERIFIER_RESPONSE_CONTENT_TYPE_INVALID");
       }
-      const declaredLength = Number(response.headers.get("content-length") ?? "0");
-      if (Number.isFinite(declaredLength) && declaredLength > this.maxResponseBytes) {
-        throw new Error("SEMANTIC_VERIFIER_RESPONSE_TOO_LARGE");
+      const rawDeclaredLength = response.headers.get("content-length");
+      if (rawDeclaredLength !== null) {
+        if (!/^\\d+$/.test(rawDeclaredLength)) {
+          throw new Error("SEMANTIC_VERIFIER_RESPONSE_LENGTH_INVALID");
+        }
+        if (Number(rawDeclaredLength) > this.maxResponseBytes) {
+          throw new Error("SEMANTIC_VERIFIER_RESPONSE_TOO_LARGE");
+        }
       }
-      const body = await response.text();
-      if (new TextEncoder().encode(body).byteLength > this.maxResponseBytes) {
-        throw new Error("SEMANTIC_VERIFIER_RESPONSE_TOO_LARGE");
-      }
+      // Stream and cap bytes before buffering. A lying or absent Content-Length
+      // must not let an untrusted verifier exhaust worker memory.
+      const body = await readBoundedUtf8Response(response, this.maxResponseBytes);
       let parsed: unknown;
       try {
         parsed = JSON.parse(body);
