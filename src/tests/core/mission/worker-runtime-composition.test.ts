@@ -130,7 +130,6 @@ async function run() {
   assert(orchestratorWorkerStatus.status === "COMPOSITION_AVAILABLE",
     "configured orchestrator must expose the explicit worker authorization seam");
 
-  let orchestratorEvidenceReads = 0;
   const recoveryMission = {
     id: "mission-recovery", goal: "recover", planId: "plan-recovery",
     status: "RUNNING", taskIds: ["task-recovery"], rootTaskIds: ["task-recovery"],
