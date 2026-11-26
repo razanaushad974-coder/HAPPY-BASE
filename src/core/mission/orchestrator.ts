@@ -35,8 +35,6 @@ import {
   type RecoveryEvidenceReader,
 } from "./persisted-recovery-assessment";
 import type { TenantScope } from "../state/types";
-import type { VerificationRequest, VerificationResult } from "../verification/types";
-import type { Evidence } from "../evidence/types";
 import {
   requireCompleteScope,
   TenantPersistenceError,
@@ -349,57 +347,15 @@ export class MissionOrchestrator {
       }
 
       if (input.status === "COMPLETED" && targetTask.verificationRequired) {
-        const verificationRequestId = input.verificationRequestId;
-        if (!verificationRequestId?.trim()) {
-          throw new TenantPersistenceError("INVALID_RECORD_DATA", "A persisted PASSED verification is required before completing this task.");
-        }
-        const verificationRequest = await transaction.get<VerificationRequest>(
-          scope, "VERIFICATION_REQUEST", verificationRequestId,
+        // The current verification service deliberately returns PARTIAL because
+        // no trusted semantic verifier is connected. A persisted PASSED row is
+        // not an attestation: callers with write access to the generic state
+        // adapter could otherwise forge it. Keep this transition closed until
+        // a separately authorized verifier can attest the exact request/evidence.
+        throw new TenantPersistenceError(
+          "INVALID_RECORD_DATA",
+          "Trusted semantic verification authority is not connected; verification-required tasks cannot be completed.",
         );
-        const verification = await transaction.get<VerificationResult>(
-          scope, "VERIFICATION", verificationRequestId,
-        );
-        if (!verificationRequest || !verification ||
-            verificationRequest.data.id !== verificationRequestId ||
-            verificationRequest.data.missionId !== input.missionId ||
-            verificationRequest.data.taskId !== input.taskId ||
-            verification.id !== verificationRequestId ||
-            verification.data.id !== verificationRequestId ||
-            verification.data.requestId !== verificationRequestId ||
-            verification.data.status !== "PASSED" ||
-            !Array.isArray(verificationRequest.data.criteria) ||
-            verificationRequest.data.criteria.length === 0 ||
-            !Array.isArray(verification.data.passedCriteria) ||
-            !Array.isArray(verification.data.failedCriteria) ||
-            !Array.isArray(verification.data.partialCriteria) ||
-            verificationRequest.data.criteria
-              .filter((criterion) => criterion.required)
-              .some((criterion) => !verification.data.passedCriteria.includes(criterion.id)) ||
-            verification.data.passedCriteria.some((criterionId) =>
-              !verificationRequest.data.criteria.some((criterion) => criterion.id === criterionId)
-            ) ||
-            verification.data.failedCriteria.length > 0 ||
-            verification.data.partialCriteria.length > 0 ||
-            !Array.isArray(verification.data.evidenceIds) ||
-            verification.data.evidenceIds.length === 0 ||
-            new Set(verification.data.evidenceIds).size !== verification.data.evidenceIds.length) {
-          throw new TenantPersistenceError("INVALID_RECORD_DATA", "Persisted verification is not a complete PASSED result or is not bound to this mission task.");
-        }
-        const evidence = await Promise.all(
-          verification.data.evidenceIds.map((evidenceId) =>
-            transaction.get<Evidence>(scope, "EVIDENCE", evidenceId),
-          ),
-        );
-        if (evidence.some((record) =>
-          !record ||
-          record.data.verificationRequestId !== verificationRequestId ||
-          record.data.missionId !== input.missionId ||
-          record.data.taskId !== input.taskId ||
-          (record.data.executionRequestId || undefined) !==
-            (verificationRequest.data.executionRequestId || undefined)
-        )) {
-          throw new TenantPersistenceError("INVALID_RECORD_DATA", "Verification evidence is missing or belongs to a different mission task.");
-        }
       }
 
       const transition = this.missionEngine.updateTaskStatus(
