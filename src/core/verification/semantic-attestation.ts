@@ -63,6 +63,10 @@ export class TrustedSemanticAttestationAuthority {
     keys: readonly TrustedSemanticVerifierKey[],
     private readonly maxAgeMilliseconds = 5 * 60 * 1000,
   ) {
+    if (!Number.isSafeInteger(maxAgeMilliseconds) ||
+        maxAgeMilliseconds < 1 || maxAgeMilliseconds > 5 * 60 * 1000) {
+      throw new Error("Semantic attestation freshness must be between 1 ms and 5 minutes.");
+    }
     const indexed = new Map<string, TrustedSemanticVerifierKey>();
     for (const key of keys) {
       if (!key.verifierId.trim() || !key.keyId.trim() || !key.publicKeyPem.trim()) {
@@ -90,18 +94,24 @@ export class TrustedSemanticAttestationAuthority {
     }
 
     const payload = attestation.payload;
+    const requiredText = [
+      payload.verifierId, payload.keyId, payload.organizationId,
+      payload.workspaceId, payload.userId, payload.requestId,
+      payload.missionId, payload.taskId, payload.summary, payload.verifiedAt,
+    ];
     if (payload.schemaVersion !== 1 ||
-        !payload.verifierId?.trim() || !payload.keyId?.trim() ||
-        !payload.organizationId?.trim() || !payload.workspaceId?.trim() ||
-        !payload.userId?.trim() || !payload.requestId?.trim() ||
-        !payload.missionId?.trim() || !payload.taskId?.trim() ||
+        requiredText.some((value) => typeof value !== "string" || !value.trim()) ||
+        (payload.executionRequestId !== null && typeof payload.executionRequestId !== "string") ||
         !Array.isArray(payload.evidenceIds) ||
+        !payload.evidenceIds.every((id) => typeof id === "string" && id.trim()) ||
         !Array.isArray(payload.passedCriteria) ||
+        !payload.passedCriteria.every((id) => typeof id === "string" && id.trim()) ||
         !Array.isArray(payload.failedCriteria) ||
+        !payload.failedCriteria.every((id) => typeof id === "string" && id.trim()) ||
         !Array.isArray(payload.partialCriteria) ||
+        !payload.partialCriteria.every((id) => typeof id === "string" && id.trim()) ||
         !["PASSED", "FAILED", "PARTIAL"].includes(payload.outcome) ||
-        !["HIGH", "MEDIUM", "LOW"].includes(payload.confidence) ||
-        !payload.summary?.trim() || !payload.verifiedAt?.trim()) {
+        !["HIGH", "MEDIUM", "LOW"].includes(payload.confidence)) {
       return { status: "REJECTED", reason: "ATTESTATION_MALFORMED" };
     }
 
