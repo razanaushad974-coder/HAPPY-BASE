@@ -98,7 +98,7 @@ async function run() {
     persistence: {} as never,
     missionId: "mission-1",
   });
-  assert(disconnectedRecovery.status === "NOT_CONNECTED",
+  assert("status" in disconnectedRecovery && disconnectedRecovery.status === "NOT_CONNECTED",
     "worker recovery assessment must remain disconnected without trusted worker dependencies");
 
   let mismatchedRecoveryScopeDenied = false;
