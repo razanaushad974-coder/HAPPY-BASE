@@ -398,9 +398,6 @@ begin
     raise exception 'authenticated generic create forged a PASSED verification result';
   end if;
 
-  foreach v_rejected in array array[false,false,false,false,false,false] loop
-    null;
-  end loop;
   begin
     perform public.happy_update_tenant_record(
       '10000000-0000-4000-8000-000000000001',
