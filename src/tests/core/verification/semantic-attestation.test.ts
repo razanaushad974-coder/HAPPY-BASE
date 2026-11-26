@@ -158,6 +158,11 @@ async function main(): Promise<void> {
   };
   const serviceAttestation = sign(servicePayload);
   const service = new AsyncVerificationService(state, authority);
+  const provisional = await service.verify(request.id, [evidence.id]);
+  if (provisional.status !== "PARTIAL" ||
+      provisional.failureReason !== "SEMANTIC_VERIFIER_NOT_CONNECTED") {
+    throw new Error("Untrusted evidence was not held at PARTIAL before signed verification.");
+  }
   const persistedResult = await service.verifyWithTrustedAttestation(
     request.id, [evidence.id], serviceAttestation,
   );
