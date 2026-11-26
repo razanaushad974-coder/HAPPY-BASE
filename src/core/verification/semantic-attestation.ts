@@ -1,4 +1,4 @@
-import { createVerify } from "node:crypto";
+import { createPublicKey, createVerify } from "node:crypto";
 import type { TenantScope } from "../state/types";
 import type { VerificationRequest } from "./types";
 
@@ -74,7 +74,21 @@ export class TrustedSemanticAttestationAuthority {
       }
       const index = `${key.verifierId}:${key.keyId}`;
       if (indexed.has(index)) throw new Error("Trusted semantic verifier key IDs must be unique.");
-      indexed.set(index, Object.freeze({ ...key }));
+      let publicKey;
+      try {
+        publicKey = createPublicKey(key.publicKeyPem);
+      } catch {
+        throw new Error("Trusted semantic verifier public key is not valid PEM.");
+      }
+      if (publicKey.asymmetricKeyType !== "rsa" ||
+          !publicKey.asymmetricKeyDetails?.modulusLength ||
+          publicKey.asymmetricKeyDetails.modulusLength < 2048) {
+        throw new Error("Trusted semantic verifier keys must be RSA public keys of at least 2048 bits.");
+      }
+      indexed.set(index, Object.freeze({
+        ...key,
+        publicKeyPem: publicKey.export({ type: "spki", format: "pem" }).toString(),
+      }));
     }
     this.keys = indexed;
   }
@@ -137,11 +151,15 @@ export class TrustedSemanticAttestationAuthority {
       return { status: "REJECTED", reason: "EVIDENCE_MISMATCH" };
     }
 
-    if (input.request.criteria.length === 0) {
+    const requestCriterionIds = input.request.criteria.map((criterion) => criterion.id);
+    if (requestCriterionIds.length === 0 ||
+        requestCriterionIds.some((id) => typeof id !== "string" || !id.trim()) ||
+        new Set(requestCriterionIds).size !== requestCriterionIds.length ||
+        !input.request.criteria.some((criterion) => criterion.required)) {
       return { status: "REJECTED", reason: "CRITERIA_INVALID" };
     }
 
-    const criterionIds = new Set(input.request.criteria.map((criterion) => criterion.id));
+    const criterionIds = new Set(requestCriterionIds);
     const passed = new Set(payload.passedCriteria);
     const failed = new Set(payload.failedCriteria);
     const partial = new Set(payload.partialCriteria);
