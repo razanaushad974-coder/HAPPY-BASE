@@ -124,6 +124,8 @@ async function main(): Promise<void> {
     throw new Error("A verifier attestation without required criteria was accepted.");
   }
 
+  const attestation = sign(payload);
+
   const duplicateCriteriaRequest: VerificationRequest = {
     ...request,
     criteria: [
@@ -139,7 +141,6 @@ async function main(): Promise<void> {
       duplicateCriteriaResult.reason !== "CRITERIA_INVALID") {
     throw new Error("Duplicate request criterion IDs were accepted."); 
   }
-  const attestation = sign(payload);
   const valid = authority.verify({
     attestation, scope, request, evidenceIds: ["evidence-1"], now: () => now,
   });
