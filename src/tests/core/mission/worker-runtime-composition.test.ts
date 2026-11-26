@@ -182,7 +182,7 @@ async function run() {
   assert("assessments" in workerRecovery &&
     workerRecovery.assessments[0]?.disposition === "EXECUTION_OUTCOME_UNKNOWN",
     "configured orchestrator must return the read-only recovery assessment");
-  assert(brokerCalls === 1 + 1,
+  assert(brokerCalls === 1,
     "orchestrator recovery must retrieve evidence through the guarded worker broker");
 
   const missingIdentity = await composeTrustedWorkerRuntime({
