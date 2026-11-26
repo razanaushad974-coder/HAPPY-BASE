@@ -101,7 +101,12 @@ export class AsyncVerificationService {
       const existingResult = await transactionState
         .verification<VerificationResult>()
         .get(normalizedId);
-      if (existingResult) {
+      if (existingResult &&
+          (existingResult.id !== normalizedId ||
+           existingResult.data.id !== normalizedId ||
+           existingResult.data.requestId !== normalizedId ||
+           existingResult.data.status !== "PARTIAL" ||
+           existingResult.data.failureReason !== "SEMANTIC_VERIFIER_NOT_CONNECTED")) {
         throw new Error("VERIFICATION_RESULT_ALREADY_RECORDED");
       }
 
@@ -140,7 +145,13 @@ export class AsyncVerificationService {
           failureReason: `TRUSTED_VERIFIER_REPORTED_${payload.outcome}`,
         }),
       });
-      await transactionState.verification<VerificationResult>().create(result.id, result);
+      if (existingResult) {
+        await transactionState.verification<VerificationResult>().update(
+          normalizedId, existingResult.version, result,
+        );
+      } else {
+        await transactionState.verification<VerificationResult>().create(result.id, result);
+      }
       return result;
     });
   }
