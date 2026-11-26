@@ -89,6 +89,19 @@ async function main(): Promise<void> {
     throw new Error("Verifier configuration accepted an unexpected private-key field.");
   }
 
+  let oversizedConfigRejected = false;
+  try {
+    createTrustedSemanticAttestationAuthority(JSON.stringify(Array.from({ length: 21 }, (_, index) => ({
+      verifierId: `verifier-${index}`,
+      keyId: `key-${index}`,
+      publicKeyPem: publicKey,
+    })));
+  } catch (error) {
+    oversizedConfigRejected = error instanceof Error &&
+      error.message.includes("between 1 and 20 keys");
+  }
+  if (!oversizedConfigRejected) throw new Error("Verifier key configuration exceeded its key-count limit.");
+
   const authority = new TrustedSemanticAttestationAuthority([{
     verifierId: payload.verifierId,
     keyId: payload.keyId,
