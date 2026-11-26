@@ -17,6 +17,7 @@ export interface SemanticAttestationPayload {
   readonly passedCriteria: readonly string[];
   readonly failedCriteria: readonly string[];
   readonly partialCriteria: readonly string[];
+  readonly outcome: "PASSED" | "FAILED" | "PARTIAL";
   readonly confidence: "HIGH" | "MEDIUM" | "LOW";
   readonly summary: string;
   readonly verifiedAt: string;
@@ -98,6 +99,7 @@ export class TrustedSemanticAttestationAuthority {
         !Array.isArray(payload.passedCriteria) ||
         !Array.isArray(payload.failedCriteria) ||
         !Array.isArray(payload.partialCriteria) ||
+        !["PASSED", "FAILED", "PARTIAL"].includes(payload.outcome) ||
         !["HIGH", "MEDIUM", "LOW"].includes(payload.confidence) ||
         !payload.summary?.trim() || !payload.verifiedAt?.trim()) {
       return { status: "REJECTED", reason: "ATTESTATION_MALFORMED" };
@@ -129,13 +131,25 @@ export class TrustedSemanticAttestationAuthority {
     const passed = new Set(payload.passedCriteria);
     const failed = new Set(payload.failedCriteria);
     const partial = new Set(payload.partialCriteria);
-    const allReported = [...passed, ...failed, ...partial];
+    const allReported = [
+      ...payload.passedCriteria,
+      ...payload.failedCriteria,
+      ...payload.partialCriteria,
+    ];
     if (allReported.some((id) => !criterionIds.has(id)) ||
         new Set(allReported).size !== allReported.length) {
       return { status: "REJECTED", reason: "CRITERIA_INVALID" };
     }
     const required = input.request.criteria.filter((criterion) => criterion.required).map((criterion) => criterion.id);
     if (required.some((id) => !passed.has(id) && !failed.has(id) && !partial.has(id))) {
+      return { status: "REJECTED", reason: "CRITERIA_INVALID" };
+    }
+    const expectedOutcome = required.some((id) => failed.has(id))
+      ? "FAILED"
+      : required.every((id) => passed.has(id))
+        ? "PASSED"
+        : "PARTIAL";
+    if (payload.outcome !== expectedOutcome) {
       return { status: "REJECTED", reason: "CRITERIA_INVALID" };
     }
 
