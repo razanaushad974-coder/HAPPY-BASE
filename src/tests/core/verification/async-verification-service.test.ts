@@ -93,8 +93,14 @@ async function main(): Promise<void> {
   }
   const persisted = await verifier.get(result.id);
   const persistedResultRecord = await ownerStore.verification().get(result.id);
-  if (!persisted || persisted.requestId !== request.id || persistedResultRecord?.entityType !== "VERIFICATION") {
-    throw new Error("Verification result was not persisted in the result entity type.");
+  if (!persisted || persisted.id !== request.id || persisted.requestId !== request.id ||
+      persistedResultRecord?.id !== request.id || persistedResultRecord.entityType !== "VERIFICATION") {
+    throw new Error("Verification result was not persisted under its stable request identity.");
+  }
+  const repeated = await verifier.verify(request.id, [wrongTask.id]);
+  if (repeated.id !== result.id || repeated.status !== result.status ||
+      repeated.evidenceIds.join(",") !== result.evidenceIds.join(",")) {
+    throw new Error("Repeated verification changed the immutable persisted result.");
   }
   if ((await verifier.forRequest(" verify-1 ")).length !== 1) throw new Error("Request result lookup failed.");
   if (await otherVerifier.get(result.id)) throw new Error("Verification result leaked across tenant users.");
