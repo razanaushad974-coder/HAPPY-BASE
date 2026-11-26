@@ -3,6 +3,7 @@ import type { Evidence } from "../evidence/types";
 import type { Mission, MissionTask } from "../mission/types";
 import type { ExecutionRequest } from "../execution/types";
 import type { VerificationRequest, VerificationResult } from "./types";
+import type { SignedSemanticAttestation, TrustedSemanticAttestationAuthority } from "./semantic-attestation";
 
 function isVerificationResult(value: unknown): value is VerificationResult {
   return Boolean(
@@ -22,6 +23,7 @@ function isVerificationResult(value: unknown): value is VerificationResult {
 export class AsyncVerificationService {
   constructor(
     private readonly state: AsyncHappyStateStore,
+    private readonly semanticAttestationAuthority: TrustedSemanticAttestationAuthority | null = null,
   ) {}
 
   async registerRequest(request: VerificationRequest): Promise<VerificationRequest> {
@@ -65,6 +67,80 @@ export class AsyncVerificationService {
         normalized,
       );
       return normalized;
+    });
+  }
+
+  /**
+   * Persists a semantic result only when a configured public-key authority
+   * verifies the exact tenant, request, evidence set, criteria, and freshness.
+   * No authority is configured by default; callers cannot supply a public key.
+   */
+  async verifyWithTrustedAttestation(
+    requestId: string,
+    observedEvidenceIds: string[],
+    attestation: SignedSemanticAttestation,
+  ): Promise<VerificationResult> {
+    if (!this.semanticAttestationAuthority) {
+      throw new Error("TRUSTED_SEMANTIC_VERIFIER_NOT_CONFIGURED");
+    }
+    const normalizedId = requestId.trim();
+    if (!normalizedId) throw new Error("Verification request ID is required.");
+    if (!Array.isArray(observedEvidenceIds) ||
+        observedEvidenceIds.some((id) => typeof id !== "string" || !id.trim())) {
+      throw new Error("Observed evidence IDs must be non-empty strings.");
+    }
+
+    return this.state.transaction(async (transactionState) => {
+      const storedRequest = await transactionState
+        .verificationRequest<VerificationRequest>()
+        .get(normalizedId);
+      if (!storedRequest || storedRequest.id !== normalizedId ||
+          storedRequest.data.id !== normalizedId) {
+        throw new Error("Verification request is not registered in the active tenant.");
+      }
+      const existingResult = await transactionState
+        .verification<VerificationResult>()
+        .get(normalizedId);
+      if (existingResult) {
+        throw new Error("VERIFICATION_RESULT_ALREADY_RECORDED");
+      }
+
+      const uniqueEvidenceIds = [...new Set(observedEvidenceIds.map((id) => id.trim()))];
+      const evidenceRows = await Promise.all(
+        uniqueEvidenceIds.map((id) => transactionState.evidence<Evidence>().get(id)),
+      );
+      const matchedEvidence = evidenceRows.filter((item) =>
+        item && item.id === item.data.id && this.matchesRequest(item.data, storedRequest.data),
+      );
+      if (matchedEvidence.length !== uniqueEvidenceIds.length) {
+        throw new Error("TRUSTED_ATTESTATION_EVIDENCE_SET_MISMATCH");
+      }
+      const evidenceIds = matchedEvidence.map((item) => item.id);
+      const check = this.semanticAttestationAuthority.verify({
+        attestation,
+        scope: this.state.getTenantScope(),
+        request: storedRequest.data,
+        evidenceIds,
+      });
+      if (check.status !== "VERIFIED") {
+        throw new Error(`TRUSTED_SEMANTIC_ATTESTATION_REJECTED:${check.reason}`);
+      }
+
+      const payload = check.payload;
+      const result = this.result(storedRequest.data, {
+        status: payload.outcome,
+        confidence: payload.confidence,
+        passedCriteria: [...payload.passedCriteria],
+        failedCriteria: [...payload.failedCriteria],
+        partialCriteria: [...payload.partialCriteria],
+        evidenceIds,
+        summary: payload.summary,
+        ...(payload.outcome === "PASSED" ? {} : {
+          failureReason: `TRUSTED_VERIFIER_REPORTED_${payload.outcome}`,
+        }),
+      });
+      await transactionState.verification<VerificationResult>().create(result.id, result);
+      return result;
     });
   }
 
