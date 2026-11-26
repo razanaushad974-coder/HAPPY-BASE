@@ -66,6 +66,17 @@ async function main(): Promise<void> {
     throw new Error("Evidence bound to a different task was accepted.");
   }
 
+  let mismatchedExecutionRejected = false;
+  try {
+    await service.capture({ ...input, executionRequestId: "execution-other" });
+  } catch (error) {
+    mismatchedExecutionRejected = error instanceof Error &&
+      error.message === "Evidence must match a registered verification request in the active tenant.";
+  }
+  if (!mismatchedExecutionRejected) {
+    throw new Error("Evidence bound to a different execution request was accepted.");
+  }
+
   let missingRequestRejected = false;
   try {
     await service.capture({ ...input, verificationRequestId: "unregistered-request" });
@@ -98,7 +109,7 @@ async function main(): Promise<void> {
   console.log("Async tenant-scoped evidence service: PASS");
   console.log({
     evidenceCaptured: true,
-    validationFailClosed: missingVerificationRejected && missingPayloadRejected && mismatchedRequestRejected && missingRequestRejected,
+    validationFailClosed: missingVerificationRejected && missingPayloadRejected && mismatchedRequestRejected && mismatchedExecutionRejected && missingRequestRejected,
     tenantIsolation: true,
     appendOnlyServiceSurface: true,
   });
