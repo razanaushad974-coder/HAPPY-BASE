@@ -6,6 +6,10 @@ import {
   type SignedSemanticAttestation,
 } from "../../../core/verification/semantic-attestation";
 import type { VerificationRequest } from "../../../core/verification/types";
+import { AsyncEvidenceService } from "../../../core/evidence/async-service";
+import { InMemoryTenantPersistenceAdapter } from "../../../core/persistence/adapters/in-memory-tenant-adapter";
+import { createAsyncHappyStateStore } from "../../../core/state/async-factory";
+import { AsyncVerificationService } from "../../../core/verification/async-service";
 
 async function main(): Promise<void> {
   const { publicKey, privateKey } = generateKeyPairSync("rsa", {
@@ -126,6 +130,50 @@ async function main(): Promise<void> {
   });
   if (criteriaResult.status !== "REJECTED" || criteriaResult.reason !== "CRITERIA_INVALID") {
     throw new Error("Attestation referencing an unknown criterion was accepted.");
+  }
+
+  // Exercise the attestation through the tenant-scoped persistence service,
+  // not only through the standalone cryptographic checker.
+  const adapter = new InMemoryTenantPersistenceAdapter();
+  const state = createAsyncHappyStateStore(adapter, scope.organizationId, scope.workspaceId, scope.userId);
+  await state.verificationRequest<VerificationRequest>().create(request.id, request);
+  const evidenceService = new AsyncEvidenceService(state);
+  const evidence = await evidenceService.capture({
+    verificationRequestId: request.id,
+    executionRequestId: request.executionRequestId,
+    missionId: request.missionId,
+    taskId: request.taskId,
+    type: "TEST_RESULT",
+    source: "TEST",
+    title: "Signed semantic verifier fixture",
+    content: "Synthetic evidence for contract testing.",
+  });
+  const serviceNow = Date.now();
+  const servicePayload: SemanticAttestationPayload = {
+    ...payload,
+    evidenceIds: [evidence.id],
+    verifiedAt: new Date(serviceNow - 1_000).toISOString(),
+  };
+  const serviceAttestation = sign(servicePayload);
+  const service = new AsyncVerificationService(state, authority);
+  const persistedResult = await service.verifyWithTrustedAttestation(
+    request.id, [evidence.id], serviceAttestation,
+  );
+  if (persistedResult.status !== "PASSED" || persistedResult.evidenceIds[0] !== evidence.id) {
+    throw new Error("Trusted signed semantic attestation was not persisted against its exact evidence.");
+  }
+
+  let unconfiguredAuthorityRejected = false;
+  try {
+    await new AsyncVerificationService(state).verifyWithTrustedAttestation(
+      "another-request", [], serviceAttestation,
+    );
+  } catch (error) {
+    unconfiguredAuthorityRejected = error instanceof Error &&
+      error.message === "TRUSTED_SEMANTIC_VERIFIER_NOT_CONFIGURED";
+  }
+  if (!unconfiguredAuthorityRejected) {
+    throw new Error("Semantic verification proceeded without a configured trusted key authority.");
   }
 
   console.log("Trusted semantic attestation signature and binding contract: PASS");
