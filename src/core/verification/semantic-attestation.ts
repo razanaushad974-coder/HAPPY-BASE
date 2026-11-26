@@ -69,10 +69,16 @@ export class TrustedSemanticAttestationAuthority {
     }
     const indexed = new Map<string, TrustedSemanticVerifierKey>();
     for (const key of keys) {
-      if (!key.verifierId.trim() || !key.keyId.trim() || !key.publicKeyPem.trim()) {
+      if (typeof key.verifierId !== "string" || typeof key.keyId !== "string" ||
+          typeof key.publicKeyPem !== "string" ||
+          !key.verifierId.trim() || !key.keyId.trim() || !key.publicKeyPem.trim() ||
+          key.verifierId.length > 128 || key.keyId.length > 128 ||
+          key.publicKeyPem.length > 16_384) {
         throw new Error("Trusted semantic verifier keys require verifier ID, key ID, and public key.");
       }
-      const index = `${key.verifierId}:${key.keyId}`;
+      const verifierId = key.verifierId.trim();
+      const keyId = key.keyId.trim();
+      const index = JSON.stringify([verifierId, keyId]);
       if (indexed.has(index)) throw new Error("Trusted semantic verifier key IDs must be unique.");
       let publicKey;
       try {
@@ -87,6 +93,8 @@ export class TrustedSemanticAttestationAuthority {
       }
       indexed.set(index, Object.freeze({
         ...key,
+        verifierId,
+        keyId,
         publicKeyPem: publicKey.export({ type: "spki", format: "pem" }).toString(),
       }));
     }
@@ -129,7 +137,7 @@ export class TrustedSemanticAttestationAuthority {
       return { status: "REJECTED", reason: "ATTESTATION_MALFORMED" };
     }
 
-    const key = this.keys.get(`${payload.verifierId}:${payload.keyId}`);
+    const key = this.keys.get(JSON.stringify([payload.verifierId, payload.keyId]));
     if (!key) return { status: "REJECTED", reason: "VERIFIER_KEY_NOT_TRUSTED" };
 
     if (payload.organizationId !== input.scope.organizationId ||
