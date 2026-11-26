@@ -10,6 +10,7 @@ import {
   type VercelPostgresWorkerRuntimeConfig,
 } from "./vercel-postgres-worker-runtime";
 import { MissionOrchestrator } from "./orchestrator";
+import { createTrustedSemanticAttestationAuthority } from "../verification/semantic-attestation-config";
 
 /**
  * Server-only one-shot worker entrypoint for a dedicated Vercel deployment.
@@ -30,6 +31,8 @@ export function createVercelPostgresHappyWorker(input: {
   readonly provider: IdempotentDispatchProvider;
   readonly reconciliationProvider?: ProviderStatusReader;
   readonly leaseMilliseconds?: number;
+  /** Operator-provisioned JSON public-key allowlist; pass from server deployment config only. */
+  readonly semanticVerifierKeysJson?: string;
 }) {
   const leaseMilliseconds = input.leaseMilliseconds ?? 60_000;
   if (!Number.isSafeInteger(leaseMilliseconds) ||
@@ -38,7 +41,8 @@ export function createVercelPostgresHappyWorker(input: {
   }
 
   const dependencies = createVercelPostgresWorkerRuntimeDependencies(input.runtime);
-  const orchestrator = new MissionOrchestrator(dependencies);
+  const semanticAuthority = createTrustedSemanticAttestationAuthority(input.semanticVerifierKeysJson);
+  const orchestrator = new MissionOrchestrator(dependencies, semanticAuthority);
 
   return Object.freeze({
     /** Scans only this exact tenant and processes at most one ready task. */
