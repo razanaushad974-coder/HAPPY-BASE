@@ -35,6 +35,9 @@ import {
   type RecoveryEvidenceReader,
 } from "./persisted-recovery-assessment";
 import type { TenantScope } from "../state/types";
+import type { Evidence } from "../evidence/types";
+import type { VerificationRequest, VerificationResult } from "../verification/types";
+import type { TrustedSemanticAttestationAuthority } from "../verification/semantic-attestation";
 import {
   requireCompleteScope,
   TenantPersistenceError,
@@ -47,6 +50,7 @@ export class MissionOrchestrator {
 
   constructor(
     private readonly workerRuntimeDependencies: WorkerRuntimeCompositionDependencies | null = null,
+    private readonly semanticAttestationAuthority: TrustedSemanticAttestationAuthority | null = null,
   ) {}
 
   /**
@@ -347,15 +351,85 @@ export class MissionOrchestrator {
       }
 
       if (input.status === "COMPLETED" && targetTask.verificationRequired) {
-        // The current verification service deliberately returns PARTIAL because
-        // no trusted semantic verifier is connected. A persisted PASSED row is
-        // not an attestation: callers with write access to the generic state
-        // adapter could otherwise forge it. Keep this transition closed until
-        // a separately authorized verifier can attest the exact request/evidence.
-        throw new TenantPersistenceError(
-          "INVALID_RECORD_DATA",
-          "Trusted semantic verification authority is not connected; verification-required tasks cannot be completed.",
+        if (!this.semanticAttestationAuthority || !input.verificationRequestId?.trim()) {
+          throw new TenantPersistenceError(
+            "INVALID_RECORD_DATA",
+            "Trusted semantic verification authority and an exact verification request are required.",
+          );
+        }
+
+        const requestId = input.verificationRequestId.trim();
+        const [requestRecord, resultRecord] = await Promise.all([
+          transaction.get<VerificationRequest>(scope, "VERIFICATION_REQUEST", requestId),
+          transaction.get<VerificationResult>(scope, "VERIFICATION", requestId),
+        ]);
+        if (!requestRecord || !resultRecord ||
+            requestRecord.id !== requestId || requestRecord.data.id !== requestId ||
+            requestRecord.data.missionId !== input.missionId ||
+            requestRecord.data.taskId !== input.taskId ||
+            resultRecord.id !== requestId || resultRecord.data.id !== requestId ||
+            resultRecord.data.requestId !== requestId ||
+            resultRecord.data.status !== "PASSED" ||
+            !resultRecord.data.attestation) {
+          throw new TenantPersistenceError(
+            "INVALID_RECORD_DATA",
+            "A matching persisted PASSED result with signed verifier attestation is required.",
+          );
+        }
+
+        const request = requestRecord.data;
+        const persistedResult = resultRecord.data;
+        const attestation = persistedResult.attestation;
+        const evidenceIds = attestation.payload.evidenceIds;
+        if (!Array.isArray(evidenceIds) || evidenceIds.length === 0 ||
+            JSON.stringify([...persistedResult.evidenceIds].sort()) !==
+              JSON.stringify([...evidenceIds].sort()) ||
+            persistedResult.confidence !== attestation.payload.confidence ||
+            persistedResult.summary !== attestation.payload.summary ||
+            JSON.stringify([...persistedResult.passedCriteria].sort()) !==
+              JSON.stringify([...attestation.payload.passedCriteria].sort()) ||
+            JSON.stringify([...persistedResult.failedCriteria].sort()) !==
+              JSON.stringify([...attestation.payload.failedCriteria].sort()) ||
+            JSON.stringify([...persistedResult.partialCriteria].sort()) !==
+              JSON.stringify([...attestation.payload.partialCriteria].sort()) ||
+            attestation.payload.outcome !== "PASSED") {
+          throw new TenantPersistenceError(
+            "INVALID_RECORD_DATA",
+            "Persisted verification result does not match its signed attestation.",
+          );
+        }
+
+        const evidenceRecords = await Promise.all(
+          evidenceIds.map((id) => transaction.get<Evidence>(scope, "EVIDENCE", id)),
         );
+        if (evidenceRecords.some((record, index) =>
+          !record || record.id !== evidenceIds[index] ||
+          record.data.id !== evidenceIds[index] ||
+          record.data.verificationRequestId !== requestId ||
+          record.data.missionId !== input.missionId ||
+          record.data.taskId !== input.taskId ||
+          (record.data.executionRequestId || undefined) !==
+            (request.executionRequestId || undefined)
+        )) {
+          throw new TenantPersistenceError(
+            "INVALID_RECORD_DATA",
+            "Signed verification evidence is missing or no longer matches the task scope.",
+          );
+        }
+
+        const attestationCheck = this.semanticAttestationAuthority.verify({
+          attestation,
+          scope,
+          request,
+          evidenceIds,
+        });
+        if (attestationCheck.status !== "VERIFIED" ||
+            attestationCheck.payload.outcome !== "PASSED") {
+          throw new TenantPersistenceError(
+            "INVALID_RECORD_DATA",
+            "Trusted semantic verifier attestation is invalid or does not pass all required criteria.",
+          );
+        }
       }
 
       const transition = this.missionEngine.updateTaskStatus(
