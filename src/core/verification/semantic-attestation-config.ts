@@ -12,6 +12,9 @@ export function createTrustedSemanticAttestationAuthority(
   serializedKeys: string | undefined,
 ): TrustedSemanticAttestationAuthority | null {
   if (serializedKeys === undefined || serializedKeys.trim() === "") return null;
+  if (serializedKeys.length > 128 * 1024) {
+    throw new Error("HAPPY_SEMANTIC_VERIFIER_KEYS exceeds the 128 KiB configuration limit.");
+  }
 
   let parsed: unknown;
   try {
@@ -19,8 +22,8 @@ export function createTrustedSemanticAttestationAuthority(
   } catch {
     throw new Error("HAPPY_SEMANTIC_VERIFIER_KEYS must contain valid JSON.");
   }
-  if (!Array.isArray(parsed) || parsed.length === 0) {
-    throw new Error("HAPPY_SEMANTIC_VERIFIER_KEYS must be a non-empty JSON array.");
+  if (!Array.isArray(parsed) || parsed.length === 0 || parsed.length > 20) {
+    throw new Error("HAPPY_SEMANTIC_VERIFIER_KEYS must be a JSON array containing between 1 and 20 keys.");
   }
 
   const keys: TrustedSemanticVerifierKey[] = parsed.map((value, index) => {
