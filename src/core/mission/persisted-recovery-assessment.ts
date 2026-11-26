@@ -97,10 +97,74 @@ interface PersistedExecutionSnapshot {
   outboxId?: string;
 }
 
+export type ProviderRecoveryDisposition =
+  | "NO_EVIDENCE_RECORDED"
+  | "VERIFICATION_REQUIRED"
+  | "FAILED_EXECUTION_REVIEW_REQUIRED"
+  | "PROVIDER_STILL_PROCESSING"
+  | "NO_PROVIDER_RECORD_REVIEW_REQUIRED"
+  | "RECONCILIATION_REQUIRED"
+  | "CONFLICTING_PROVIDER_EVIDENCE_REVIEW_REQUIRED";
+
+export interface ProviderRecoveryAssessment {
+  disposition: ProviderRecoveryDisposition;
+  evidenceCount: number;
+  providerId?: string;
+  idempotencyKey?: string;
+  providerRequestId?: string;
+}
+
 export interface PersistedMissionRecoveryResult {
   missionId: string;
   assessments: MissionTaskRecoveryAssessment[];
   evidenceByTask: Record<string, PersistedProviderReconciliationEvidence[]>;
+  providerRecoveryByTask: Record<string, ProviderRecoveryAssessment>;
+}
+
+function assessProviderEvidence(
+  evidence: PersistedProviderReconciliationEvidence[],
+): ProviderRecoveryAssessment {
+  if (evidence.length === 0) {
+    return { disposition: "NO_EVIDENCE_RECORDED", evidenceCount: 0 };
+  }
+
+  const first = evidence[0];
+  const requestIds = evidence.map((item) => item.observation.providerRequestId ?? "");
+  const hasConsistentBinding = evidence.every((item) =>
+    item.providerId === first.providerId &&
+    item.idempotencyKey === first.idempotencyKey &&
+    item.observationStatus === first.observationStatus
+  );
+  const hasConsistentRequestId = requestIds.every((id) => id === requestIds[0]);
+  const statusRequiresRequestId = ["SUCCEEDED", "FAILED", "PROCESSING"].includes(first.observationStatus);
+  if (!hasConsistentBinding || !hasConsistentRequestId ||
+      (statusRequiresRequestId && !requestIds[0].trim())) {
+    return {
+      disposition: "CONFLICTING_PROVIDER_EVIDENCE_REVIEW_REQUIRED",
+      evidenceCount: evidence.length,
+    };
+  }
+
+  const common = {
+    evidenceCount: evidence.length,
+    providerId: first.providerId,
+    idempotencyKey: first.idempotencyKey,
+    ...(requestIds[0] ? { providerRequestId: requestIds[0] } : {}),
+  };
+  switch (first.observationStatus) {
+    case "SUCCEEDED":
+      // A provider acknowledgement is not application-level verification.
+      return { ...common, disposition: "VERIFICATION_REQUIRED" };
+    case "FAILED":
+      return { ...common, disposition: "FAILED_EXECUTION_REVIEW_REQUIRED" };
+    case "PROCESSING":
+      return { ...common, disposition: "PROVIDER_STILL_PROCESSING" };
+    case "NOT_FOUND":
+      // Absence at the provider is not proof that the side effect never occurred.
+      return { ...common, disposition: "NO_PROVIDER_RECORD_REVIEW_REQUIRED" };
+    case "UNKNOWN":
+      return { ...common, disposition: "RECONCILIATION_REQUIRED" };
+  }
 }
 
 /**
@@ -198,6 +262,7 @@ export async function assessPersistedMissionRecovery(
 
   const assessments = assessMissionRecovery(mission, tasks, executions);
   const evidenceByTask: Record<string, PersistedProviderReconciliationEvidence[]> = {};
+  const providerRecoveryByTask: Record<string, ProviderRecoveryAssessment> = {};
   for (const assessment of assessments) {
     if (assessment.disposition !== "RECONCILIATION_REQUIRED" &&
         assessment.disposition !== "EXECUTION_OUTCOME_UNKNOWN") continue;
@@ -230,9 +295,10 @@ export async function assessPersistedMissionRecovery(
       throw new Error("MISSION_RECOVERY_EVIDENCE_BINDING_INVALID");
     }
     evidenceByTask[assessment.taskId] = evidence;
+    providerRecoveryByTask[assessment.taskId] = assessProviderEvidence(evidence);
   }
 
-  return { missionId, assessments, evidenceByTask };
+  return { missionId, assessments, evidenceByTask, providerRecoveryByTask };
 }
 
 function assertTenantRecordScope(
