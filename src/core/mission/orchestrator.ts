@@ -363,11 +363,27 @@ export class MissionOrchestrator {
             verificationRequest.data.id !== verificationRequestId ||
             verificationRequest.data.missionId !== input.missionId ||
             verificationRequest.data.taskId !== input.taskId ||
+            verification.id !== verificationRequestId ||
+            verification.data.id !== verificationRequestId ||
             verification.data.requestId !== verificationRequestId ||
             verification.data.status !== "PASSED" ||
+            !Array.isArray(verificationRequest.data.criteria) ||
+            verificationRequest.data.criteria.length === 0 ||
+            !Array.isArray(verification.data.passedCriteria) ||
+            !Array.isArray(verification.data.failedCriteria) ||
+            !Array.isArray(verification.data.partialCriteria) ||
+            verificationRequest.data.criteria
+              .filter((criterion) => criterion.required)
+              .some((criterion) => !verification.data.passedCriteria.includes(criterion.id)) ||
+            verification.data.passedCriteria.some((criterionId) =>
+              !verificationRequest.data.criteria.some((criterion) => criterion.id === criterionId)
+            ) ||
+            verification.data.failedCriteria.length > 0 ||
+            verification.data.partialCriteria.length > 0 ||
             !Array.isArray(verification.data.evidenceIds) ||
-            verification.data.evidenceIds.length === 0) {
-          throw new TenantPersistenceError("INVALID_RECORD_DATA", "Persisted verification is not PASSED or is not bound to this mission task.");
+            verification.data.evidenceIds.length === 0 ||
+            new Set(verification.data.evidenceIds).size !== verification.data.evidenceIds.length) {
+          throw new TenantPersistenceError("INVALID_RECORD_DATA", "Persisted verification is not a complete PASSED result or is not bound to this mission task.");
         }
         const evidence = await Promise.all(
           verification.data.evidenceIds.map((evidenceId) =>
@@ -378,7 +394,9 @@ export class MissionOrchestrator {
           !record ||
           record.data.verificationRequestId !== verificationRequestId ||
           record.data.missionId !== input.missionId ||
-          record.data.taskId !== input.taskId
+          record.data.taskId !== input.taskId ||
+          (record.data.executionRequestId || undefined) !==
+            (verificationRequest.data.executionRequestId || undefined)
         )) {
           throw new TenantPersistenceError("INVALID_RECORD_DATA", "Verification evidence is missing or belongs to a different mission task.");
         }
