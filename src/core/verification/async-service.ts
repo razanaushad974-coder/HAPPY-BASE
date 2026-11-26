@@ -135,6 +135,7 @@ export class AsyncVerificationService {
         partialCriteria: [...payload.partialCriteria],
         evidenceIds,
         summary: payload.summary,
+        attestation: structuredClone(attestation),
         ...(payload.outcome === "PASSED" ? {} : {
           failureReason: `TRUSTED_VERIFIER_REPORTED_${payload.outcome}`,
         }),
