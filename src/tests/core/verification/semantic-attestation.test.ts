@@ -12,6 +12,7 @@ import { createAsyncHappyStateStore } from "../../../core/state/async-factory";
 import { AsyncVerificationService } from "../../../core/verification/async-service";
 import { ReasoningOrchestrator } from "../../../core/reasoning/orchestrator";
 import { MissionOrchestrator } from "../../../core/mission/orchestrator";
+import { createTrustedSemanticAttestationAuthority } from "../../../core/verification/semantic-attestation-config";
 
 async function main(): Promise<void> {
   const { publicKey, privateKey } = generateKeyPairSync("rsa", {
@@ -61,6 +62,33 @@ async function main(): Promise<void> {
     signer.end();
     return { payload: value, signature: signer.sign(privateKey, "base64") };
   };
+  if (createTrustedSemanticAttestationAuthority(undefined) !== null) {
+    throw new Error("Missing verifier configuration should leave semantic verification disconnected.");
+  }
+  const configuredAuthority = createTrustedSemanticAttestationAuthority(JSON.stringify([{
+    verifierId: payload.verifierId,
+    keyId: payload.keyId,
+    publicKeyPem: publicKey,
+  }]));
+  if (!(configuredAuthority instanceof TrustedSemanticAttestationAuthority)) {
+    throw new Error("Operator-provisioned verifier public key configuration was not loaded.");
+  }
+  let malformedConfigRejected = false;
+  try {
+    createTrustedSemanticAttestationAuthority(JSON.stringify([{
+      verifierId: payload.verifierId,
+      keyId: payload.keyId,
+      publicKeyPem: publicKey,
+      privateKeyPem: "must-not-be-accepted",
+    }]));
+  } catch (error) {
+    malformedConfigRejected = error instanceof Error &&
+      error.message.includes("only verifierId, keyId, and publicKeyPem");
+  }
+  if (!malformedConfigRejected) {
+    throw new Error("Verifier configuration accepted an unexpected private-key field.");
+  }
+
   const authority = new TrustedSemanticAttestationAuthority([{
     verifierId: payload.verifierId,
     keyId: payload.keyId,
