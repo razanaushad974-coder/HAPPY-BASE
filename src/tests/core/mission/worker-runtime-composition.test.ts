@@ -116,7 +116,8 @@ async function run() {
     });
   } catch (error) {
     mismatchedRecoveryScopeDenied =
-      error instanceof Error && error.message.includes("INVALID_TENANT_SCOPE");
+      error instanceof Error && error.name === "TenantPersistenceError" &&
+      error.message.includes("same tenant scope");
   }
   assert(mismatchedRecoveryScopeDenied,
     "worker recovery must reject mismatched scheduler and worker tenant scopes before composition");
@@ -240,7 +241,7 @@ async function run() {
       missionId: "mission-1", taskId: "task-1", ownerId: claims.subject, leaseMilliseconds: 30_000,
     });
   }
-  assert(brokerCalls === 1, "authorized broker call should reach the underlying broker");
+  assert(brokerCalls === 2, "authorized broker call should reach the underlying broker after the recovery evidence read");
   liveRegistration = { ...liveRegistration, enabled: false };
   let revokedCallDenied = false;
   try {
@@ -420,8 +421,8 @@ async function run() {
   });
   assert(orchestratedPoll.status === "NO_PENDING_DISPATCH",
     "mission orchestrator must route worker polling through the durable dispatch runtime");
-  assert(Number(brokerCalls) === 2,
-    "orchestrated durable poll must call only the guarded broker facade");
+  assert(Number(brokerCalls) === 3,
+    "orchestrated durable poll must call only the guarded broker facade after recovery and claim calls");
 
   console.log("Worker runtime composition tests: PASS");
 }
