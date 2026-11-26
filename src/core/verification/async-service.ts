@@ -121,6 +121,9 @@ export class AsyncVerificationService {
         throw new Error("TRUSTED_ATTESTATION_EVIDENCE_SET_MISMATCH");
       }
       const evidenceIds = matchedEvidence.map((item) => item.id);
+      if (storedRequest.data.requiresEvidence && evidenceIds.length === 0) {
+        throw new Error("TRUSTED_ATTESTATION_REQUIRED_EVIDENCE_MISSING");
+      }
       const check = this.semanticAttestationAuthority.verify({
         attestation,
         scope: this.state.getTenantScope(),
