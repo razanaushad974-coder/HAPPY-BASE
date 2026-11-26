@@ -55,13 +55,16 @@ export class AsyncEvidenceService {
         .verificationRequest<VerificationRequest>()
         .get(evidence.verificationRequestId);
       const request = requestRecord?.data;
-      if (!requestRecord ||
-          requestRecord.id !== evidence.verificationRequestId ||
-          request.id !== evidence.verificationRequestId ||
-          request.missionId !== evidence.missionId ||
-          request.taskId !== evidence.taskId ||
-          (request.executionRequestId || undefined) !==
-            (evidence.executionRequestId || undefined)) {
+      if (
+        !requestRecord ||
+        !request ||
+        requestRecord.id !== evidence.verificationRequestId ||
+        request.id !== evidence.verificationRequestId ||
+        request.missionId !== evidence.missionId ||
+        request.taskId !== evidence.taskId ||
+        (request.executionRequestId || undefined) !==
+          (evidence.executionRequestId || undefined)
+      ) {
         throw new Error("Evidence must match a registered verification request in the active tenant.");
       }
       await transactionState.evidence<Evidence>().create(evidence.id, evidence);
