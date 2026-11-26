@@ -95,6 +95,12 @@ async function main(): Promise<void> {
     publicKeyPem: publicKey,
   }]);
 
+  // Composite key identifiers must not collide when either component contains a colon.
+  new TrustedSemanticAttestationAuthority([
+    { verifierId: "alpha:beta", keyId: "gamma", publicKeyPem: publicKey },
+    { verifierId: "alpha", keyId: "beta:gamma", publicKeyPem: publicKey },
+  ]);
+
   const weakPair = generateKeyPairSync("rsa", {
     modulusLength: 1024,
     publicKeyEncoding: { type: "spki", format: "pem" },
