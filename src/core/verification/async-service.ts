@@ -94,6 +94,20 @@ export class AsyncVerificationService {
         throw new Error("Verification request storage identity does not match its registered ID.");
       }
 
+      // One immutable result per request. A repeated call returns the first
+      // persisted decision instead of silently replacing its evidence snapshot.
+      const existingResult = await transactionState
+        .verification<VerificationResult>()
+        .get(normalizedId);
+      if (existingResult) {
+        if (existingResult.id !== normalizedId ||
+            existingResult.data.id !== normalizedId ||
+            existingResult.data.requestId !== normalizedId) {
+          throw new Error("Persisted verification result identity does not match its request.");
+        }
+        return existingResult.data;
+      }
+
       const uniqueEvidenceIds = [...new Set(
         observedEvidenceIds
           .filter((id) => typeof id === "string" && id.trim())
@@ -210,7 +224,9 @@ export class AsyncVerificationService {
     fields: Omit<VerificationResult, "id" | "requestId" | "verifiedAt">,
   ): VerificationResult {
     return {
-      id: `verification-result-${crypto.randomUUID()}`,
+      // The request ID is the stable primary key for its immutable result.
+      // This lets completion gates resolve the exact result without a global scan.
+      id: request.id,
       requestId: request.id,
       ...fields,
       verifiedAt: new Date().toISOString(),
