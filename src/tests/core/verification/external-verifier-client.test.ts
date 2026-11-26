@@ -121,6 +121,27 @@ async function main(): Promise<void> {
     /RESPONSE_TOO_LARGE/,
   );
 
+  let oversizedStreamCancelled = false;
+  const chunkedOversizedResponseClient = new HttpExternalSemanticVerifierClient({
+    endpoint: "https://verifier.example.test/v1/evaluate",
+    readBearerToken: async () => "server-side-token",
+    maxResponseBytes: 1_024,
+    fetchImpl: async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(700));
+        controller.enqueue(new Uint8Array(400));
+      },
+      cancel() {
+        oversizedStreamCancelled = true;
+      },
+    }), { status: 200, headers: { "content-type": "application/json" } }),
+  });
+  await assert.rejects(
+    () => chunkedOversizedResponseClient.evaluate({ scope, request, evidence: [evidence] }),
+    /RESPONSE_TOO_LARGE/,
+  );
+  assert.equal(oversizedStreamCancelled, true);
+
   // End-to-end service path: external evaluation returns a signature that
   // the trusted authority independently validates before persistence.
   const pair = generateKeyPairSync("rsa", {
