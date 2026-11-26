@@ -380,8 +380,22 @@ export class MissionOrchestrator {
         const request = requestRecord.data;
         const persistedResult = resultRecord.data;
         const attestation = persistedResult.attestation;
+        if (!attestation || typeof attestation !== "object" ||
+            !attestation.payload || typeof attestation.payload !== "object" ||
+            !Array.isArray(attestation.payload.evidenceIds) ||
+            !Array.isArray(persistedResult.evidenceIds) ||
+            !Array.isArray(persistedResult.passedCriteria) ||
+            !Array.isArray(persistedResult.failedCriteria) ||
+            !Array.isArray(persistedResult.partialCriteria)) {
+          throw new TenantPersistenceError(
+            "INVALID_RECORD_DATA",
+            "Persisted semantic verification proof is malformed.",
+          );
+        }
         const evidenceIds = attestation.payload.evidenceIds;
-        if (!Array.isArray(evidenceIds) || evidenceIds.length === 0 ||
+        if (evidenceIds.length === 0 ||
+            evidenceIds.some((id) => typeof id !== "string" || !id.trim()) ||
+            new Set(evidenceIds).size !== evidenceIds.length ||
             JSON.stringify([...persistedResult.evidenceIds].sort()) !==
               JSON.stringify([...evidenceIds].sort()) ||
             persistedResult.confidence !== attestation.payload.confidence ||
