@@ -80,7 +80,8 @@ export class AsyncVerificationService {
     observedEvidenceIds: string[],
     attestation: SignedSemanticAttestation,
   ): Promise<VerificationResult> {
-    if (!this.semanticAttestationAuthority) {
+    const authority = this.semanticAttestationAuthority;
+    if (!authority) {
       throw new Error("TRUSTED_SEMANTIC_VERIFIER_NOT_CONFIGURED");
     }
     const normalizedId = requestId.trim();
@@ -114,9 +115,13 @@ export class AsyncVerificationService {
       const evidenceRows = await Promise.all(
         uniqueEvidenceIds.map((id) => transactionState.evidence<Evidence>().get(id)),
       );
-      const matchedEvidence = evidenceRows.filter((item) =>
-        item && item.id === item.data.id && this.matchesRequest(item.data, storedRequest.data),
-      );
+      const matchedEvidence = evidenceRows.flatMap((item) => {
+        if (!item || item.id !== item.data.id ||
+            !this.matchesRequest(item.data, storedRequest.data)) {
+          return [];
+        }
+        return [item];
+      });
       if (matchedEvidence.length !== uniqueEvidenceIds.length) {
         throw new Error("TRUSTED_ATTESTATION_EVIDENCE_SET_MISMATCH");
       }
@@ -124,7 +129,7 @@ export class AsyncVerificationService {
       if (storedRequest.data.requiresEvidence && evidenceIds.length === 0) {
         throw new Error("TRUSTED_ATTESTATION_REQUIRED_EVIDENCE_MISSING");
       }
-      const check = this.semanticAttestationAuthority.verify({
+      const check = authority.verify({
         attestation,
         scope: this.state.getTenantScope(),
         request: storedRequest.data,
