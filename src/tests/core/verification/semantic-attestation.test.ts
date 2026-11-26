@@ -66,6 +66,51 @@ async function main(): Promise<void> {
     keyId: payload.keyId,
     publicKeyPem: publicKey,
   }]);
+
+  const weakPair = generateKeyPairSync("rsa", {
+    modulusLength: 1024,
+    publicKeyEncoding: { type: "spki", format: "pem" },
+    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+  });
+  let weakKeyRejected = false;
+  try {
+    new TrustedSemanticAttestationAuthority([{
+      verifierId: "weak-verifier", keyId: "weak-key", publicKeyPem: weakPair.publicKey,
+    }]);
+  } catch (error) {
+    weakKeyRejected = error instanceof Error &&
+      error.message.includes("at least 2048 bits");
+  }
+  if (!weakKeyRejected) throw new Error("A weak RSA verifier key was accepted.");
+
+  const optionalOnlyRequest: VerificationRequest = {
+    ...request,
+    criteria: [{ ...request.criteria[1], id: "optional-only", required: false }],
+  };
+  const optionalOnlyResult = authority.verify({
+    attestation: sign({ ...payload, passedCriteria: ["optional-only"] }),
+    scope, request: optionalOnlyRequest, evidenceIds: ["evidence-1"], now: () => now,
+  });
+  if (optionalOnlyResult.status !== "REJECTED" ||
+      optionalOnlyResult.reason !== "CRITERIA_INVALID") {
+    throw new Error("A verifier attestation without required criteria was accepted.");
+  }
+
+  const duplicateCriteriaRequest: VerificationRequest = {
+    ...request,
+    criteria: [
+      { ...request.criteria[0] },
+      { ...request.criteria[0], description: "Duplicate criterion ID" },
+    ],
+  };
+  const duplicateCriteriaResult = authority.verify({
+    attestation, scope, request: duplicateCriteriaRequest,
+    evidenceIds: ["evidence-1"], now: () => now,
+  });
+  if (duplicateCriteriaResult.status !== "REJECTED" ||
+      duplicateCriteriaResult.reason !== "CRITERIA_INVALID") {
+    throw new Error("Duplicate request criterion IDs were accepted."); 
+  }
   const attestation = sign(payload);
   const valid = authority.verify({
     attestation, scope, request, evidenceIds: ["evidence-1"], now: () => now,
