@@ -10,6 +10,8 @@ import { AsyncEvidenceService } from "../../../core/evidence/async-service";
 import { InMemoryTenantPersistenceAdapter } from "../../../core/persistence/adapters/in-memory-tenant-adapter";
 import { createAsyncHappyStateStore } from "../../../core/state/async-factory";
 import { AsyncVerificationService } from "../../../core/verification/async-service";
+import { ReasoningOrchestrator } from "../../../core/reasoning/orchestrator";
+import { MissionOrchestrator } from "../../../core/mission/orchestrator";
 
 async function main(): Promise<void> {
   const { publicKey, privateKey } = generateKeyPairSync("rsa", {
@@ -174,6 +176,101 @@ async function main(): Promise<void> {
   }
   if (!unconfiguredAuthorityRejected) {
     throw new Error("Semantic verification proceeded without a configured trusted key authority.");
+  }
+
+  // End-to-end durable task completion: the orchestrator independently
+  // re-verifies the stored signature and evidence inside its transaction.
+  const durableAdapter = new InMemoryTenantPersistenceAdapter();
+  const durableScope = { organizationId: "org-durable", workspaceId: "workspace-durable", userId: "user-durable" };
+  const durableOrchestrator = new MissionOrchestrator(null, authority);
+  const plan = new ReasoningOrchestrator().createExecutionPlan({
+    goal: "Complete a task using a signed semantic verifier attestation.",
+  });
+  if (plan.status !== "READY") throw new Error("Could not create the durable verification test plan.");
+  const snapshot = await durableOrchestrator.createDurable(plan, durableScope, durableAdapter);
+  const taskId = snapshot.graph.roots[0];
+  if (!taskId) throw new Error("Durable verification test mission has no root task.");
+  const taskRecord = await durableAdapter.get<{ verificationRequired: boolean }>(
+    durableScope, "TASK", taskId,
+  );
+  if (!taskRecord) throw new Error("Durable verification test task is missing.");
+  await durableAdapter.update(durableScope, "TASK", taskId, taskRecord.version, {
+    ...taskRecord.data,
+    verificationRequired: true,
+  });
+  await durableOrchestrator.transitionTaskDurable({
+    scope: durableScope, persistence: durableAdapter,
+    missionId: snapshot.mission.id, taskId, status: "RUNNING",
+  });
+  await durableOrchestrator.transitionTaskDurable({
+    scope: durableScope, persistence: durableAdapter,
+    missionId: snapshot.mission.id, taskId, status: "VERIFYING",
+  });
+
+  const durableState = createAsyncHappyStateStore(
+    durableAdapter, durableScope.organizationId, durableScope.workspaceId, durableScope.userId,
+  );
+  const durableVerification = new AsyncVerificationService(durableState, authority);
+  const durableEvidence = new AsyncEvidenceService(durableState);
+  const durableRequest: VerificationRequest = {
+    id: "durable-verification-1",
+    missionId: snapshot.mission.id,
+    taskId,
+    description: "Verify the durable task result.",
+    criteria: [{
+      id: "durable-criterion-1",
+      description: "Task result is confirmed",
+      expected: "confirmed",
+      required: true,
+    }],
+    preferredMethods: ["TEST"],
+    requiresEvidence: true,
+    createdAt: new Date().toISOString(),
+  };
+  await durableVerification.registerRequest(durableRequest);
+  const durableEvidenceRecord = await durableEvidence.capture({
+    verificationRequestId: durableRequest.id,
+    missionId: durableRequest.missionId,
+    taskId: durableRequest.taskId,
+    type: "TEST_RESULT",
+    source: "TEST",
+    title: "Durable verification evidence",
+    content: "Synthetic signed-verifier test evidence.",
+  });
+  const durableNow = Date.now();
+  const durablePayload: SemanticAttestationPayload = {
+    ...payload,
+    organizationId: durableScope.organizationId,
+    workspaceId: durableScope.workspaceId,
+    userId: durableScope.userId,
+    requestId: durableRequest.id,
+    missionId: durableRequest.missionId,
+    taskId: durableRequest.taskId,
+    executionRequestId: null,
+    evidenceIds: [durableEvidenceRecord.id],
+    passedCriteria: ["durable-criterion-1"],
+    failedCriteria: [],
+    partialCriteria: [],
+    outcome: "PASSED",
+    verifiedAt: new Date(durableNow - 1_000).toISOString(),
+  };
+  const durableAttestation = sign(durablePayload);
+  const durableResult = await durableVerification.verifyWithTrustedAttestation(
+    durableRequest.id, [durableEvidenceRecord.id], durableAttestation,
+  );
+  if (durableResult.status !== "PASSED" || !durableResult.attestation) {
+    throw new Error("Durable verification service did not persist the signed PASSED attestation.");
+  }
+  const completed = await durableOrchestrator.transitionTaskDurable({
+    scope: durableScope,
+    persistence: durableAdapter,
+    missionId: snapshot.mission.id,
+    taskId,
+    status: "COMPLETED",
+    verificationRequestId: durableRequest.id,
+  });
+  if (completed.graph.tasks.find((task) => task.id === taskId)?.status !== "COMPLETED") {
+    throw new Error("Orchestrator did not complete a task with a valid trusted semantic attestation.");
   }
 
   console.log("Trusted semantic attestation signature and binding contract: PASS");
