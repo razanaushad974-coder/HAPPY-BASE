@@ -147,6 +147,42 @@ async function main(): Promise<void> {
     throw new Error("Evidence capture must not be upgraded to semantic verification success.");
   }
 
+  // Simulate a forged persisted PASSED row. The generic tenant persistence
+  // adapter is not a trusted semantic-verifier authority, so this must not
+  // authorize task completion even when every ordinary field looks valid.
+  await persistence.transaction(scope, async (tx) => {
+    const stored = await tx.get<typeof persistedVerification>(
+      scope, "VERIFICATION", verificationRequestId,
+    );
+    if (!stored) throw new Error("Persisted verification result disappeared.");
+    await tx.update(scope, "VERIFICATION", verificationRequestId, stored.version, {
+      ...stored.data,
+      status: "PASSED",
+      confidence: "HIGH",
+      passedCriteria: ["criterion-1"],
+      failedCriteria: [],
+      partialCriteria: [],
+      failureReason: undefined,
+      summary: "Forged test fixture; no trusted verifier attestation exists.",
+    });
+  });
+
+  let forgedPassedCompletionDenied = false;
+  try {
+    await orchestrator.transitionTaskDurable({
+      scope, persistence, missionId: snapshot.mission.id,
+      taskId: rootTaskId, status: "COMPLETED", verificationRequestId,
+    });
+  } catch {
+    forgedPassedCompletionDenied = true;
+  }
+  const afterForgedPassed = await persistence.get<{ status: string }>(
+    scope, "TASK", rootTaskId,
+  );
+  if (!forgedPassedCompletionDenied || afterForgedPassed?.data.status !== "VERIFYING") {
+    throw new Error("A forged persisted PASSED row must not complete a verification-required task.");
+  }
+
   let partialVerificationCompletionDenied = false;
   try {
     await orchestrator.transitionTaskDurable({
