@@ -127,6 +127,10 @@ export class TrustedSemanticAttestationAuthority {
       return { status: "REJECTED", reason: "EVIDENCE_MISMATCH" };
     }
 
+    if (input.request.criteria.length === 0) {
+      return { status: "REJECTED", reason: "CRITERIA_INVALID" };
+    }
+
     const criterionIds = new Set(input.request.criteria.map((criterion) => criterion.id));
     const passed = new Set(payload.passedCriteria);
     const failed = new Set(payload.failedCriteria);
