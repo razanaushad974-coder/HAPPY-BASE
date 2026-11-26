@@ -286,6 +286,86 @@ try { await assessPersistedMissionRecovery(scope, "mission-1", mismatchedRequest
 catch (error) { requestMismatchDenied = error instanceof Error && error.message === "MISSION_RECOVERY_EXECUTION_BINDING_INVALID"; }
 if (!requestMismatchDenied) throw new Error("Execution result with a substituted request ID must be rejected.");
 
+const makeProviderEvidence = (
+  evidenceId: string,
+  observationStatus: "SUCCEEDED" | "FAILED" | "PROCESSING" | "NOT_FOUND" | "UNKNOWN",
+  observation: Record<string, string>,
+  providerId = "provider-1",
+  idempotencyKey = "key-1",
+) => ({
+  evidenceId,
+  outboxId: "outbox-1",
+  idempotencyKey,
+  providerId,
+  observationStatus,
+  observedAt: "2026-11-22T00:00:00.000Z",
+  observation,
+});
+const classifyProviderEvidence = async (rows: ReturnType<typeof makeProviderEvidence>[]) => {
+  const assessed = await assessPersistedMissionRecovery(scope, "mission-1", persistence, {
+    async listForExecution() { return rows; },
+  });
+  return assessed.providerRecoveryByTask["task-1"];
+};
+
+const successEvidence = await classifyProviderEvidence([
+  makeProviderEvidence("success-1", "SUCCEEDED", { status: "SUCCEEDED", providerRequestId: "remote-1" }),
+]);
+if (successEvidence?.disposition !== "VERIFICATION_REQUIRED" ||
+    successEvidence.providerRequestId !== "remote-1" ||
+    result.assessments[0]?.disposition !== "EXECUTION_OUTCOME_UNKNOWN") {
+  throw new Error("Provider success must require application verification and must not complete the task.");
+}
+const failedEvidence = await classifyProviderEvidence([
+  makeProviderEvidence("failed-1", "FAILED", { status: "FAILED", providerRequestId: "remote-1", code: "DECLINED", message: "Rejected" }),
+]);
+if (failedEvidence?.disposition !== "FAILED_EXECUTION_REVIEW_REQUIRED") {
+  throw new Error("Definitive provider failure must be routed to failure review.");
+}
+const processingEvidence = await classifyProviderEvidence([
+  makeProviderEvidence("processing-1", "PROCESSING", { status: "PROCESSING", providerRequestId: "remote-1" }),
+]);
+if (processingEvidence?.disposition !== "PROVIDER_STILL_PROCESSING") {
+  throw new Error("A processing provider request must remain pending reconciliation.");
+}
+const notFoundEvidence = await classifyProviderEvidence([
+  makeProviderEvidence("not-found-1", "NOT_FOUND", { status: "NOT_FOUND" }),
+]);
+if (notFoundEvidence?.disposition !== "NO_PROVIDER_RECORD_REVIEW_REQUIRED") {
+  throw new Error("Provider NOT_FOUND must require review and must never authorize replay.");
+}
+const unknownEvidence = await classifyProviderEvidence([
+  makeProviderEvidence("unknown-1", "UNKNOWN", { status: "UNKNOWN", reason: "Provider unavailable" }),
+]);
+if (unknownEvidence?.disposition !== "RECONCILIATION_REQUIRED") {
+  throw new Error("Unknown provider status must remain in reconciliation.");
+}
+const conflictingEvidence = await classifyProviderEvidence([
+  makeProviderEvidence("conflict-1", "SUCCEEDED", { status: "SUCCEEDED", providerRequestId: "remote-1" }),
+  makeProviderEvidence("conflict-2", "FAILED", { status: "FAILED", providerRequestId: "remote-1" }),
+]);
+if (conflictingEvidence?.disposition !== "CONFLICTING_PROVIDER_EVIDENCE_REVIEW_REQUIRED") {
+  throw new Error("Contradictory append-only provider observations must be routed to manual review.");
+}
+const mismatchedProviderEvidence = await classifyProviderEvidence([
+  makeProviderEvidence("provider-a", "SUCCEEDED", { status: "SUCCEEDED", providerRequestId: "remote-1" }, "provider-a"),
+  makeProviderEvidence("provider-b", "SUCCEEDED", { status: "SUCCEEDED", providerRequestId: "remote-1" }, "provider-b"),
+]);
+if (mismatchedProviderEvidence?.disposition !== "CONFLICTING_PROVIDER_EVIDENCE_REVIEW_REQUIRED") {
+  throw new Error("Evidence from different provider accounts must not be combined.");
+}
+const mismatchedKeyEvidence = await classifyProviderEvidence([
+  makeProviderEvidence("key-a", "SUCCEEDED", { status: "SUCCEEDED", providerRequestId: "remote-1" }, "provider-1", "key-a"),
+  makeProviderEvidence("key-b", "SUCCEEDED", { status: "SUCCEEDED", providerRequestId: "remote-1" }, "provider-1", "key-b"),
+]);
+if (mismatchedKeyEvidence?.disposition !== "CONFLICTING_PROVIDER_EVIDENCE_REVIEW_REQUIRED") {
+  throw new Error("Evidence for different idempotency keys must not be combined.");
+}
+const emptyEvidence = await classifyProviderEvidence([]);
+if (emptyEvidence?.disposition !== "NO_EVIDENCE_RECORDED" || emptyEvidence.evidenceCount !== 0) {
+  throw new Error("An empty evidence set must remain explicitly unresolved.");
+}
+
 console.log("Persisted mission recovery assessment: PASS");
 
 }
