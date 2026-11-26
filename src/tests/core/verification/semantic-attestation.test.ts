@@ -95,7 +95,7 @@ async function main(): Promise<void> {
       verifierId: `verifier-${index}`,
       keyId: `key-${index}`,
       publicKeyPem: publicKey,
-    })));
+    }))));
   } catch (error) {
     oversizedConfigRejected = error instanceof Error &&
       error.message.includes("between 1 and 20 keys");
