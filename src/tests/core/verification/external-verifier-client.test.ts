@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
+import { generateKeyPairSync, createSign } from "node:crypto";
 import { HttpExternalSemanticVerifierClient } from "../../../core/verification/external-verifier-client";
 import type { Evidence } from "../../../core/evidence/types";
 import type { VerificationRequest } from "../../../core/verification/types";
+import { AsyncEvidenceService } from "../../../core/evidence/async-service";
+import { InMemoryTenantPersistenceAdapter } from "../../../core/persistence/adapters/in-memory-tenant-adapter";
+import { createAsyncHappyStateStore } from "../../../core/state/async-factory";
+import { AsyncVerificationService } from "../../../core/verification/async-service";
+import { canonicalSemanticAttestationPayload, TrustedSemanticAttestationAuthority, type SemanticAttestationPayload } from "../../../core/verification/semantic-attestation";
 
 const scope = { organizationId: "org-1", workspaceId: "workspace-1", userId: "user-1" };
 const request: VerificationRequest = {
@@ -114,6 +120,81 @@ async function main(): Promise<void> {
     () => oversizedResponseClient.evaluate({ scope, request, evidence: [evidence] }),
     /RESPONSE_TOO_LARGE/,
   );
+
+  // End-to-end service path: external evaluation returns a signature that
+  // the trusted authority independently validates before persistence.
+  const pair = generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+    publicKeyEncoding: { type: "spki", format: "pem" },
+    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+  });
+  const authority = new TrustedSemanticAttestationAuthority([{
+    verifierId: "external-verifier", keyId: "external-key-1", publicKeyPem: pair.publicKey,
+  }]);
+  const adapter = new InMemoryTenantPersistenceAdapter();
+  const state = createAsyncHappyStateStore(adapter, scope.organizationId, scope.workspaceId, scope.userId);
+  await state.mission().create(request.missionId, {
+    id: request.missionId, taskIds: [request.taskId], status: "READY",
+  });
+  await state.task().create(request.taskId, {
+    id: request.taskId, missionId: request.missionId, status: "READY",
+  });
+  const service = new AsyncVerificationService(state, authority);
+  await service.registerRequest({ ...request, executionRequestId: undefined });
+  const evidenceService = new AsyncEvidenceService(state);
+  const registeredEvidence = await evidenceService.capture({
+    verificationRequestId: request.id,
+    missionId: request.missionId,
+    taskId: request.taskId,
+    type: "TEST_RESULT",
+    source: "TEST",
+    title: "External verifier evidence",
+    content: "Verified output is present.",
+  });
+  const integratedRequest: VerificationRequest = { ...request, executionRequestId: undefined };
+  const integratedClient = new HttpExternalSemanticVerifierClient({
+    endpoint: "https://verifier.example.test/v1/evaluate",
+    readBearerToken: async () => "integration-token",
+    fetchImpl: async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as {
+        scope: typeof scope;
+        request: VerificationRequest;
+        evidence: Array<{ id: string }>;
+      };
+      const payload: SemanticAttestationPayload = {
+        schemaVersion: 1,
+        verifierId: "external-verifier",
+        keyId: "external-key-1",
+        organizationId: body.scope.organizationId,
+        workspaceId: body.scope.workspaceId,
+        userId: body.scope.userId,
+        requestId: body.request.id,
+        missionId: body.request.missionId,
+        taskId: body.request.taskId,
+        executionRequestId: null,
+        evidenceIds: body.evidence.map((item) => item.id),
+        passedCriteria: ["criterion-1"],
+        failedCriteria: [],
+        partialCriteria: [],
+        outcome: "PASSED",
+        confidence: "HIGH",
+        summary: "External verifier confirmed the registered output.",
+        verifiedAt: new Date().toISOString(),
+      };
+      const signer = createSign("RSA-SHA256");
+      signer.update(canonicalSemanticAttestationPayload(payload));
+      signer.end();
+      return new Response(JSON.stringify({
+        payload, signature: signer.sign(pair.privateKey, "base64"),
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+  const integratedResult = await service.verifyWithExternalVerifier(
+    integratedRequest.id, [registeredEvidence.id], integratedClient,
+  );
+  assert.equal(integratedResult.status, "PASSED");
+  assert.deepEqual(integratedResult.evidenceIds, [registeredEvidence.id]);
+  assert.ok(integratedResult.attestation);
 
   console.log("External semantic verifier HTTPS client contract: PASS");
   console.log({
