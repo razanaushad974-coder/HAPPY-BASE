@@ -66,7 +66,8 @@ export function createWorkerBrokerRecoveryEvidenceReader(
         typeof row.providerId !== "string" || !row.providerId.trim() ||
         typeof row.observedAt !== "string" || !Number.isFinite(Date.parse(row.observedAt)) ||
         !["SUCCEEDED", "FAILED", "PROCESSING", "NOT_FOUND", "UNKNOWN"].includes(row.observationStatus) ||
-        !row.observation || typeof row.observation !== "object" || Array.isArray(row.observation)
+        !row.observation || typeof row.observation !== "object" || Array.isArray(row.observation) ||
+        row.observation.status !== row.observationStatus
       )) {
         throw new Error("MISSION_RECOVERY_EVIDENCE_BINDING_INVALID");
       }
@@ -223,7 +224,8 @@ export async function assessPersistedMissionRecovery(
       typeof item.idempotencyKey !== "string" || !item.idempotencyKey.trim() ||
       typeof item.providerId !== "string" || !item.providerId.trim() ||
       !Number.isFinite(Date.parse(item.observedAt)) ||
-      !["SUCCEEDED", "FAILED", "PROCESSING", "NOT_FOUND", "UNKNOWN"].includes(item.observationStatus)
+      !["SUCCEEDED", "FAILED", "PROCESSING", "NOT_FOUND", "UNKNOWN"].includes(item.observationStatus) ||
+      item.observation?.status !== item.observationStatus
     )) {
       throw new Error("MISSION_RECOVERY_EVIDENCE_BINDING_INVALID");
     }
