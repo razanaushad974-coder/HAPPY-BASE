@@ -44,6 +44,7 @@ async function main(): Promise<void> {
     passedCriteria: ["criterion-pass"],
     failedCriteria: [],
     partialCriteria: [],
+    outcome: "PASSED",
     confidence: "HIGH",
     summary: "Required task outcome verified.",
     verifiedAt: new Date(now - 30_000).toISOString(),
@@ -94,6 +95,19 @@ async function main(): Promise<void> {
   });
   if (unknownKey.status !== "REJECTED" || unknownKey.reason !== "VERIFIER_KEY_NOT_TRUSTED") {
     throw new Error("Unconfigured verifier key was trusted.");
+  }
+
+  const falsePass = sign({
+    ...payload,
+    passedCriteria: [],
+    partialCriteria: ["criterion-pass"],
+    outcome: "PASSED",
+  });
+  const falsePassResult = authority.verify({
+    attestation: falsePass, scope, request, evidenceIds: ["evidence-1"], now: () => now,
+  });
+  if (falsePassResult.status !== "REJECTED" || falsePassResult.reason !== "CRITERIA_INVALID") {
+    throw new Error("A PASSED outcome without every required criterion passing was accepted.");
   }
 
   const stale = authority.verify({
