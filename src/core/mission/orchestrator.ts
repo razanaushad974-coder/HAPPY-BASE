@@ -322,38 +322,11 @@ export class MissionOrchestrator {
       status: MissionTask["status"];
       /** Required when a verification-gated task is being completed. */
       verificationRequestId?: string;
-      /** Verification records to persist atomically with the task/mission transition. */
-      verificationEnvelope?: {
-        request: VerificationRequest;
-        evidence: Evidence;
-        result: VerificationResult;
-      };
     },
   ): Promise<MissionSnapshot> {
     const scope = input.scope;
     requireCompleteScope(scope);
     return input.persistence.transaction(scope, async (transaction) => {
-      if (input.verificationEnvelope) {
-        const { request, evidence, result } = input.verificationEnvelope;
-        if (
-          request.id !== evidence.verificationRequestId ||
-          request.id !== result.requestId ||
-          !result.evidenceIds.includes(evidence.id) ||
-          evidence.missionId !== input.missionId ||
-          evidence.taskId !== input.taskId ||
-          request.missionId !== input.missionId ||
-          request.taskId !== input.taskId
-        ) {
-          throw new TenantPersistenceError(
-            "INVALID_RECORD_DATA",
-            "Verification envelope is not bound to the requested mission task.",
-          );
-        }
-        await transaction.create(scope, "VERIFICATION_REQUEST", request.id, request);
-        await transaction.create(scope, "EVIDENCE", evidence.id, evidence);
-        await transaction.create(scope, "VERIFICATION", request.id, result);
-      }
-
       const missionRecord = await transaction.get<Mission>(
         scope, "MISSION", input.missionId,
       );
