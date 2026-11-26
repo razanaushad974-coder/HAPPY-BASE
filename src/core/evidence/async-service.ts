@@ -1,5 +1,6 @@
 import type { AsyncHappyStateStore } from "../state/async-happy-state-store";
 import type { Evidence, EvidenceInput } from "./types";
+import type { VerificationRequest } from "../verification/types";
 
 /**
  * Tenant-scoped asynchronous evidence service.
@@ -46,7 +47,25 @@ export class AsyncEvidenceService {
       isPrimary: input.isPrimary ?? false,
     };
 
-    await this.state.evidence<Evidence>().create(evidence.id, evidence);
+    // Evidence must attach to an already registered request in the same
+    // tenant transaction. Otherwise callers can manufacture orphaned or
+    // cross-task evidence records that later appear in audit/recovery views.
+    await this.state.transaction(async (transactionState) => {
+      const requestRecord = await transactionState
+        .verificationRequest<VerificationRequest>()
+        .get(evidence.verificationRequestId);
+      const request = requestRecord?.data;
+      if (!requestRecord ||
+          requestRecord.id !== evidence.verificationRequestId ||
+          request.id !== evidence.verificationRequestId ||
+          request.missionId !== evidence.missionId ||
+          request.taskId !== evidence.taskId ||
+          (request.executionRequestId || undefined) !==
+            (evidence.executionRequestId || undefined)) {
+        throw new Error("Evidence must match a registered verification request in the active tenant.");
+      }
+      await transactionState.evidence<Evidence>().create(evidence.id, evidence);
+    });
     return evidence;
   }
 
