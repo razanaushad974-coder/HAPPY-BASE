@@ -174,6 +174,56 @@ if (!mismatchedEvidenceDenied) {
   throw new Error("Recovery must reject evidence bound to a different outbox.");
 }
 
+let contradictoryEvidenceDenied = false;
+try {
+  await assessPersistedMissionRecovery(scope, "mission-1", persistence, {
+    async listForExecution() {
+      return [{
+        evidenceId: "evidence-contradictory", outboxId: "outbox-1",
+        idempotencyKey: "key-1", providerId: "provider-1",
+        observationStatus: "SUCCEEDED", observedAt: "2026-11-22T00:00:00.000Z",
+        observation: { status: "FAILED", providerRequestId: "remote-1" },
+      }];
+    },
+  });
+} catch (error) {
+  contradictoryEvidenceDenied = error instanceof Error &&
+    error.message === "MISSION_RECOVERY_EVIDENCE_BINDING_INVALID";
+}
+if (!contradictoryEvidenceDenied) {
+  throw new Error("Recovery must reject persisted evidence whose status contradicts its observation payload.");
+}
+
+let contradictoryWorkerEvidenceDenied = false;
+const contradictoryWorkerReader = createWorkerBrokerRecoveryEvidenceReader({
+  async listReconciliationEvidence(input) {
+    return [{
+      evidenceId: "evidence-contradictory", outboxId: input.outboxId,
+      idempotencyKey: "key-1", providerId: "provider-1",
+      observationStatus: "SUCCEEDED" as const,
+      observedAt: "2026-11-22T00:00:00.000Z",
+      observation: { status: "FAILED", providerRequestId: "remote-1" },
+    }];
+  },
+}, {
+  workerPrincipalId: "worker-1",
+  organizationId: scope.organizationId,
+  workspaceId: scope.workspaceId,
+  userId: scope.userId,
+}, scope);
+try {
+  await contradictoryWorkerReader.listForExecution({
+    outboxId: "outbox-1", missionId: "mission-1",
+    taskId: "task-1", executionRequestId: "execution-1",
+  });
+} catch (error) {
+  contradictoryWorkerEvidenceDenied = error instanceof Error &&
+    error.message === "MISSION_RECOVERY_EVIDENCE_BINDING_INVALID";
+}
+if (!contradictoryWorkerEvidenceDenied) {
+  throw new Error("Worker evidence adapter must reject status/payload contradictions.");
+}
+
 // This is the actual orchestration crash window: task is RUNNING and the
 // persisted execution request exists, but the result update has not happened.
 const initialRequestRecords = new Map(records);
