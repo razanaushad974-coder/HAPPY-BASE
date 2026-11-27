@@ -63,6 +63,14 @@ The required `AuthorizedWorkerTenantScopeSource` is an adapter contract, not a b
 
 The host owns process signal wiring: on SIGTERM/SIGINT it should abort the batch signal, await the in-flight bounded database/provider operation to settle, close the PostgreSQL pool, and exit. The batch runner does not forcibly cancel a provider request after it has begun, because that could create an ambiguous external side effect. The host must enforce its own process deadline and persist/reconcile ambiguous outcomes through the existing durable protocol.
 
+## PostgreSQL-backed tenant-grant source
+
+`PostgresWorkerTenantGrantSource` implements the scheduler's grant-source contract using the same dedicated worker PostgreSQL session boundary. It calls only the fixed `private.happy_worker_list_tenant_grants` RPC, requests one row per keyset page, validates UUIDs and the cursor, and binds the returned organization/workspace/user tuple to the verified registry principal. The Node factory is `createNodePostgresWorkerTenantScopeSource(runtimeConfig)`.
+
+The matching SQL is intentionally in `supabase/drafts/20261127_worker_tenant_grant_page_rpc_candidate.sql`, not in the migration chain. The SECURITY DEFINER function derives the principal from PostgreSQL `session_user`, checks the exact principal selector, lists only enabled CONTROL grants with active organization/workspace and active organization/workspace memberships, locks the relevant rows, and bounds each page to 1–20 rows. The draft transfers ownership to the existing NOLOGIN registry-owner role and withholds EXECUTE grants.
+
+**Not yet deployable:** an operator must review the draft, verify the hosted dedicated LOGIN using the read-only principal diagnostic, and explicitly grant EXECUTE only to that exact verified LOGIN. Until then, the adapter fails closed because the candidate RPC is absent or ungranted. No tenant grant is created or changed by this code. Each claim/dispatch operation still rechecks the grant and memberships transactionally through the worker RPCs.
+
 ## Security invariants
 
 - The session provider checks PostgreSQL `session_user` and `current_user` on every broker transaction; a mismatched role fails closed.
