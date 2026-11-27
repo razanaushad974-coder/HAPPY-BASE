@@ -249,8 +249,9 @@ async function main(): Promise<void> {
       }), { status: 200, headers: { "content-type": "application/json" } });
     },
   });
-  const integratedResult = await service.verifyWithExternalVerifier(
-    integratedRequest.id, [registeredEvidence.id], integratedClient,
+  const integratedService = new AsyncVerificationService(state, authority, integratedClient);
+  const integratedResult = await integratedService.verifyWithExternalVerifier(
+    integratedRequest.id, [registeredEvidence.id],
   );
   assert.equal(integratedResult.status, "PASSED");
   assert.deepEqual(integratedResult.evidenceIds, [registeredEvidence.id]);
