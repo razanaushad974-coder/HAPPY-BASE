@@ -63,6 +63,35 @@ async function main(): Promise<void> {
   );
   assert.equal(errorPoolClosed, 1, "pool must close even when batch execution fails");
   
+  let registrationFailurePoolClosed = 0;
+  let firstListenerRemoved = 0;
+  await assert.rejects(
+    () => runNodeWorkerProcess({
+      signals: {
+        on(signal, listener) {
+          if (signal === "SIGTERM") throw new Error("signal registration failed");
+          listeners.set(signal, listener);
+        },
+        off(signal, listener) {
+          if (listeners.get(signal) === listener) {
+            listeners.delete(signal);
+            firstListenerRemoved += 1;
+          }
+        },
+      },
+      pool: {
+        async end() { registrationFailurePoolClosed += 1; },
+      },
+      async runBatch() {
+        throw new Error("batch must not start after signal registration failure");
+      },
+    }),
+    /signal registration failed/,
+  );
+  assert.equal(registrationFailurePoolClosed, 1, "pool must close when signal registration partially fails");
+  assert.equal(firstListenerRemoved, 1, "any listener registered before failure must be removed");
+  assert.equal(listeners.has("SIGINT"), false);
+
   console.log("Node worker process supervisor: PASS");
 }
 
