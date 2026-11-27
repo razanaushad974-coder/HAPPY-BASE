@@ -130,10 +130,22 @@ fi
 "${psql[@]}" <<'SQL'
 -- Use a non-login, non-privileged SECURITY DEFINER owner in the test as well.
 grant usage on schema private to happy_worker_registry_owner;
-grant select on private.happy_worker_principal_registry,
-  private.happy_worker_tenant_grants, private.organizations, private.workspaces,
-  private.organization_memberships, private.workspace_memberships
-  to happy_worker_registry_owner;
+grant select (
+  worker_principal_id, db_login_role, issuer, subject, audience,
+  environment, capabilities, enabled, activated_at, revoked_at
+) on private.happy_worker_principal_registry to happy_worker_registry_owner;
+grant select (
+  worker_principal_id, organization_id, workspace_id, user_id,
+  capabilities, enabled
+) on private.happy_worker_tenant_grants to happy_worker_registry_owner;
+grant select (organization_id, status)
+  on private.organizations to happy_worker_registry_owner;
+grant select (organization_id, workspace_id, status)
+  on private.workspaces to happy_worker_registry_owner;
+grant select (organization_id, user_id, status)
+  on private.organization_memberships to happy_worker_registry_owner;
+grant select (organization_id, workspace_id, user_id, status)
+  on private.workspace_memberships to happy_worker_registry_owner;
 -- SELECT FOR SHARE requires UPDATE privilege. Limit the non-login function
 -- owner to one status/activation column per table; it receives no table-wide
 -- UPDATE and no runtime login is granted this authority.
@@ -412,6 +424,32 @@ update private.workspace_memberships
  where organization_id = '10000000-0000-4000-8000-000000000001'
    and workspace_id = '20000000-0000-4000-8000-000000000002'
    and user_id = '30000000-0000-4000-8000-000000000003';
+SQL
+
+"${worker_psql[@]}" <<'SQL'
+do $revoked_page$
+declare
+  v_page record;
+  v_count integer;
+begin
+  select * into v_page
+    from private.happy_worker_list_tenant_grants(
+      '60000000-0000-4000-8000-000000000006', null, null, null, 20
+    );
+  if not found
+     or v_page.user_id <> '40000000-0000-4000-8000-000000000004' then
+    raise exception 'tenant-grant page did not exclude the revoked workspace membership';
+  end if;
+
+  select count(*) into v_count
+    from private.happy_worker_list_tenant_grants(
+      '60000000-0000-4000-8000-000000000006', null, null, null, 20
+    );
+  if v_count <> 1 then
+    raise exception 'tenant-grant page returned an inactive membership or duplicate row';
+  end if;
+end
+$revoked_page$;
 SQL
 
 "${worker_psql[@]}" <<'SQL'
