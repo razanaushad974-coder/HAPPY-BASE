@@ -8,6 +8,43 @@ import { PostgresWorkerPrincipalRegistry } from "./postgres-worker-principal-reg
 import { PostgresWorkerTenantGrantSource } from "./postgres-worker-tenant-grant-source";
 import { createPostgresHappyWorker } from "./vercel-postgres-happy-worker";
 import type { WorkerRuntimeCompositionDependencies } from "./worker-runtime-composition";
+import { TrustedWorkerIdentityProvider } from "./trusted-worker-identity";
+import type {
+  TrustedWorkerCredentialSource,
+  TrustedWorkerIdentityPolicy,
+  WorkerCredentialVerifier,
+} from "./trusted-worker-identity";
+
+/**
+ * Builds the standard HAPPY identity resolver for a Node host from two
+ * independently owned trust adapters: a platform credential source and a
+ * cryptographic verifier (for example JwksOidcWorkerCredentialVerifier).
+ * The source must read a workload-only identity channel, never HTTP caller
+ * input; the verifier must validate the signature and issuer/audience claims.
+ */
+export function createNodeTrustedWorkerIdentityResolver(input: {
+  readonly credentialSource: TrustedWorkerCredentialSource;
+  readonly credentialVerifier: WorkerCredentialVerifier;
+  readonly policy: TrustedWorkerIdentityPolicy;
+  readonly now?: () => number;
+}): TrustedWorkerIdentityProvider {
+  if (
+    !input || typeof input !== "object" ||
+    !input.credentialSource ||
+    typeof input.credentialSource.getCredential !== "function" ||
+    !input.credentialVerifier ||
+    typeof input.credentialVerifier.verifyCredential !== "function" ||
+    !input.policy || typeof input.policy !== "object"
+  ) {
+    throw new TypeError("Node worker identity requires a trusted credential source, cryptographic verifier, and policy.");
+  }
+  return new TrustedWorkerIdentityProvider(
+    input.credentialSource,
+    input.credentialVerifier,
+    input.policy,
+    input.now,
+  );
+}
 
 /**
  * Host-independent Node.js worker composition.
