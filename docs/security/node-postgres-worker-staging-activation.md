@@ -6,7 +6,7 @@ This runbook converts the source-level Node worker into a controlled staging act
 
 ## Current source-level evidence
 
-The following source-level and isolated integration checks have passed on PR #15 head `8a82904ed78d7bd1d061fab38181602d878a6123`, CI run #1866 (30/30 steps; GitHub Actions conclusion: success):
+The following source-level and isolated integration checks passed on the earlier PR #15 head `8a82904ed78d7bd1d061fab38181602d878a6123`, CI run #1866 (30/30 steps; GitHub Actions conclusion: success). The current PR head is `81e57f721fbb8fefe4887e56fd9822317c023c1d`; its validation run #1868 is still in progress, so the latest documentation change is not yet CI-verified:
 
 - TypeScript and the complete security harness suite.
 - Async tenant persistence/provider contracts.
@@ -26,7 +26,7 @@ CI run #1866 also validated the updated staging-host discovery checkpoint in thi
 
 Before touching staging, the project owner/operator must explicitly approve:
 - the exact Supabase staging project and database endpoint;
-- the exact worker LOGIN role name;
+- the exact worker LOGIN role name: `happy_worker_dispatch` for the hosted identity diagnostic and staging activation path described here;
 - the exact identity issuer, audience, JWKS URI, subject, owner/project claims, environment, and capabilities;
 - the exact SQL candidate commit/hash to review;
 - the exact provider adapter and idempotency behavior for a non-production smoke test.
@@ -47,7 +47,7 @@ The repository exports `createNodeTrustedWorkerIdentityResolver()`; this is a co
 
 ### Gate 2 — verify the actual PostgreSQL LOGIN through the intended pooler
 
-Provision the dedicated `happy_worker_*` LOGIN through the approved database administration process. It must be a non-superuser, non-owner, non-BYPASSRLS role with no role-creation/database-creation privileges. Do not use `service_role`, `postgres`, a human login, or a shared application role.
+Provision the exact dedicated `happy_worker_dispatch` LOGIN through the approved database administration process. The current SQL candidate does not create this LOGIN; role provisioning is a separate, explicitly approved DBA step. It must be a non-superuser, non-owner, non-BYPASSRLS role with no role-creation/database-creation privileges. Do not use `service_role`, `postgres`, a human login, or a shared application role.
 
 Configure the staging host's secret manager with the dedicated worker connection string. The variable name used by the host example is `HAPPY_WORKER_DATABASE_URL`; a prior staging preflight recorded `HAPPY_STAGING_WORKER_DATABASE_URL` as not set. The host must explicitly map its chosen secret to the pool configuration; do not assume either name is currently configured.
 
@@ -65,8 +65,8 @@ rollback;
 ```
 
 Expected result:
-- `session_user` is exactly the dedicated `happy_worker_*` LOGIN.
-- `current_user` is that same LOGIN outside SECURITY DEFINER execution.
+- `session_user` is exactly `happy_worker_dispatch`.
+- `current_user` is exactly `happy_worker_dispatch` outside SECURITY DEFINER execution.
 - `active_role` is `none` (or the platform's documented equivalent showing no role switch).
 - This is the intended staging database and the transaction is read-only.
 
@@ -121,7 +121,7 @@ Expected before the worker grant:
 - there is no EXECUTE for PUBLIC, anon, authenticated, service_role, or any worker LOGIN;
 - no unexpected owner or grantor exists.
 
-Only after Gate 2 and this ACL review pass may the DBA, under explicit approval, grant EXECUTE to the **one exact verified staging worker LOGIN**. Never grant to a wildcard role, PUBLIC, API roles, or all `happy_worker_*` roles. Re-run the ACL query immediately after the grant and record the exact grantee.
+Only after Gate 2 and this ACL review pass may the DBA, under explicit approval, grant EXECUTE to the **one exact verified staging LOGIN `happy_worker_dispatch`**. Never grant to a wildcard role, PUBLIC, API roles, or all `happy_worker_*` roles. Re-run the ACL query immediately after the grant and record the exact grantee.
 
 ### Gate 4 — validate principal registration and grant-page behavior
 
@@ -173,7 +173,7 @@ No sandbox was resumed or created, no environment-variable values were decrypted
 ## Current outstanding external dependencies
 
 - Staging worker database URL/secret is not confirmed provisioned.
-- Actual hosted pooler `session_user/current_user` diagnostic has not been run.
+- The exact `happy_worker_dispatch` LOGIN has not been provisioned in the blank staging project; the hosted pooler `session_user/current_user` diagnostic has not been run.
 - Trusted workload credential source, issuer/JWKS, and exact staging subject are not provisioned by this repository change.
 - Tenant-grant RPC candidate has not been deployed to hosted staging; hosted EXECUTE remains withheld.
 - No real Node worker dispatch, continuous poller, concurrency controller, or crash-recovery/restart supervisor has been deployed.
