@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { generateKeyPairSync } from "node:crypto";
 
 import { createVercelPostgresHappyWorker } from "./vercel-postgres-happy-worker";
 import type { PgPoolLike } from "../persistence/adapters/postgres-tenant-adapter";
@@ -60,5 +61,35 @@ const worker = createVercelPostgresHappyWorker({
 
 assert.equal(typeof worker.runOneReadyTask, "function");
 assert.equal(typeof worker.runOnePendingDispatch, "function");
+assert.equal(worker.semanticVerifier.status, "NOT_CONFIGURED");
+assert.equal(worker.semanticVerifier.client, null);
+assert.equal(worker.semanticVerifier.authority, null);
+
+assert.throws(
+  () => createVercelPostgresHappyWorker({
+    runtime,
+    tenantPersistence,
+    provider,
+    semanticVerifierEndpoint: "https://verifier.example.test/evaluate",
+  }),
+  /must be configured together/,
+);
+
+const { publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+const configuredWorker = createVercelPostgresHappyWorker({
+  runtime,
+  tenantPersistence,
+  provider,
+  semanticVerifierEndpoint: "https://verifier.example.test/evaluate",
+  readSemanticVerifierBearerToken: async () => "server-only-test-token",
+  semanticVerifierKeysJson: JSON.stringify([{
+    verifierId: "verifier-test",
+    keyId: "key-test",
+    publicKeyPem: publicKey.export({ type: "spki", format: "pem" }),
+  }]),
+});
+assert.equal(configuredWorker.semanticVerifier.status, "CONFIGURED");
+assert.ok(configuredWorker.semanticVerifier.client);
+assert.ok(configuredWorker.semanticVerifier.authority);
 
 console.log("Vercel PostgreSQL HAPPY worker entrypoint: PASS");
