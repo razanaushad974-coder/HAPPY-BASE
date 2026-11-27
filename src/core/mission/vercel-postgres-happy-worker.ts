@@ -61,31 +61,34 @@ export function createVercelPostgresHappyWorker(input: {
     : null;
   const orchestrator = new MissionOrchestrator(dependencies, semanticAuthority);
 
+  const createTenantVerificationServices = (scope: TenantScope & { readonly userId: string }) => {
+    if (!scope.organizationId?.trim() || !scope.workspaceId?.trim() || !scope.userId?.trim()) {
+      throw new TypeError("Complete organization, workspace, and user scope is required.");
+    }
+    const state = createAsyncHappyStateStore(
+      input.tenantPersistence,
+      scope.organizationId,
+      scope.workspaceId,
+      scope.userId,
+    );
+    return Object.freeze({
+      evidence: new AsyncEvidenceService(state),
+      verification: new AsyncVerificationService(
+        state,
+        semanticAuthority,
+        externalSemanticVerifierClient,
+      ),
+    });
+  };
+
   return Object.freeze({
     /**
      * Creates the tenant-bound verification and evidence services over the
      * worker's durable tenant adapter. Scope must come from the caller's
      * already-authenticated/authorized tenant resolution, never request IDs.
      */
-    createTenantVerificationServices(scope: TenantScope & { readonly userId: string }) {
-      if (!scope.organizationId?.trim() || !scope.workspaceId?.trim() || !scope.userId?.trim()) {
-        throw new TypeError("Complete organization, workspace, and user scope is required.");
-      }
-      const state = createAsyncHappyStateStore(
-        input.tenantPersistence,
-        scope.organizationId,
-        scope.workspaceId,
-        scope.userId,
-      );
-      return Object.freeze({
-        evidence: new AsyncEvidenceService(state),
-        verification: new AsyncVerificationService(
-          state,
-          semanticAuthority,
-          externalSemanticVerifierClient,
-        ),
-      });
-    },
+    createTenantVerificationServices,
+
 
     /**
      * Runs one registered verification request through the configured external
@@ -97,7 +100,7 @@ export function createVercelPostgresHappyWorker(input: {
       readonly requestId: string;
       readonly evidenceIds: string[];
     }) {
-      const services = this.createTenantVerificationServices(input.scope);
+      const services = createTenantVerificationServices(input.scope);
       return services.verification.verifyWithExternalVerifier(
         input.requestId,
         input.evidenceIds,
