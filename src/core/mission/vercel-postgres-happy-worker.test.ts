@@ -71,6 +71,7 @@ assert.equal(typeof tenantServices.verification.registerRequest, "function");
 assert.equal(typeof tenantServices.verification.verifyWithExternalVerifier, "function");
 assert.equal(typeof worker.transitionTaskDurable, "function");
 assert.equal(typeof worker.verifyTenantRequest, "function");
+assert.equal(typeof worker.assessTenantMissionRecovery, "function");
 assert.throws(
   () => worker.createTenantVerificationServices({
     organizationId: "org-test",
@@ -111,6 +112,14 @@ assert.ok(configuredWorker.semanticVerifier.client);
 assert.ok(configuredWorker.semanticVerifier.authority);
 
 void (async () => {
+  await assert.rejects(
+    worker.assessTenantMissionRecovery({
+      scope: { organizationId: "org-a", workspaceId: "workspace-a", userId: "user-a" },
+      workerScope: { workerPrincipalId: "worker-a", organizationId: "org-b", workspaceId: "workspace-a", userId: "user-a" },
+      missionId: "mission-test",
+    }),
+    /same tenant scope/,
+  );
   const verifyTenantRequest = worker.verifyTenantRequest;
   await assert.rejects(
     verifyTenantRequest({
