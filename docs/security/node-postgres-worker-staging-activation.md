@@ -170,6 +170,30 @@ Read-only inventory of the connected Vercel team found four HAPPY application pr
 
 No sandbox was resumed or created, no environment-variable values were decrypted, and no host credentials were read or changed.
 
+## GitHub Actions staging identity preflight — 2026-11-27
+
+A first staging-host candidate is now implemented as an **ephemeral GitHub-hosted runner identity preflight**, not as an active database worker:
+
+- Workflow: `.github/workflows/happy-staging-worker-oidc-preflight.yml`.
+- Verifier: `scripts/security/github-actions-staging-worker-oidc-preflight.mjs`.
+- Trigger: push to this staging-activation branch when either preflight file changes, or manual `workflow_dispatch`.
+- Job environment: `happy-staging-worker`.
+- OIDC audience: `happy-staging-worker`.
+- Pinned repository: `razanaushad974-coder/HAPPY-BASE` (repository ID `1368712889`, owner ID `285602201`).
+- Pinned ref: `refs/heads/docs/staging-worker-activation-runbook`.
+- Pinned subject: `repo:razanaushad974-coder/HAPPY-BASE:environment:happy-staging-worker`.
+
+The preflight obtains a short-lived GitHub Actions OIDC token from the runner-provided request endpoint, verifies its RS256 signature against GitHub's published JWKS, and checks exact issuer, single audience, subject, repository IDs, ref, workflow ref, environment, event type, and token time bounds. It prints only non-secret identity labels and explicit `database_connected=false` / `worker_dispatch_executed=false` markers.
+
+This is a **candidate host identity proof only**. It does not:
+- prove that the staging environment has required-reviewer protection configured;
+- provide a PostgreSQL pool, the dedicated `happy_worker_dispatch` LOGIN, or the same-pooler principal diagnostic;
+- implement the database bridge from GitHub OIDC identity to the dedicated PostgreSQL LOGIN;
+- deploy the tenant-grant RPC, create registry rows, grant EXECUTE, or run a task/provider;
+- establish durable replay/revocation state for GitHub OIDC tokens.
+
+The workflow intentionally has no database URL, database secret, provider credential, or deployment permission. Do not add those until the identity-to-database bridge, exact staging DB principal, SQL owner/ACL, and separate staging approval have been reviewed. A successful preflight must be recorded as **OIDC identity PASS only**, never as worker activation.
+
 ## Current outstanding external dependencies
 
 - Staging worker database URL/secret is not confirmed provisioned.
