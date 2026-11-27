@@ -88,6 +88,23 @@ export function createVercelPostgresHappyWorker(input: {
     },
 
     /**
+     * Runs one registered verification request through the configured external
+     * verifier, using only the tenant-scoped evidence store and server-side
+     * verifier transport. The caller must supply an authenticated tenant scope.
+     */
+    verifyTenantRequest(input: {
+      readonly scope: TenantScope & { readonly userId: string };
+      readonly requestId: string;
+      readonly evidenceIds: string[];
+    }) {
+      const services = this.createTenantVerificationServices(input.scope);
+      return services.verification.verifyWithExternalVerifier(
+        input.requestId,
+        input.evidenceIds,
+      );
+    },
+
+    /**
      * Persists a task transition using the same trusted signing authority that
      * validates verifier results. Verification-gated completion requires the
      * exact persisted request/result/evidence chain in the same tenant.
