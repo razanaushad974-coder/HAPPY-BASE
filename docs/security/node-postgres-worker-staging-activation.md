@@ -206,7 +206,7 @@ The diagnostic uses the supplied staging pooler URL for exactly one `BEGIN READ 
 - `current_setting('role') = none`;
 - `transaction_read_only = on`.
 
-If the secret is absent, it prints `BLOCKED_SECRET_NOT_CONFIGURED` and does not attempt a database connection. If configured, the URL must point only to the approved staging pooler and authenticate as the exact dedicated worker LOGIN. The secret value must be added directly by the operator in GitHub Environment `happy-staging-worker`; never paste it into ChatGPT, PRs, workflow logs, or source control. Configure required environment reviewers before adding the secret or manually dispatching the diagnostic.
+If the secret is absent, it prints `BLOCKED_SECRET_NOT_CONFIGURED` and does not attempt a database connection. The script exits with status `3` so GitHub Actions cannot report a green workflow for a blocked principal gate; this is an intentional BLOCKED result, not evidence of a database failure. If configured, the URL must point only to the approved staging pooler and authenticate as the exact dedicated worker LOGIN. The secret value must be added directly by the operator in GitHub Environment `happy-staging-worker`; never paste it into ChatGPT, PRs, workflow logs, or source control. Configure required environment reviewers before adding the secret or manually dispatching the diagnostic.
 
 This workflow is still read-only. It does not create roles, tables, migrations, grants, registry records, tenant fixtures, or dispatch tasks. A PASS proves only the PostgreSQL principal through that exact connection path; it does not authorize SQL candidate deployment or worker activation.
 
