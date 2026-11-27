@@ -21,7 +21,7 @@ const expected = {
   ownerId: "285602201",
   ref: "refs/heads/docs/staging-worker-activation-runbook",
   workflowRef: "razanaushad974-coder/HAPPY-BASE/.github/workflows/happy-staging-worker-oidc-preflight.yml@refs/heads/docs/staging-worker-activation-runbook",
-  subject: "repo:razanaushad974-coder/HAPPY-BASE:environment:happy-staging-worker",
+  subject: "repo:razanaushad974-coder@285602201/HAPPY-BASE@1368712889:environment:happy-staging-worker",
   environment: "happy-staging-worker",
 };
 
