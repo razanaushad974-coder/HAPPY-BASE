@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { PostgresWorkerTenantGrantSource } from "./postgres-worker-tenant-grant-source";
 import { TrustedWorkerIdentityProvider } from "./trusted-worker-identity";
 import type { WorkerDatabaseSessionProvider } from "./postgres-worker-database-broker";
+import type { PgQueryable } from "../persistence/adapters/postgres-tenant-adapter";
 
 const fixedNow = 1_800_000_000_000;
 const identityProvider = new TrustedWorkerIdentityProvider(
@@ -50,7 +51,7 @@ let calls = 0;
 let lastSql = "";
 let lastValues: readonly unknown[] = [];
 const sessions: WorkerDatabaseSessionProvider = {
-  async withTransaction<T>(operation: (client: never) => Promise<T>): Promise<T> {
+  async withTransaction<T>(operation: (client: PgQueryable) => Promise<T>): Promise<T> {
     return operation({
       async query(sql: string, values: readonly unknown[] = []) {
         calls += 1;
@@ -64,7 +65,7 @@ const sessions: WorkerDatabaseSessionProvider = {
           }],
         };
       },
-    } as never);
+    } as unknown as PgQueryable);
   },
 };
 const source = new PostgresWorkerTenantGrantSource(sessions);
