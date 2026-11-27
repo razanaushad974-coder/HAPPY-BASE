@@ -112,6 +112,21 @@ async function main(): Promise<void> {
     /RESPONSE_INVALID_JSON/,
   );
 
+  await assert.rejects(() => new HttpExternalSemanticVerifierClient({
+    endpoint: "https://verifier.example.test/v1/evaluate",
+    readBearerToken: async () => "server-side-token",
+    fetchImpl: async () => new Response("{}", {
+      status: 200, headers: { "content-type": "application/jsonp" },
+    }),
+  }).evaluate({ scope, request, evidence: [evidence] }), /RESPONSE_CONTENT_TYPE_INVALID/);
+
+  await assert.rejects(() => new HttpExternalSemanticVerifierClient({
+    endpoint: "https://verifier.example.test/v1/evaluate",
+    readBearerToken: async () => "server-side-token",
+    fetchImpl: async () => new Response(JSON.stringify({ payload: {}, signature: "sig", extra: true }), {
+      status: 200, headers: { "content-type": "application/json; charset=utf-8" },
+    }),
+  }).evaluate({ scope, request, evidence: [evidence] }), /SIGNED_ENVELOPE_INVALID/);
   const oversizedResponseClient = new HttpExternalSemanticVerifierClient({
     endpoint: "https://verifier.example.test/v1/evaluate",
     readBearerToken: async () => "server-side-token",
