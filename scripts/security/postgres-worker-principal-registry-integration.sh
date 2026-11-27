@@ -8,6 +8,7 @@ WORKER_TEST_PASSWORD="happy_ci_worker_only_password"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 REGISTRY_SQL="$ROOT_DIR/supabase/drafts/20261122_worker_principal_registry_candidate.sql"
+TENANT_GRANT_PAGE_SQL="$ROOT_DIR/supabase/drafts/20261127_worker_tenant_grant_page_rpc_candidate.sql"
 if [[ ! -f "$REGISTRY_SQL" ]]; then
   echo "Worker principal registry SQL draft not found: $REGISTRY_SQL" >&2
   exit 1
@@ -121,6 +122,10 @@ if ! grep -q "'CODE','FILE','API','BROWSER','SHELL','DATABASE','AI','DEPLOYMENT'
 fi
 
 "${psql[@]}" -f "$REGISTRY_SQL"
+if [[ ! -f "$TENANT_GRANT_PAGE_SQL" ]]; then
+  echo "Worker tenant-grant page SQL draft not found: $TENANT_GRANT_PAGE_SQL" >&2
+  exit 1
+fi
 
 "${psql[@]}" <<'SQL'
 -- Use a non-login, non-privileged SECURITY DEFINER owner in the test as well.
@@ -171,6 +176,13 @@ insert into private.happy_worker_tenant_grants (
   '10000000-0000-4000-8000-000000000001',
   '20000000-0000-4000-8000-000000000002',
   '30000000-0000-4000-8000-000000000003',
+  array['CONTROL','VERIFY'],
+  true
+), (
+  '60000000-0000-4000-8000-000000000006',
+  '10000000-0000-4000-8000-000000000001',
+  '20000000-0000-4000-8000-000000000002',
+  '40000000-0000-4000-8000-000000000004',
   array['CONTROL','VERIFY'],
   true
 );
@@ -244,6 +256,28 @@ if [[ "$worker_database_url" == "$DATABASE_URL" ]]; then
 fi
 worker_psql=(psql "$worker_database_url" -X -v ON_ERROR_STOP=1)
 
+# Apply and exercise the tenant-grant page RPC only inside the disposable CI
+# PostgreSQL service. Its EXECUTE grant is test-only and never enters the draft.
+"${psql[@]}" -f "$TENANT_GRANT_PAGE_SQL"
+"${psql[@]}" <<'SQL'
+grant execute on function private.happy_worker_list_tenant_grants(uuid,uuid,uuid,uuid,integer)
+  to happy_worker_dispatch;
+do $page_acl$
+begin
+  if not has_function_privilege('happy_worker_dispatch',
+      'private.happy_worker_list_tenant_grants(uuid,uuid,uuid,uuid,integer)','EXECUTE')
+     or has_function_privilege('authenticated',
+      'private.happy_worker_list_tenant_grants(uuid,uuid,uuid,uuid,integer)','EXECUTE')
+     or has_function_privilege('anon',
+      'private.happy_worker_list_tenant_grants(uuid,uuid,uuid,uuid,integer)','EXECUTE')
+     or has_function_privilege('service_role',
+      'private.happy_worker_list_tenant_grants(uuid,uuid,uuid,uuid,integer)','EXECUTE') then
+    raise exception 'tenant grant page RPC EXECUTE ACL is not worker-only';
+  end if;
+end
+$page_acl$;
+SQL
+
 # Authenticate as the dedicated LOGIN over a new PostgreSQL connection.
 # This verifies server-authenticated session_user, not SET ROLE/SET SESSION AUTHORIZATION.
 "${worker_psql[@]}" <<'SQL'
@@ -300,7 +334,76 @@ begin
   exception when insufficient_privilege then null;
   end;
 end
-$worker_identity$;
+$worker_identity$
+SQL
+
+# Exercise bounded keyset pagination through a fresh dedicated LOGIN session.
+"${worker_psql[@]}" <<'SQL'
+do $tenant_grant_page$
+declare
+  v_page record;
+  v_count integer;
+begin
+  select * into v_page
+    from private.happy_worker_list_tenant_grants(
+      '60000000-0000-4000-8000-000000000006', null, null, null, 1
+    );
+  if not found
+     or v_page.user_id <> '30000000-0000-4000-8000-000000000003' then
+    raise exception 'tenant-grant page did not return the first canonical scope';
+  end if;
+
+  select * into v_page
+    from private.happy_worker_list_tenant_grants(
+      '60000000-0000-4000-8000-000000000006',
+      '10000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000002',
+      '30000000-0000-4000-8000-000000000003',
+      1
+    );
+  if not found
+     or v_page.user_id <> '40000000-0000-4000-8000-000000000004' then
+    raise exception 'tenant-grant keyset cursor skipped or repeated a canonical scope';
+  end if;
+
+  select count(*) into v_count
+    from private.happy_worker_list_tenant_grants(
+      '60000000-0000-4000-8000-000000000006',
+      '10000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000002',
+      '40000000-0000-4000-8000-000000000004',
+      1
+    );
+  if v_count <> 0 then
+    raise exception 'tenant-grant keyset pagination returned a duplicate trailing row';
+  end if;
+
+  begin
+    perform * from private.happy_worker_list_tenant_grants(
+      '60000000-0000-4000-8000-000000000006',
+      '10000000-0000-4000-8000-000000000001', null, null, 1
+    );
+    raise exception 'partial tenant-grant cursor unexpectedly accepted';
+  exception when invalid_parameter_value then null;
+  end;
+
+  begin
+    perform * from private.happy_worker_list_tenant_grants(
+      '70000000-0000-4000-8000-000000000007', null, null, null, 1
+    );
+    raise exception 'caller-selected foreign principal unexpectedly accepted';
+  exception when insufficient_privilege then null;
+  end;
+
+  begin
+    perform * from private.happy_worker_list_tenant_grants(
+      '60000000-0000-4000-8000-000000000006', null, null, null, 21
+    );
+    raise exception 'unbounded tenant-grant page size unexpectedly accepted';
+  exception when invalid_parameter_value then null;
+  end;
+end
+$tenant_grant_page$;
 SQL
 
 "${psql[@]}" <<'SQL'
