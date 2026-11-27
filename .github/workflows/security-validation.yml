@@ -9,6 +9,7 @@ on:
       - security/durable-file-mutation-grants
       - platform/full-happy-audit-and-integration
       - security/staging-migration-readiness
+      - security/staging-migration-chain
     paths:
       - "src/lib/supabase/**"
       - "src/app/auth/**"
@@ -50,6 +51,7 @@ on:
       - platform/full-happy-audit-and-integration
       - security/staging-migration-readiness
       - fix/durable-verification-persistence-20261124
+      - security/node-postgres-worker-bootstrap
 
 permissions:
   contents: read
