@@ -12,7 +12,7 @@ async function main(): Promise<void> {
     async end() { poolClosed += 1; },
     async connect() {
       poolConnections += 1;
-      throw new Error("A NOT_CONNECTED identity must fail before PostgreSQL access.");
+      throw new Error("An unverified identity must fail before PostgreSQL access.");
     },
   };
   const result = await runNodePostgresWorkerHost({
@@ -48,7 +48,7 @@ async function main(): Promise<void> {
     maxTenants: 2,
   });
 
-  assert.equal(result.batch.status, "NOT_CONNECTED");
+  assert.equal(result.batch.status, "DENIED", "missing trusted identity must be normalized to a fail-closed denial");
   assert.equal(result.batch.tenantsVisited, 0);
   assert.equal(result.shutdownSignal, null);
   assert.equal(poolConnections, 0, "unverified identity must fail before opening PostgreSQL");
