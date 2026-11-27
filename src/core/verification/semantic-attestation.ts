@@ -109,13 +109,26 @@ export class TrustedSemanticAttestationAuthority {
     readonly now?: () => number;
   }): SemanticAttestationCheck {
     const { attestation } = input;
-    if (!attestation || typeof attestation !== "object" ||
+    if (!attestation || typeof attestation !== "object" || Array.isArray(attestation) ||
+        Object.keys(attestation).sort().join(",") !== "payload,signature" ||
         !attestation.payload || typeof attestation.payload !== "object" ||
-        typeof attestation.signature !== "string" || !attestation.signature.trim()) {
+        Array.isArray(attestation.payload) ||
+        typeof attestation.signature !== "string" ||
+        attestation.signature.length === 0 || attestation.signature.length > 16_384 ||
+        !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(attestation.signature)) {
       return { status: "REJECTED", reason: "ATTESTATION_MALFORMED" };
     }
 
     const payload = attestation.payload;
+    const expectedPayloadFields = [
+      "schemaVersion", "verifierId", "keyId", "organizationId", "workspaceId",
+      "userId", "requestId", "missionId", "taskId", "executionRequestId",
+      "evidenceIds", "passedCriteria", "failedCriteria", "partialCriteria",
+      "outcome", "confidence", "summary", "verifiedAt",
+    ].sort().join(",");
+    if (Object.keys(payload).sort().join(",") !== expectedPayloadFields) {
+      return { status: "REJECTED", reason: "ATTESTATION_MALFORMED" };
+    }
     const requiredText = [
       payload.verifierId, payload.keyId, payload.organizationId,
       payload.workspaceId, payload.userId, payload.requestId,
