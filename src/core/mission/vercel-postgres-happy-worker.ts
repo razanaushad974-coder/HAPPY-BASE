@@ -29,6 +29,39 @@ import { AsyncVerificationService } from "../verification/async-service";
  * the supplied pool is live; the session provider verifies session_user and
  * current_user on every broker transaction.
  */
+/**
+ * Server-side environment adapter for the dedicated worker deployment.
+ * Pass process.env only from the trusted server entrypoint; never expose this
+ * environment object to browser code or client-controlled request data.
+ */
+export function createVercelPostgresHappyWorkerFromEnvironment(input: {
+  readonly runtime: VercelPostgresWorkerRuntimeConfig;
+  readonly tenantPersistence: AsyncTenantPersistenceAdapter;
+  readonly provider: IdempotentDispatchProvider;
+  readonly reconciliationProvider?: ProviderStatusReader;
+  readonly leaseMilliseconds?: number;
+  readonly environment?: Readonly<Record<string, string | undefined>>;
+  readonly readSemanticVerifierBearerToken?: () => Promise<string>;
+}) {
+  const environment = input.environment ?? process.env;
+  return createVercelPostgresHappyWorker({
+    runtime: input.runtime,
+    tenantPersistence: input.tenantPersistence,
+    provider: input.provider,
+    ...(input.reconciliationProvider ? { reconciliationProvider: input.reconciliationProvider } : {}),
+    ...(input.leaseMilliseconds !== undefined ? { leaseMilliseconds: input.leaseMilliseconds } : {}),
+    ...(environment.HAPPY_SEMANTIC_VERIFIER_KEYS
+      ? { semanticVerifierKeysJson: environment.HAPPY_SEMANTIC_VERIFIER_KEYS }
+      : {}),
+    ...(environment.HAPPY_SEMANTIC_VERIFIER_ENDPOINT
+      ? { semanticVerifierEndpoint: environment.HAPPY_SEMANTIC_VERIFIER_ENDPOINT }
+      : {}),
+    ...(input.readSemanticVerifierBearerToken
+      ? { readSemanticVerifierBearerToken: input.readSemanticVerifierBearerToken }
+      : {}),
+  });
+}
+
 export function createVercelPostgresHappyWorker(input: {
   readonly runtime: VercelPostgresWorkerRuntimeConfig;
   readonly tenantPersistence: AsyncTenantPersistenceAdapter;
