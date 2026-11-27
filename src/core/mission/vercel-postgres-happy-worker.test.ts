@@ -70,6 +70,7 @@ assert.equal(typeof tenantServices.evidence.capture, "function");
 assert.equal(typeof tenantServices.verification.registerRequest, "function");
 assert.equal(typeof tenantServices.verification.verifyWithExternalVerifier, "function");
 assert.equal(typeof worker.transitionTaskDurable, "function");
+assert.equal(typeof worker.verifyTenantRequest, "function");
 assert.throws(
   () => worker.createTenantVerificationServices({
     organizationId: "org-test",
@@ -109,4 +110,14 @@ assert.equal(configuredWorker.semanticVerifier.status, "CONFIGURED");
 assert.ok(configuredWorker.semanticVerifier.client);
 assert.ok(configuredWorker.semanticVerifier.authority);
 
-console.log("Vercel PostgreSQL HAPPY worker entrypoint: PASS");
+void (async () => {
+  await assert.rejects(
+    worker.verifyTenantRequest({
+      scope: { organizationId: "org-test", workspaceId: "workspace-test", userId: "user-test" },
+      requestId: "verification-request-test",
+      evidenceIds: ["evidence-test"],
+    }),
+    /TRUSTED_SEMANTIC_VERIFIER_NOT_CONFIGURED/,
+  );
+  console.log("Vercel PostgreSQL HAPPY worker entrypoint: PASS");
+})();
