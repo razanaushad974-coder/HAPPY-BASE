@@ -65,6 +65,7 @@ export async function runNodeWorkerBatch(input: {
   const results: Readonly<Record<string, unknown>>[] = [];
   let cursor: string | null = null;
   let tenantsVisited = 0;
+  const seenTenantBindings = new Set<string>();
 
   while (tenantsVisited < input.maxTenants) {
     if (input.signal?.aborted) {
@@ -116,7 +117,10 @@ export async function runNodeWorkerBatch(input: {
       workerScope.workerPrincipalId !== composition.registration.principalId ||
       workerScope.organizationId !== scope.organizationId ||
       workerScope.workspaceId !== scope.workspaceId ||
-      workerScope.userId !== scope.userId
+      workerScope.userId !== scope.userId ||
+      (tenant.nextCursor !== null &&
+        (typeof tenant.nextCursor !== "string" || !tenant.nextCursor.trim() || tenant.nextCursor.length > 1024)) ||
+      tenant.nextCursor === cursor
     ) {
       return {
         status: "DENIED",
@@ -126,6 +130,23 @@ export async function runNodeWorkerBatch(input: {
         reason: "TENANT_GRANT_SCOPE_MISMATCH",
       };
     }
+
+    const tenantBinding = [
+      scope.organizationId,
+      scope.workspaceId,
+      scope.userId,
+      workerScope.workerPrincipalId,
+    ].join("\u001f");
+    if (seenTenantBindings.has(tenantBinding)) {
+      return {
+        status: "DENIED",
+        operation: input.operation,
+        tenantsVisited,
+        results,
+        reason: "TENANT_GRANT_SCAN_DUPLICATE",
+      };
+    }
+    seenTenantBindings.add(tenantBinding);
 
     // Advance only after validating the exact tenant binding. Sequential awaits
     // guarantee concurrency=1 and make cancellation take effect between jobs.
@@ -149,6 +170,15 @@ export async function runNodeWorkerBatch(input: {
         },
         result: { status: "WORKER_OPERATION_FAILED" },
       }));
+      // Stop on any failed tenant operation; do not keep scanning after an
+      // authorization, database, or provider failure whose state may be unclear.
+      return {
+        status: "STOPPED",
+        operation: input.operation,
+        tenantsVisited,
+        results,
+        reason: "WORKER_OPERATION_FAILED",
+      };
     }
   }
 
