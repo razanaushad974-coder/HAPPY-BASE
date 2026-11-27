@@ -87,6 +87,24 @@ export function createVercelPostgresHappyWorker(input: {
       });
     },
 
+    /**
+     * Persists a task transition using the same trusted signing authority that
+     * validates verifier results. Verification-gated completion requires the
+     * exact persisted request/result/evidence chain in the same tenant.
+     */
+    transitionTaskDurable(input: {
+      readonly scope: TenantScope & { readonly userId: string };
+      readonly missionId: string;
+      readonly taskId: string;
+      readonly status: import("./types").MissionTask["status"];
+      readonly verificationRequestId?: string;
+    }) {
+      return orchestrator.transitionTaskDurable({
+        ...input,
+        persistence: input.tenantPersistence,
+      });
+    },
+
     /** Server-configured verifier transport for tenant-scoped verification services. */
     semanticVerifier: Object.freeze({
       authority: semanticAuthority,
