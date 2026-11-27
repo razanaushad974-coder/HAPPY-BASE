@@ -48,12 +48,16 @@ const nodeIdentityResolver = createNodeTrustedWorkerIdentityResolver({
   },
   now: () => 1_800_000_000_000,
 });
-const verifiedNodeIdentity = await nodeIdentityResolver.getVerifiedWorkerIdentity();
-assert.equal(verifiedNodeIdentity.status, "VERIFIED");
-if (verifiedNodeIdentity.status === "VERIFIED") {
-  assert.equal(verifiedNodeIdentity.identity.principal, "node-worker:test");
-  assert.deepEqual(verifiedNodeIdentity.identity.capabilities, ["CONTROL", "VERIFY"]);
-}
+void nodeIdentityResolver.getVerifiedWorkerIdentity().then((verifiedNodeIdentity) => {
+  assert.equal(verifiedNodeIdentity.status, "VERIFIED");
+  if (verifiedNodeIdentity.status === "VERIFIED") {
+    assert.equal(verifiedNodeIdentity.identity.principal, "node-worker:test");
+    assert.deepEqual(verifiedNodeIdentity.identity.capabilities, ["CONTROL", "VERIFY"]);
+  }
+}).catch((error: unknown) => {
+  console.error(error);
+  process.exitCode = 1;
+});
 
 const provider: IdempotentDispatchProvider = {
   providerId: "node-bootstrap-test-provider",
