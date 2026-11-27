@@ -12,6 +12,9 @@ import {
 import { MissionOrchestrator } from "./orchestrator";
 import { createTrustedSemanticAttestationAuthority } from "../verification/semantic-attestation-config";
 import { HttpExternalSemanticVerifierClient } from "../verification/external-verifier-client";
+import { createAsyncHappyStateStore } from "../state/async-factory";
+import { AsyncEvidenceService } from "../evidence/async-service";
+import { AsyncVerificationService } from "../verification/async-service";
 
 /**
  * Server-only one-shot worker entrypoint for a dedicated Vercel deployment.
@@ -59,6 +62,31 @@ export function createVercelPostgresHappyWorker(input: {
   const orchestrator = new MissionOrchestrator(dependencies, semanticAuthority);
 
   return Object.freeze({
+    /**
+     * Creates the tenant-bound verification and evidence services over the
+     * worker's durable tenant adapter. Scope must come from the caller's
+     * already-authenticated/authorized tenant resolution, never request IDs.
+     */
+    createTenantVerificationServices(scope: TenantScope & { readonly userId: string }) {
+      if (!scope.organizationId?.trim() || !scope.workspaceId?.trim() || !scope.userId?.trim()) {
+        throw new TypeError("Complete organization, workspace, and user scope is required.");
+      }
+      const state = createAsyncHappyStateStore(
+        input.tenantPersistence,
+        scope.organizationId,
+        scope.workspaceId,
+        scope.userId,
+      );
+      return Object.freeze({
+        evidence: new AsyncEvidenceService(state),
+        verification: new AsyncVerificationService(
+          state,
+          semanticAuthority,
+          externalSemanticVerifierClient,
+        ),
+      });
+    },
+
     /** Server-configured verifier transport for tenant-scoped verification services. */
     semanticVerifier: Object.freeze({
       authority: semanticAuthority,
