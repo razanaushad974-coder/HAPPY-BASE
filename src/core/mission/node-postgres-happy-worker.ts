@@ -5,6 +5,7 @@ import type { ProviderStatusReader } from "./provider-dispatch-reconciliation";
 import { PostgresWorkerDatabaseBroker } from "./postgres-worker-database-broker";
 import { PostgresWorkerDatabaseSessionProvider } from "./postgres-worker-database-session";
 import { PostgresWorkerPrincipalRegistry } from "./postgres-worker-principal-registry";
+import { PostgresWorkerTenantGrantSource } from "./postgres-worker-tenant-grant-source";
 import { createPostgresHappyWorker } from "./vercel-postgres-happy-worker";
 import type { WorkerRuntimeCompositionDependencies } from "./worker-runtime-composition";
 
@@ -49,6 +50,29 @@ export function createNodePostgresWorkerRuntimeDependencies(
     principalRegistry: new PostgresWorkerPrincipalRegistry(sessions),
     databaseBroker: new PostgresWorkerDatabaseBroker(sessions),
   });
+}
+
+/**
+ * Creates the authoritative PostgreSQL tenant-grant scanner for the same
+ * dedicated worker LOGIN. Its SQL candidate remains ungranted until the
+ * hosted identity and function-owner checks have been approved.
+ */
+export function createNodePostgresWorkerTenantScopeSource(
+  config: NodePostgresWorkerRuntimeConfig,
+): PostgresWorkerTenantGrantSource {
+  if (!config || !config.pool || typeof config.pool.connect !== "function") {
+    throw new TypeError("Node PostgreSQL tenant grant source requires a real PostgreSQL pool.");
+  }
+  const sessions = new PostgresWorkerDatabaseSessionProvider(config.pool, {
+    expectedLoginRole: config.expectedLoginRole,
+    ...(config.statementTimeoutMs !== undefined
+      ? { statementTimeoutMs: config.statementTimeoutMs }
+      : {}),
+    ...(config.idleTransactionTimeoutMs !== undefined
+      ? { idleTransactionTimeoutMs: config.idleTransactionTimeoutMs }
+      : {}),
+  });
+  return new PostgresWorkerTenantGrantSource(sessions);
 }
 
 /** Builds the same durable HAPPY worker API without requiring Vercel OIDC. */
