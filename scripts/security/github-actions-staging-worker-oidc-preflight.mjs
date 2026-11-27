@@ -93,7 +93,8 @@ const now = Math.floor(Date.now() / 1000);
 const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
 if (
   claims.iss !== expected.issuer ||
-  !audiences.includes(expected.audience) ||
+  audiences.length !== 1 ||
+  audiences[0] !== expected.audience ||
   claims.sub !== expected.subject ||
   claims.repository !== expected.repository ||
   String(claims.repository_id) !== expected.repositoryId ||
