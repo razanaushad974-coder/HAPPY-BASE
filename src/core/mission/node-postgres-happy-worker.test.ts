@@ -6,6 +6,7 @@ import type { IdempotentDispatchProvider, TrustedWorkerIdentityResolver } from "
 import {
   createNodePostgresHappyWorker,
   createNodePostgresWorkerRuntimeDependencies,
+  createNodeTrustedWorkerIdentityResolver,
 } from "./node-postgres-happy-worker";
 
 let connectCalls = 0;
