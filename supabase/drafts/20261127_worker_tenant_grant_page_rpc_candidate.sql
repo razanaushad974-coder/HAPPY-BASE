@@ -88,8 +88,10 @@ begin
 end;
 $tenant_grant_page$;
 
+grant create on schema private to happy_worker_registry_owner;
 alter function private.happy_worker_list_tenant_grants(uuid,uuid,uuid,uuid,integer)
   owner to happy_worker_registry_owner;
+revoke create on schema private from happy_worker_registry_owner;
 
 revoke all on function private.happy_worker_list_tenant_grants(uuid,uuid,uuid,uuid,integer)
   from public, anon, authenticated, service_role;
