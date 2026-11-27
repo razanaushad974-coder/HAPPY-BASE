@@ -92,6 +92,9 @@ export function createVercelPostgresHappyWorker(input: {
         readBearerToken: input.readSemanticVerifierBearerToken,
       })
     : null;
+  if (externalSemanticVerifierClient && !semanticAuthority) {
+    throw new TypeError("External semantic verifier requires a trusted public-key allowlist.");
+  }
   const orchestrator = new MissionOrchestrator(dependencies, semanticAuthority);
 
   const createTenantVerificationServices = (scope: TenantScope & { readonly userId: string }) => {
