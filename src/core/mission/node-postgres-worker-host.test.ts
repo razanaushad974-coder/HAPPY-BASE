@@ -8,7 +8,8 @@ async function main(): Promise<void> {
   const listeners = new Map<NodeWorkerShutdownSignal, () => void>();
   let poolClosed = 0;
   let poolConnections = 0;
-  const pool: PgPoolLike = {
+  const pool: PgPoolLike & { end(): Promise<void> } = {
+    async end() { poolClosed += 1; },
     async connect() {
       poolConnections += 1;
       throw new Error("A NOT_CONNECTED identity must fail before PostgreSQL access.");
@@ -23,11 +24,6 @@ async function main(): Promise<void> {
       },
       pool,
       expectedLoginRole: "happy_worker_staging",
-    },
-    poolLifecycle: {
-      async end() {
-        poolClosed += 1;
-      },
     },
     signals: {
       on(signal, listener) { listeners.set(signal, listener); },
