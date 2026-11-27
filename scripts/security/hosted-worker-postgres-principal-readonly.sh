@@ -17,7 +17,7 @@ fi
 # One read-only transaction through the exact staging pooler URL supplied by
 # the protected GitHub Environment secret. Never print the URL or credentials.
 result="$(
-  psql -X -qAt -v ON_ERROR_STOP=1 -F '|' \
+  PGCONNECT_TIMEOUT=5 psql -X -w -qAt -v ON_ERROR_STOP=1 -F '|' \
     "$HAPPY_STAGING_WORKER_DATABASE_URL" \
     -c "BEGIN READ ONLY;
         SELECT session_user,
