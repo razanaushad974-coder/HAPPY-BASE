@@ -150,16 +150,16 @@ export function createVercelPostgresHappyWorker(input: {
      * Performs a read-only recovery assessment using the authenticated worker
      * broker for provider evidence. It never retries or mutates mission state.
      */
-    assessTenantMissionRecovery(input: {
+    assessTenantMissionRecovery(request: {
       readonly scope: TenantScope & { readonly userId: string };
       readonly workerScope: WorkerTenantScope;
       readonly missionId: string;
     }) {
       return orchestrator.assessWorkerMissionRecovery({
-        scope: input.scope,
-        tenantScope: input.workerScope,
+        scope: request.scope,
+        tenantScope: request.workerScope,
         persistence: input.tenantPersistence,
-        missionId: input.missionId,
+        missionId: request.missionId,
       });
     },
 
