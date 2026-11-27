@@ -111,8 +111,9 @@ assert.ok(configuredWorker.semanticVerifier.client);
 assert.ok(configuredWorker.semanticVerifier.authority);
 
 void (async () => {
+  const verifyTenantRequest = worker.verifyTenantRequest;
   await assert.rejects(
-    worker.verifyTenantRequest({
+    verifyTenantRequest({
       scope: { organizationId: "org-test", workspaceId: "workspace-test", userId: "user-test" },
       requestId: "verification-request-test",
       evidenceIds: ["evidence-test"],
