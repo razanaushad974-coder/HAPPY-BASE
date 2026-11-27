@@ -25,11 +25,13 @@ The value is a JSON array. Each entry must contain exactly these string fields:
 - Keep private signing keys exclusively in the external verifier's KMS/HSM or secret manager. Never put a private key in this variable, the HAPPY repository, browser bundles, logs, or task/evidence records.
 - Multiple public keys may be configured during rotation. Add the new public key before the verifier starts signing with it. Retain the old public key for at least the maximum attestation age (five minutes) plus deployment/clock-skew allowance, then remove it.
 - Attestations older than five minutes or with future timestamps are rejected.
+- The HTTPS client caps the serialized request at 512 KiB by default (operator-adjustable up to 2 MiB) and the streamed response at 256 KiB by default (up to 1 MiB). Oversized requests are rejected before network I/O; oversized response streams are cancelled before buffering.
+- Requests use `credentials: omit`, `cache: no-store`, and `redirect: error`; bearer tokens are read server-side and are never forwarded across redirects.
 - An absent/empty value intentionally leaves semantic verification disconnected. Verification-required tasks remain unable to transition to COMPLETED.
 - Malformed JSON, unknown fields, duplicate IDs, invalid PEM, non-RSA keys, and keys below 2048 bits fail worker composition.
 
 ## Operational boundary
 
-This configuration only establishes which public keys HAPPY trusts. It does not authenticate the external verifier's runtime, prove how it evaluated criteria, provision signing keys, rotate keys automatically, or deploy the worker. The verifier service must authenticate its caller, fetch the registered request and exact evidence through authorized tenant-scoped interfaces, evaluate every required criterion, and sign the canonical payload. Its endpoint, identity, authorization, audit trail, and KMS/HSM-backed signing integration remain separate deployment work.
+This configuration only establishes which public keys HAPPY trusts. It does not authenticate the external verifier's runtime, prove how it evaluated criteria, provision signing keys, rotate keys automatically, or deploy the worker. The verifier service must authenticate its caller, fetch the registered request and exact evidence through authorized tenant-scoped interfaces, evaluate every required criterion, and sign the canonical payload. Its endpoint, identity, authorization, audit trail, and KMS/HSM-backed signing integration remain separate deployment work. The worker host must also enforce outbound network egress restrictions to the operator-approved verifier service and block cloud metadata, loopback, link-local, and other unintended internal destinations; a fixed HTTPS URL alone is not a network egress policy.
 
 No staging/production database change or production deployment is performed by this configuration change.
