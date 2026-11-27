@@ -120,7 +120,7 @@ export async function runNodeWorkerBatch(input: {
       workerScope.userId !== scope.userId ||
       (tenant.nextCursor !== null &&
         (typeof tenant.nextCursor !== "string" || !tenant.nextCursor.trim() || tenant.nextCursor.length > 1024)) ||
-      tenant.nextCursor === cursor
+      (tenant.nextCursor !== null && tenant.nextCursor === cursor)
     ) {
       return {
         status: "DENIED",
