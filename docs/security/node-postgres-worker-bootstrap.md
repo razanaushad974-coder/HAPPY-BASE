@@ -71,6 +71,12 @@ The matching SQL is intentionally in `supabase/drafts/20261127_worker_tenant_gra
 
 **Not yet deployable:** an operator must review the draft, verify the hosted dedicated LOGIN using the read-only principal diagnostic, and explicitly grant EXECUTE only to that exact verified LOGIN. Until then, the adapter fails closed because the candidate RPC is absent or ungranted. No tenant grant is created or changed by this code. Each claim/dispatch operation still rechecks the grant and memberships transactionally through the worker RPCs.
 
+## Node process signal supervision
+
+`runNodeWorkerProcess()` wraps exactly one bounded batch. It registers SIGINT/SIGTERM handlers, aborts the batch on the first shutdown signal, waits for the batch promise to settle, removes both listeners, and only then closes the host-owned PostgreSQL pool. It deliberately does not call `process.exit()` or retry provider side effects. The Node host should wire its actual `process` EventEmitter and `Pool.end()` into this adapter, then apply its own hard shutdown deadline and supervisor restart policy.
+
+This is a supervised one-shot worker entrypoint, not a continuous daemon or scheduler service. Continuous scheduling, worker instance provisioning, provider configuration, and host deployment remain external integration work.
+
 ## Security invariants
 
 - The session provider checks PostgreSQL `session_user` and `current_user` on every broker transaction; a mismatched role fails closed.
