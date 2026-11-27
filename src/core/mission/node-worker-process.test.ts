@@ -1,65 +1,72 @@
 import assert from "node:assert/strict";
 import { runNodeWorkerProcess, type NodeWorkerShutdownSignal } from "./node-worker-process";
 
-const listeners = new Map<NodeWorkerShutdownSignal, () => void>();
-let removed = 0;
-let poolClosed = 0;
-let batchSettled = false;
-const signals = {
-  on(signal: NodeWorkerShutdownSignal, listener: () => void) {
-    listeners.set(signal, listener);
-  },
-  off(signal: NodeWorkerShutdownSignal, listener: () => void) {
-    if (listeners.get(signal) === listener) {
-      listeners.delete(signal);
-      removed += 1;
-    }
-  },
-};
-const result = await runNodeWorkerProcess({
-  signals,
-  pool: {
-    async end() {
-      assert.equal(batchSettled, true, "pool must remain open until the batch settles");
-      poolClosed += 1;
+async function main(): Promise<void> {
+  const listeners = new Map<NodeWorkerShutdownSignal, () => void>();
+  let removed = 0;
+  let poolClosed = 0;
+  let batchSettled = false;
+  const signals = {
+    on(signal: NodeWorkerShutdownSignal, listener: () => void) {
+      listeners.set(signal, listener);
     },
-  },
-  async runBatch(signal) {
-    assert.equal(listeners.size, 2, "both shutdown handlers must be registered");
-    listeners.get("SIGTERM")?.();
-    assert.equal(signal.aborted, true);
-    await Promise.resolve();
-    batchSettled = true;
-    return {
-      status: "STOPPED",
-      operation: "READY_TASK",
-      tenantsVisited: 0,
-      results: [],
-    };
-  },
-});
-assert.equal(result.shutdownSignal, "SIGTERM");
-assert.equal(result.batch.status, "STOPPED");
-assert.equal(poolClosed, 1);
-assert.equal(removed, 2);
-assert.equal(listeners.size, 0);
-
-let errorPoolClosed = 0;
-await assert.rejects(
-  () => runNodeWorkerProcess({
-    signals: {
-      on() {},
-      off() {},
+    off(signal: NodeWorkerShutdownSignal, listener: () => void) {
+      if (listeners.get(signal) === listener) {
+        listeners.delete(signal);
+        removed += 1;
+      }
     },
+  };
+  const result = await runNodeWorkerProcess({
+    signals,
     pool: {
-      async end() { errorPoolClosed += 1; },
+      async end() {
+        assert.equal(batchSettled, true, "pool must remain open until the batch settles");
+        poolClosed += 1;
+      },
     },
-    async runBatch() {
-      throw new Error("batch failure");
+    async runBatch(signal) {
+      assert.equal(listeners.size, 2, "both shutdown handlers must be registered");
+      listeners.get("SIGTERM")?.();
+      assert.equal(signal.aborted, true);
+      await Promise.resolve();
+      batchSettled = true;
+      return {
+        status: "STOPPED",
+        operation: "READY_TASK",
+        tenantsVisited: 0,
+        results: [],
+      };
     },
-  }),
-  /batch failure/,
-);
-assert.equal(errorPoolClosed, 1, "pool must close even when batch execution fails");
+  });
+  assert.equal(result.shutdownSignal, "SIGTERM");
+  assert.equal(result.batch.status, "STOPPED");
+  assert.equal(poolClosed, 1);
+  assert.equal(removed, 2);
+  assert.equal(listeners.size, 0);
+  
+  let errorPoolClosed = 0;
+  await assert.rejects(
+    () => runNodeWorkerProcess({
+      signals: {
+        on() {},
+        off() {},
+      },
+      pool: {
+        async end() { errorPoolClosed += 1; },
+      },
+      async runBatch() {
+        throw new Error("batch failure");
+      },
+    }),
+    /batch failure/,
+  );
+  assert.equal(errorPoolClosed, 1, "pool must close even when batch execution fails");
+  
+  console.log("Node worker process supervisor: PASS");
+}
 
-console.log("Node worker process supervisor: PASS");
+void main().catch((error: unknown) => {
+  console.error(error);
+  process.exitCode = 1;
+});
