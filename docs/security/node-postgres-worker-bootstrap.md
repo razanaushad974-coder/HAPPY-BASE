@@ -55,6 +55,14 @@ await pool.end();
 
 The names `trustedHostIdentityResolver`, `canonicalTenantPersistence`, `idempotentProviderAdapter`, and `authorizedWorkerTenantScope` are host-owned adapters, not exported HAPPY globals or preconfigured credentials. The sample is an integration shape, not a runnable deployment by itself.
 
+## Bounded scheduler and graceful stop boundary
+
+`runNodeWorkerBatch()` is the host-independent batch runner. It is deliberately sequential (concurrency 1), validates a maximum of 20 tenant grants per invocation, re-resolves workload identity and the principal registry before each grant scan, validates the returned organization/workspace/user tuple against the worker principal ID, and stops between operations when its AbortSignal is set. It supports one bounded mode per invocation: `READY_TASK` or `PENDING_DISPATCH`.
+
+The required `AuthorizedWorkerTenantScopeSource` is an adapter contract, not a built-in grant implementation. A production host must implement it over the authoritative tenant-scope grant RPC, bound pagination, and return only grants active for the supplied verified identity and registry registration. No request-provided tenant IDs or arbitrary cross-tenant scans are accepted by the batch runner. The worker broker still re-verifies identity and registration immediately before each database operation.
+
+The host owns process signal wiring: on SIGTERM/SIGINT it should abort the batch signal, await the in-flight bounded database/provider operation to settle, close the PostgreSQL pool, and exit. The batch runner does not forcibly cancel a provider request after it has begun, because that could create an ambiguous external side effect. The host must enforce its own process deadline and persist/reconcile ambiguous outcomes through the existing durable protocol.
+
 ## Security invariants
 
 - The session provider checks PostgreSQL `session_user` and `current_user` on every broker transaction; a mismatched role fails closed.
