@@ -15,6 +15,7 @@ import { HttpExternalSemanticVerifierClient } from "../verification/external-ver
 import { createAsyncHappyStateStore } from "../state/async-factory";
 import { AsyncEvidenceService } from "../evidence/async-service";
 import { AsyncVerificationService } from "../verification/async-service";
+import type { WorkerRuntimeCompositionDependencies } from "./worker-runtime-composition";
 
 /**
  * Server-only one-shot worker entrypoint for a dedicated Vercel deployment.
@@ -68,6 +69,23 @@ export function createVercelPostgresHappyWorker(input: {
   readonly provider: IdempotentDispatchProvider;
   readonly reconciliationProvider?: ProviderStatusReader;
   readonly leaseMilliseconds?: number;
+  readonly semanticVerifierKeysJson?: string;
+  readonly semanticVerifierEndpoint?: string;
+  readonly readSemanticVerifierBearerToken?: () => Promise<string>;
+}) {
+  return createPostgresHappyWorker({
+    ...input,
+    dependencies: createVercelPostgresWorkerRuntimeDependencies(input.runtime),
+  });
+}
+
+/** Shared worker composition used by Vercel and host-independent Node.js bootstraps. */
+export function createPostgresHappyWorker(input: {
+  readonly dependencies: WorkerRuntimeCompositionDependencies;
+  readonly tenantPersistence: AsyncTenantPersistenceAdapter;
+  readonly provider: IdempotentDispatchProvider;
+  readonly reconciliationProvider?: ProviderStatusReader;
+  readonly leaseMilliseconds?: number;
   /** Operator-provisioned JSON public-key allowlist; pass from server deployment config only. */
   readonly semanticVerifierKeysJson?: string;
   /** Fixed HTTPS endpoint from server-only deployment configuration. */
@@ -81,7 +99,7 @@ export function createVercelPostgresHappyWorker(input: {
     throw new RangeError("Worker lease must be between 5,000 and 300,000 milliseconds.");
   }
 
-  const dependencies = createVercelPostgresWorkerRuntimeDependencies(input.runtime);
+  const dependencies = input.dependencies;
   const semanticAuthority = createTrustedSemanticAttestationAuthority(input.semanticVerifierKeysJson);
   if (Boolean(input.semanticVerifierEndpoint) !== Boolean(input.readSemanticVerifierBearerToken)) {
     throw new TypeError("External semantic verifier endpoint and server-side bearer-token reader must be configured together.");
