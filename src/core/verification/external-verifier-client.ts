@@ -54,6 +54,7 @@ export interface ExternalSemanticVerifierClientOptions {
   readonly maxEvidenceItems?: number;
   readonly maxEvidenceContentCharacters?: number;
   readonly maxResponseBytes?: number;
+  readonly maxRequestBytes?: number;
 }
 
 /**
@@ -69,6 +70,7 @@ export class HttpExternalSemanticVerifierClient implements ExternalSemanticVerif
   private readonly maxEvidenceItems: number;
   private readonly maxEvidenceContentCharacters: number;
   private readonly maxResponseBytes: number;
+  private readonly maxRequestBytes: number;
 
   constructor(private readonly options: ExternalSemanticVerifierClientOptions) {
     let endpoint: URL;
@@ -88,6 +90,7 @@ export class HttpExternalSemanticVerifierClient implements ExternalSemanticVerif
     this.maxEvidenceItems = options.maxEvidenceItems ?? 50;
     this.maxEvidenceContentCharacters = options.maxEvidenceContentCharacters ?? 16_384;
     this.maxResponseBytes = options.maxResponseBytes ?? 256 * 1024;
+    this.maxRequestBytes = options.maxRequestBytes ?? 512 * 1024;
     if (!Number.isSafeInteger(this.timeoutMilliseconds) ||
         this.timeoutMilliseconds < 1_000 || this.timeoutMilliseconds > 30_000 ||
         !Number.isSafeInteger(this.maxEvidenceItems) ||
@@ -95,7 +98,9 @@ export class HttpExternalSemanticVerifierClient implements ExternalSemanticVerif
         !Number.isSafeInteger(this.maxEvidenceContentCharacters) ||
         this.maxEvidenceContentCharacters < 1 || this.maxEvidenceContentCharacters > 65_536 ||
         !Number.isSafeInteger(this.maxResponseBytes) ||
-        this.maxResponseBytes < 1_024 || this.maxResponseBytes > 1_048_576) {
+        this.maxResponseBytes < 1_024 || this.maxResponseBytes > 1_048_576 ||
+        !Number.isSafeInteger(this.maxRequestBytes) ||
+        this.maxRequestBytes < 1_024 || this.maxRequestBytes > 2_097_152) {
       throw new Error("SEMANTIC_VERIFIER_CLIENT_LIMIT_INVALID");
     }
   }
@@ -136,6 +141,29 @@ export class HttpExternalSemanticVerifierClient implements ExternalSemanticVerif
       };
     });
 
+    const requestBody = JSON.stringify({
+      schemaVersion: 1,
+      scope: {
+        organizationId: scope.organizationId,
+        workspaceId: scope.workspaceId,
+        userId: scope.userId,
+      },
+      request: {
+        id: request.id,
+        missionId: request.missionId,
+        taskId: request.taskId,
+        executionRequestId: request.executionRequestId ?? null,
+        description: request.description,
+        criteria: request.criteria,
+        preferredMethods: request.preferredMethods,
+        requiresEvidence: request.requiresEvidence,
+      },
+      evidence: boundedEvidence,
+    });
+    if (new TextEncoder().encode(requestBody).byteLength > this.maxRequestBytes) {
+      throw new Error("SEMANTIC_VERIFIER_REQUEST_TOO_LARGE");
+    }
+
     const token = await this.options.readBearerToken();
     if (typeof token !== "string" || !token.trim() || token.length > 8_192 ||
         /\s/.test(token.trim())) {
@@ -148,6 +176,8 @@ export class HttpExternalSemanticVerifierClient implements ExternalSemanticVerif
       const response = await this.fetchImpl(this.endpoint, {
         method: "POST",
         redirect: "error",
+        credentials: "omit",
+        cache: "no-store",
         signal: controller.signal,
         headers: {
           authorization: `Bearer ${token.trim()}`,
@@ -155,25 +185,7 @@ export class HttpExternalSemanticVerifierClient implements ExternalSemanticVerif
           accept: "application/json",
           "idempotency-key": request.id,
         },
-        body: JSON.stringify({
-          schemaVersion: 1,
-          scope: {
-            organizationId: scope.organizationId,
-            workspaceId: scope.workspaceId,
-            userId: scope.userId,
-          },
-          request: {
-            id: request.id,
-            missionId: request.missionId,
-            taskId: request.taskId,
-            executionRequestId: request.executionRequestId ?? null,
-            description: request.description,
-            criteria: request.criteria,
-            preferredMethods: request.preferredMethods,
-            requiresEvidence: request.requiresEvidence,
-          },
-          evidence: boundedEvidence,
-        }),
+        body: requestBody,
       });
       if (!response.ok) {
         throw new Error(`SEMANTIC_VERIFIER_HTTP_${response.status}`);
