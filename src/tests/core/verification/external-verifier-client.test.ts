@@ -40,11 +40,13 @@ const evidence: Evidence = {
 async function main(): Promise<void> {
   let requestBody: Record<string, unknown> | undefined;
   let requestHeaders: Headers | undefined;
+  let requestInit: RequestInit | undefined;
   let tokenReads = 0;
   const client = new HttpExternalSemanticVerifierClient({
     endpoint: "https://verifier.example.test/v1/evaluate",
     readBearerToken: async () => { tokenReads += 1; return "server-side-token"; },
     fetchImpl: async (_input, init) => {
+      requestInit = init;
       requestHeaders = new Headers(init?.headers);
       requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
       return new Response(JSON.stringify({
@@ -57,6 +59,8 @@ async function main(): Promise<void> {
   assert.equal(result.signature, "signed-envelope");
   assert.equal(requestHeaders?.get("authorization"), "Bearer server-side-token");
   assert.equal(requestHeaders?.get("idempotency-key"), request.id);
+  assert.equal(requestInit?.credentials, "omit");
+  assert.equal(requestInit?.cache, "no-store");
   assert.equal(tokenReads, 1);
   const sentEvidence = (requestBody?.evidence as Array<Record<string, unknown>>)[0];
   assert.equal(sentEvidence.id, evidence.id);
@@ -120,6 +124,26 @@ async function main(): Promise<void> {
     () => oversizedResponseClient.evaluate({ scope, request, evidence: [evidence] }),
     /RESPONSE_TOO_LARGE/,
   );
+
+  let oversizedRequestFetchCalled = false;
+  const oversizedRequestClient = new HttpExternalSemanticVerifierClient({
+    endpoint: "https://verifier.example.test/v1/evaluate",
+    readBearerToken: async () => "server-side-token",
+    maxRequestBytes: 1_024,
+    fetchImpl: async () => {
+      oversizedRequestFetchCalled = true;
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+  await assert.rejects(
+    () => oversizedRequestClient.evaluate({
+      scope,
+      request,
+      evidence: [{ ...evidence, content: "x".repeat(1_100) }],
+    }),
+    /REQUEST_TOO_LARGE/,
+  );
+  assert.equal(oversizedRequestFetchCalled, false);
 
   let oversizedStreamCancelled = false;
   const chunkedOversizedResponseClient = new HttpExternalSemanticVerifierClient({
