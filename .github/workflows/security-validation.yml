@@ -117,7 +117,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - name: PostgreSQL RLS and CAS integration
         run: bash scripts/security/postgres-tenant-persistence-integration.sh
-      - name: PostgreSQL worker principal registry integration
+      - name: PostgreSQL worker principal and tenant-grant page integration
         run: bash scripts/security/postgres-worker-principal-registry-integration.sh
         env:
           DATABASE_URL: postgresql://postgres:happy_test@localhost:5432/happy_test
