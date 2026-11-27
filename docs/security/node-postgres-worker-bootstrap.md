@@ -69,7 +69,9 @@ The host owns process signal wiring: on SIGTERM/SIGINT it should abort the batch
 
 The matching SQL is intentionally in `supabase/drafts/20261127_worker_tenant_grant_page_rpc_candidate.sql`, not in the migration chain. The SECURITY DEFINER function derives the principal from PostgreSQL `session_user`, checks the exact principal selector, lists only enabled CONTROL grants with active organization/workspace and active organization/workspace memberships, locks the relevant rows, and bounds each page to 1–20 rows. The draft transfers ownership to the existing NOLOGIN registry-owner role and withholds EXECUTE grants.
 
-**Not yet deployable:** an operator must review the draft, verify the hosted dedicated LOGIN using the read-only principal diagnostic, and explicitly grant EXECUTE only to that exact verified LOGIN. Until then, the adapter fails closed because the candidate RPC is absent or ungranted. No tenant grant is created or changed by this code. Each claim/dispatch operation still rechecks the grant and memberships transactionally through the worker RPCs.
+**Isolated PostgreSQL 17 integration:** `scripts/security/postgres-worker-principal-registry-integration.sh` applies this candidate only to the disposable CI database, grants EXECUTE only to its test-only `happy_worker_dispatch` LOGIN, and verifies real `session_user` identity, worker-only EXECUTE ACL, first/next/empty keyset pages, bounded page size, partial-cursor rejection, principal-selector mismatch rejection, and immediate exclusion after workspace-membership revocation. The harness uses the same narrow SELECT/UPDATE column privileges as the owner-privilege candidate.
+
+**Not yet deployable to Supabase:** an operator must review the draft, verify the hosted dedicated LOGIN using the read-only principal diagnostic, and explicitly grant EXECUTE only to that exact verified LOGIN. The isolated CI grant is disposable and is not in the SQL draft. No hosted tenant grant is created or changed by this code. Each claim/dispatch operation still rechecks the grant and memberships transactionally through the worker RPCs.
 
 ## Node process signal supervision
 
@@ -90,7 +92,7 @@ This is a supervised one-shot worker entrypoint, not a continuous daemon or sche
 
 - No concrete host identity provider or cryptographic workload credential source has been provisioned.
 - No `pg` package or database URL has been added to the web application's dependencies.
-- No trusted tenant-grant scanner / cross-tenant polling scheduler is wired. The host must resolve an authorized tenant scope and invoke one bounded operation; the current worker API does not authorize arbitrary tenant enumeration.
+- The tenant-grant source and bounded scheduler are implemented at source level. No continuous cross-tenant polling daemon or deployed host scheduler is wired; the Node host must schedule bounded batches after the reviewed tenant-grant RPC is deployed.
 - No continuous daemon loop, process supervisor, graceful-shutdown controller, or concurrency controller is supplied. The host should schedule bounded one-shot work and enforce its own shutdown/concurrency policy.
 - Hosted pooler identity verification, staging RPC deployment, live database integration tests, and any production deployment remain separate approval-gated steps.
 
@@ -102,4 +104,4 @@ Run the source-level bootstrap regression test:
 npx --yes tsx@4.23.15 src/core/mission/node-postgres-happy-worker.test.ts
 ```
 
-A passing construction test proves dependency composition and fail-closed configuration validation only. It does not prove a real PostgreSQL connection or a hosted worker dispatch.
+A passing construction test proves dependency composition and fail-closed configuration validation only. The isolated PostgreSQL 17 CI harness additionally exercises the tenant-grant SQL candidate against real PostgreSQL roles and RLS; it does not prove Supabase pooler identity behavior or a hosted worker dispatch.
