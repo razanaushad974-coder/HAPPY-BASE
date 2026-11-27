@@ -107,9 +107,9 @@ export function createVercelPostgresHappyWorker(input: {
         throw new TypeError("External verification requires a bounded request ID and 1 to 50 bounded evidence IDs.");
       }
       const scope = Object.freeze({
-        organizationId: input.scope?.organizationId,
-        workspaceId: input.scope?.workspaceId,
-        userId: input.scope?.userId,
+        organizationId: input.scope.organizationId,
+        workspaceId: input.scope.workspaceId,
+        userId: input.scope.userId,
       });
       const services = createTenantVerificationServices(scope);
       return services.verification.verifyWithExternalVerifier(
