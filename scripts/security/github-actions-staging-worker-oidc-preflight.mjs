@@ -20,7 +20,7 @@ const expected = {
   repositoryId: "1368712889",
   ownerId: "285602201",
   ref: "refs/heads/docs/staging-worker-activation-runbook",
-  workflowRef: "razanaushad974-coder/HAPPY-BASE/.github/workflows/happy-staging-worker-oidc-preflight.yml@refs/heads/docs/staging-worker-activation-runbook",
+  workflowRefs: [\n    "razanaushad974-coder/HAPPY-BASE/.github/workflows/happy-staging-worker-oidc-preflight.yml@refs/heads/docs/staging-worker-activation-runbook",\n    "razanaushad974-coder/HAPPY-BASE/.github/workflows/happy-staging-worker-db-principal-preflight.yml@refs/heads/docs/staging-worker-activation-runbook",\n  ],
   subject: "repo:razanaushad974-coder@285602201/HAPPY-BASE@1368712889:environment:happy-staging-worker",
   environment: "happy-staging-worker",
 };
@@ -99,7 +99,7 @@ const checks = [
   ["repository_id", String(claims.repository_id) === expected.repositoryId],
   ["repository_owner_id", String(claims.repository_owner_id) === expected.ownerId],
   ["ref", claims.ref === expected.ref],
-  ["workflow_ref", claims.workflow_ref === expected.workflowRef],
+  ["workflow_ref", expected.workflowRefs.includes(claims.workflow_ref)],
   ["environment", claims.environment === expected.environment],
   ["event_name", claims.event_name === "push" || claims.event_name === "workflow_dispatch"],
   ["iat", Number.isSafeInteger(claims.iat) && claims.iat <= now + 30],
