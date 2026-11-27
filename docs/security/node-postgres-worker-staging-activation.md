@@ -183,6 +183,8 @@ A first staging-host candidate is now implemented as an **ephemeral GitHub-hoste
 - Pinned ref: `refs/heads/docs/staging-worker-activation-runbook`.
 - Pinned immutable subject: `repo:razanaushad974-coder@285602201/HAPPY-BASE@1368712889:environment:happy-staging-worker`.
 
+The first successful runner validation is GitHub Actions run #? — PASS on commit `18219be38b901ebebca2de7f4fefc49da463fe63` (run ID `46020351704`): signature verification and all pinned claims passed. Earlier attempts failed closed because the expected subject used the legacy mutable repository-name form; the actual immutable subject includes owner/repository IDs, which are now pinned exactly. The successful run confirms only GitHub OIDC identity, not database access or worker activation.
+
 The preflight obtains a short-lived GitHub Actions OIDC token from the runner-provided request endpoint, verifies its RS256 signature against GitHub's published JWKS, and checks exact issuer, single audience, subject, repository IDs, ref, workflow ref, environment, event type, and token time bounds. It prints only non-secret identity labels and explicit `database_connected=false` / `worker_dispatch_executed=false` markers.
 
 This is a **candidate host identity proof only**. It does not:
