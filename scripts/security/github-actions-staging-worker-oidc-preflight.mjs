@@ -20,7 +20,10 @@ const expected = {
   repositoryId: "1368712889",
   ownerId: "285602201",
   ref: "refs/heads/docs/staging-worker-activation-runbook",
-  workflowRefs: [\n    "razanaushad974-coder/HAPPY-BASE/.github/workflows/happy-staging-worker-oidc-preflight.yml@refs/heads/docs/staging-worker-activation-runbook",\n    "razanaushad974-coder/HAPPY-BASE/.github/workflows/happy-staging-worker-db-principal-preflight.yml@refs/heads/docs/staging-worker-activation-runbook",\n  ],
+  workflowRefs: [
+    "razanaushad974-coder/HAPPY-BASE/.github/workflows/happy-staging-worker-oidc-preflight.yml@refs/heads/docs/staging-worker-activation-runbook",
+    "razanaushad974-coder/HAPPY-BASE/.github/workflows/happy-staging-worker-db-principal-preflight.yml@refs/heads/docs/staging-worker-activation-runbook",
+  ],
   subject: "repo:razanaushad974-coder@285602201/HAPPY-BASE@1368712889:environment:happy-staging-worker",
   environment: "happy-staging-worker",
 };
@@ -30,7 +33,7 @@ if (
   process.env.GITHUB_REPOSITORY_ID !== expected.repositoryId ||
   process.env.GITHUB_REPOSITORY_OWNER_ID !== expected.ownerId ||
   process.env.GITHUB_REF !== expected.ref ||
-  process.env.GITHUB_WORKFLOW_REF !== expected.workflowRef
+  !expected.workflowRefs.includes(process.env.GITHUB_WORKFLOW_REF)
 ) {
   throw new Error("GitHub runner repository/ref/workflow context does not match the pinned staging worker.");
 }
