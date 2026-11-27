@@ -92,7 +92,7 @@ export function createVercelPostgresHappyWorker(input: {
      * validates verifier results. Verification-gated completion requires the
      * exact persisted request/result/evidence chain in the same tenant.
      */
-    transitionTaskDurable(input: {
+    transitionTaskDurable(transition: {
       readonly scope: TenantScope & { readonly userId: string };
       readonly missionId: string;
       readonly taskId: string;
@@ -100,7 +100,7 @@ export function createVercelPostgresHappyWorker(input: {
       readonly verificationRequestId?: string;
     }) {
       return orchestrator.transitionTaskDurable({
-        ...input,
+        ...transition,
         persistence: input.tenantPersistence,
       });
     },
