@@ -25,6 +25,8 @@ export class AsyncVerificationService {
   constructor(
     private readonly state: AsyncHappyStateStore,
     private readonly semanticAttestationAuthority: TrustedSemanticAttestationAuthority | null = null,
+    /** Operator-configured client; never select a verifier endpoint from request data. */
+    private readonly externalSemanticVerifierClient: ExternalSemanticVerifierClient | null = null,
   ) {}
 
   async registerRequest(request: VerificationRequest): Promise<VerificationRequest> {
@@ -84,9 +86,8 @@ export class AsyncVerificationService {
   async verifyWithExternalVerifier(
     requestId: string,
     observedEvidenceIds: string[],
-    client: ExternalSemanticVerifierClient,
   ): Promise<VerificationResult> {
-    if (!this.semanticAttestationAuthority) {
+    if (!this.semanticAttestationAuthority || !this.externalSemanticVerifierClient) {
       throw new Error("TRUSTED_SEMANTIC_VERIFIER_NOT_CONFIGURED");
     }
     const normalizedId = requestId.trim();
@@ -131,7 +132,7 @@ export class AsyncVerificationService {
       };
     });
 
-    const attestation = await client.evaluate({
+    const attestation = await this.externalSemanticVerifierClient.evaluate({
       scope: this.state.getTenantScope(),
       request: evaluation.request,
       evidence: evaluation.evidence,
