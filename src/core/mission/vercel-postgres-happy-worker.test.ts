@@ -120,6 +120,14 @@ void (async () => {
     }),
     /same tenant scope/,
   );
+  assert.throws(
+    () => worker.verifyTenantRequest({
+      scope: { organizationId: "org-test", workspaceId: "workspace-test", userId: "user-test" },
+      requestId: "verification-request-test",
+      evidenceIds: Array.from({ length: 51 }, (_, index) => `evidence-${index}`),
+    }),
+    /1 to 50 bounded evidence IDs/,
+  );
   const verifyTenantRequest = worker.verifyTenantRequest;
   await assert.rejects(
     verifyTenantRequest({
