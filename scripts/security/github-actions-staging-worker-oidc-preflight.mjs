@@ -111,6 +111,7 @@ const checks = [
 const mismatches = checks.filter(([, ok]) => !ok).map(([name]) => name);
 if (mismatches.length) {
   console.error(`OIDC_POLICY_MISMATCH_FIELDS=${mismatches.join(",")}`);
+  if (mismatches.includes("subject")) console.error(`OIDC_SUBJECT_ACTUAL=${String(claims.sub ?? "").slice(0, 256)}`);
   throw new Error("Verified JWT claims do not match the exact HAPPY staging worker policy.");
 }
 
