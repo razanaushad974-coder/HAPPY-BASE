@@ -6,7 +6,7 @@ This runbook converts the source-level Node worker into a controlled staging act
 
 ## Current source-level evidence
 
-The following has passed on PR #14 head `39529a5ef90fad80b704f83f2eca8110951e2396`, CI run #1863:
+The following source-level and isolated integration checks have passed on PR #15 head `8a82904ed78d7bd1d061fab38181602d878a6123`, CI run #1866 (30/30 steps; GitHub Actions conclusion: success):
 
 - TypeScript and the complete security harness suite.
 - Async tenant persistence/provider contracts.
@@ -17,6 +17,8 @@ The following has passed on PR #14 head `39529a5ef90fad80b704f83f2eca8110951e239
 - Orchestration tests, ESLint, dependency audit, and production build.
 
 These checks validate source behavior and isolated PostgreSQL fixtures. They do **not** validate a hosted Supabase pooler, hosted identity issuer, staging database, or real external provider dispatch.
+
+CI run #1866 also validated the updated staging-host discovery checkpoint in this runbook. The run is a successful repository validation only; it does not satisfy any hosted activation gate below.
 
 ## Activation gates — keep this order
 
