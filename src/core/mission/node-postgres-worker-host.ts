@@ -20,8 +20,9 @@ import type { ProviderStatusReader } from "./provider-dispatch-reconciliation";
  * together; it never provisions credentials, roles, grants, or database state.
  */
 export async function runNodePostgresWorkerHost(input: {
-  readonly runtime: NodePostgresWorkerRuntimeConfig;
-  readonly poolLifecycle: NodeWorkerPoolLifecycle;
+  readonly runtime: Omit<NodePostgresWorkerRuntimeConfig, "pool"> & {
+    readonly pool: NodePostgresWorkerRuntimeConfig["pool"] & NodeWorkerPoolLifecycle;
+  };
   readonly signals: NodeWorkerSignalEmitter;
   readonly tenantPersistence: AsyncTenantPersistenceAdapter;
   readonly provider: IdempotentDispatchProvider;
@@ -30,7 +31,7 @@ export async function runNodePostgresWorkerHost(input: {
   readonly maxTenants: number;
   readonly leaseMilliseconds?: number;
 }): Promise<NodeWorkerProcessResult> {
-  if (!input || !input.runtime || !input.poolLifecycle || !input.signals) {
+  if (!input || !input.runtime || !input.runtime.pool || typeof input.runtime.pool.end !== "function" || !input.signals) {
     throw new TypeError("Node PostgreSQL worker host requires runtime, pool lifecycle, and process signals.");
   }
 
@@ -46,7 +47,8 @@ export async function runNodePostgresWorkerHost(input: {
 
   return runNodeWorkerProcess({
     signals: input.signals,
-    pool: input.poolLifecycle,
+    // The exact pool used by the broker is also the pool closed at shutdown.
+    pool: input.runtime.pool,
     runBatch: (signal) => runNodeWorkerBatch({
       dependencies,
       tenantScopeSource,
