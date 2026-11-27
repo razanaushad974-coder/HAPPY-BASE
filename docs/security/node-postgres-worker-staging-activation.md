@@ -196,6 +196,20 @@ This is a **candidate host identity proof only**. It does not:
 
 The workflow intentionally has no database URL, database secret, provider credential, or deployment permission. Do not add those until the identity-to-database bridge, exact staging DB principal, SQL owner/ACL, and separate staging approval have been reviewed. A successful preflight must be recorded as **OIDC identity PASS only**, never as worker activation.
 
+## Read-only staging PostgreSQL principal diagnostic
+
+A second, **manual-only** workflow is now available: `.github/workflows/happy-staging-worker-db-principal-preflight.yml`. It first revalidates the same pinned GitHub OIDC identity, then runs `scripts/security/hosted-worker-postgres-principal-readonly.sh` only when the GitHub Environment secret `HAPPY_STAGING_WORKER_DATABASE_URL` exists.
+
+The diagnostic uses the supplied staging pooler URL for exactly one `BEGIN READ ONLY` / `SELECT` / `ROLLBACK` transaction. It requires:
+- `session_user = happy_worker_dispatch`;
+- `current_user = happy_worker_dispatch`;
+- `current_setting('role') = none`;
+- `transaction_read_only = on`.
+
+If the secret is absent, it prints `BLOCKED_SECRET_NOT_CONFIGURED` and does not attempt a database connection. If configured, the URL must point only to the approved staging pooler and authenticate as the exact dedicated worker LOGIN. The secret value must be added directly by the operator in GitHub Environment `happy-staging-worker`; never paste it into ChatGPT, PRs, workflow logs, or source control. Configure required environment reviewers before adding the secret or manually dispatching the diagnostic.
+
+This workflow is still read-only. It does not create roles, tables, migrations, grants, registry records, tenant fixtures, or dispatch tasks. A PASS proves only the PostgreSQL principal through that exact connection path; it does not authorize SQL candidate deployment or worker activation.
+
 ## Current outstanding external dependencies
 
 - Staging worker database URL/secret is not confirmed provisioned.
