@@ -6,7 +6,7 @@ This runbook converts the source-level Node worker into a controlled staging act
 
 ## Current source-level evidence
 
-The following source-level and isolated integration checks passed on the earlier PR #15 head `8a82904ed78d7bd1d061fab38181602d878a6123`, CI run #1866 (30/30 steps; GitHub Actions conclusion: success). The current PR head is `81e57f721fbb8fefe4887e56fd9822317c023c1d`; its validation run #1868 is still in progress, so the latest documentation change is not yet CI-verified:
+The source-level and isolated integration checks passed on application-code head `2f8f2bb28fe6b33f1315956d8fc8587d6c3c307c`, GitHub Actions run #1869 (all workflow steps, including production build; conclusion: success). The latest PR #15 head is `3a5cbaf17d7ee3f1b124a5cc0344ff36d0a41d3c`; that follow-up changes documentation examples only (staging DB secret variable and exact worker LOGIN), with no application source, tests, SQL, or workflow changes. No separate CI run was returned for that documentation-only commit:
 
 - TypeScript and the complete security harness suite.
 - Async tenant persistence/provider contracts.
@@ -18,7 +18,7 @@ The following source-level and isolated integration checks passed on the earlier
 
 These checks validate source behavior and isolated PostgreSQL fixtures. They do **not** validate a hosted Supabase pooler, hosted identity issuer, staging database, or real external provider dispatch.
 
-CI run #1866 also validated the updated staging-host discovery checkpoint in this runbook. The run is a successful repository validation only; it does not satisfy any hosted activation gate below.
+CI run #1869 validated the application-code head before the documentation-only follow-up. Earlier run #1866 (30/30 steps) also passed on a prior head. These are successful repository validations only; neither satisfies any hosted activation gate below.
 
 ## Activation gates — keep this order
 
