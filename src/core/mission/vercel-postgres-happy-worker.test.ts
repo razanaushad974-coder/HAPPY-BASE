@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 
-import { createVercelPostgresHappyWorker } from "./vercel-postgres-happy-worker";
+import {
+  createVercelPostgresHappyWorker,
+  createVercelPostgresHappyWorkerFromEnvironment,
+} from "./vercel-postgres-happy-worker";
 import type { PgPoolLike } from "../persistence/adapters/postgres-tenant-adapter";
 import type { AsyncTenantPersistenceAdapter } from "../persistence/async-tenant-repository";
 import type { IdempotentDispatchProvider } from "./durable-dispatch-worker-contract";
@@ -110,6 +113,33 @@ const configuredWorker = createVercelPostgresHappyWorker({
 assert.equal(configuredWorker.semanticVerifier.status, "CONFIGURED");
 assert.ok(configuredWorker.semanticVerifier.client);
 assert.ok(configuredWorker.semanticVerifier.authority);
+
+const environmentWorker = createVercelPostgresHappyWorkerFromEnvironment({
+  runtime,
+  tenantPersistence,
+  provider,
+  environment: {
+    HAPPY_SEMANTIC_VERIFIER_ENDPOINT: "https://verifier.example.test/evaluate",
+    HAPPY_SEMANTIC_VERIFIER_KEYS: JSON.stringify([{
+      verifierId: "verifier-test",
+      keyId: "key-test",
+      publicKeyPem: publicKey.export({ type: "spki", format: "pem" }),
+    }]),
+  },
+  readSemanticVerifierBearerToken: async () => "server-only-test-token",
+});
+assert.equal(environmentWorker.semanticVerifier.status, "CONFIGURED");
+assert.throws(
+  () => createVercelPostgresHappyWorkerFromEnvironment({
+    runtime,
+    tenantPersistence,
+    provider,
+    environment: {
+      HAPPY_SEMANTIC_VERIFIER_ENDPOINT: "https://verifier.example.test/evaluate",
+    },
+  }),
+  /must be configured together/,
+);
 
 void (async () => {
   await assert.rejects(
