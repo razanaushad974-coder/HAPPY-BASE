@@ -134,17 +134,22 @@ export class TrustedSemanticAttestationAuthority {
       payload.workspaceId, payload.userId, payload.requestId,
       payload.missionId, payload.taskId, payload.summary, payload.verifiedAt,
     ];
+    const boundedIds = (values: unknown): values is string[] =>
+      Array.isArray(values) && values.length <= 100 &&
+      values.every((id) => typeof id === "string" && id.trim().length > 0 && id.length <= 256);
     if (payload.schemaVersion !== 1 ||
         requiredText.some((value) => typeof value !== "string" || !value.trim()) ||
-        (payload.executionRequestId !== null && typeof payload.executionRequestId !== "string") ||
-        !Array.isArray(payload.evidenceIds) ||
-        !payload.evidenceIds.every((id) => typeof id === "string" && id.trim()) ||
-        !Array.isArray(payload.passedCriteria) ||
-        !payload.passedCriteria.every((id) => typeof id === "string" && id.trim()) ||
-        !Array.isArray(payload.failedCriteria) ||
-        !payload.failedCriteria.every((id) => typeof id === "string" && id.trim()) ||
-        !Array.isArray(payload.partialCriteria) ||
-        !payload.partialCriteria.every((id) => typeof id === "string" && id.trim()) ||
+        payload.verifierId.length > 128 || payload.keyId.length > 128 ||
+        payload.organizationId.length > 128 || payload.workspaceId.length > 128 ||
+        payload.userId.length > 128 || payload.requestId.length > 256 ||
+        payload.missionId.length > 256 || payload.taskId.length > 256 ||
+        payload.summary.length > 2_048 || payload.verifiedAt.length > 64 ||
+        (payload.executionRequestId !== null &&
+          (typeof payload.executionRequestId !== "string" || payload.executionRequestId.length > 256)) ||
+        !boundedIds(payload.evidenceIds) ||
+        !boundedIds(payload.passedCriteria) ||
+        !boundedIds(payload.failedCriteria) ||
+        !boundedIds(payload.partialCriteria) ||
         !["PASSED", "FAILED", "PARTIAL"].includes(payload.outcome) ||
         !["HIGH", "MEDIUM", "LOW"].includes(payload.confidence)) {
       return { status: "REJECTED", reason: "ATTESTATION_MALFORMED" };
@@ -214,10 +219,22 @@ export class TrustedSemanticAttestationAuthority {
 
     let validSignature = false;
     try {
+      const trustedPublicKey = createPublicKey(key.publicKeyPem);
+      const expectedSignatureBytes =
+        (trustedPublicKey.asymmetricKeyDetails?.modulusLength ?? 0) / 8;
+      const signatureBytes = Buffer.from(attestation.signature, "base64");
+      if (signatureBytes.length !== expectedSignatureBytes ||
+          signatureBytes.toString("base64") !== attestation.signature) {
+        return { status: "REJECTED", reason: "ATTESTATION_MALFORMED" };
+      }
+      const canonicalPayload = canonicalSemanticAttestationPayload(payload);
+      if (Buffer.byteLength(canonicalPayload, "utf8") > 32_768) {
+        return { status: "REJECTED", reason: "ATTESTATION_MALFORMED" };
+      }
       const verifier = createVerify("RSA-SHA256");
-      verifier.update(canonicalSemanticAttestationPayload(payload));
+      verifier.update(canonicalPayload);
       verifier.end();
-      validSignature = verifier.verify(key.publicKeyPem, attestation.signature, "base64");
+      validSignature = verifier.verify(trustedPublicKey, signatureBytes);
     } catch {
       validSignature = false;
     }
