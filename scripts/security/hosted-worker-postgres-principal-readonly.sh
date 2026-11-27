@@ -5,7 +5,8 @@ set +x
 if [[ -z "${HAPPY_STAGING_WORKER_DATABASE_URL:-}" ]]; then
   echo "HAPPY_STAGING_DB_PRINCIPAL_PREFLIGHT=BLOCKED_SECRET_NOT_CONFIGURED"
   echo "No database connection was attempted."
-  exit 0
+  # A blocked gate must not produce a green workflow run.
+  exit 3
 fi
 
 if ! command -v psql >/dev/null 2>&1; then
