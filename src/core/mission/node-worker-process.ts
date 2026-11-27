@@ -21,9 +21,10 @@ export interface NodeWorkerProcessResult {
  *
  * SIGINT/SIGTERM aborts the batch between tenant operations. The supervisor
  * waits for the current bounded operation to settle before closing the pool,
- * then removes both process listeners. It never calls process.exit(), retries
- * ambiguous provider effects, or closes the pool while a broker transaction is
- * still running. The host owns its hard process deadline and restart policy.
+ * then removes any listeners it successfully registered. It never calls
+ * process.exit(), retries ambiguous provider effects, or closes the pool while
+ * a broker transaction is still running. The host owns its hard process
+ * deadline and restart policy.
  */
 export async function runNodeWorkerProcess(input: {
   readonly signals: NodeWorkerSignalEmitter;
@@ -49,24 +50,37 @@ export async function runNodeWorkerProcess(input: {
   };
   const onInterrupt = () => requestShutdown("SIGINT");
   const onTerminate = () => requestShutdown("SIGTERM");
+  let interruptRegistered = false;
+  let terminateRegistered = false;
+  let primaryError: unknown;
 
-  input.signals.on("SIGINT", onInterrupt);
-  input.signals.on("SIGTERM", onTerminate);
-
-  let batchError: unknown;
   try {
+    input.signals.on("SIGINT", onInterrupt);
+    interruptRegistered = true;
+    input.signals.on("SIGTERM", onTerminate);
+    terminateRegistered = true;
     const batch = await input.runBatch(controller.signal);
     return Object.freeze({ batch, shutdownSignal });
   } catch (error) {
-    batchError = error;
+    primaryError = error;
     throw error;
   } finally {
-    input.signals.off("SIGINT", onInterrupt);
-    input.signals.off("SIGTERM", onTerminate);
+    let cleanupError: unknown;
+    if (terminateRegistered) {
+      try { input.signals.off("SIGTERM", onTerminate); }
+      catch (error) { cleanupError ??= error; }
+    }
+    if (interruptRegistered) {
+      try { input.signals.off("SIGINT", onInterrupt); }
+      catch (error) { cleanupError ??= error; }
+    }
     try {
       await input.pool.end();
-    } catch (closeError) {
-      if (batchError === undefined) throw closeError;
+    } catch (error) {
+      cleanupError ??= error;
+    }
+    if (primaryError === undefined && cleanupError !== undefined) {
+      throw cleanupError;
     }
   }
 }
