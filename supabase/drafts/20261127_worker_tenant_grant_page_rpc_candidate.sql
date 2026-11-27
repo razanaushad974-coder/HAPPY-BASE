@@ -40,9 +40,11 @@ declare
 begin
   if p_worker_principal_id is null
      or p_limit is null or p_limit < 1 or p_limit > 20
-     or ((p_after_organization_id is null)::integer
-       + (p_after_workspace_id is null)::integer
-       + (p_after_user_id is null)::integer) not in (0,3) then
+     or not (
+       (p_after_organization_id is null and p_after_workspace_id is null and p_after_user_id is null)
+       or
+       (p_after_organization_id is not null and p_after_workspace_id is not null and p_after_user_id is not null)
+     ) then
     raise exception 'INVALID_WORKER_TENANT_GRANT_PAGE' using errcode = '22023';
   end if;
 
