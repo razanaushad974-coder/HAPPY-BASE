@@ -41,6 +41,7 @@ on:
       - "supabase/drafts/**"
       - "supabase/migrations/**"
       - "docs/architecture/**"
+      - "docs/security/**"
       - "package.json"
       - "package-lock.json"
       - "tsconfig.json"
@@ -52,6 +53,7 @@ on:
       - security/staging-migration-readiness
       - fix/durable-verification-persistence-20261124
       - security/node-postgres-worker-bootstrap
+      - docs/staging-worker-activation-runbook
 
 permissions:
   contents: read
