@@ -103,6 +103,9 @@ export async function runNodeWorkerBatch(input: {
         reason: "TENANT_GRANT_RESOLUTION_FAILED",
       };
     }
+    if (input.signal?.aborted) {
+      return { status: "STOPPED", operation: input.operation, tenantsVisited, results };
+    }
     if (!tenant) {
       return { status: "COMPLETED", operation: input.operation, tenantsVisited, results };
     }
