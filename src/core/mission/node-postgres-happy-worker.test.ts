@@ -20,6 +20,40 @@ const identityProvider: TrustedWorkerIdentityResolver = {
     return { status: "NOT_CONNECTED" };
   },
 };
+const nodeIdentityResolver = createNodeTrustedWorkerIdentityResolver({
+  credentialSource: { async getCredential() { return "platform-issued-test-token"; } },
+  credentialVerifier: {
+    async verifyCredential() {
+      return {
+        issuer: "https://issuer.example.test",
+        subject: "node-worker:test",
+        audience: "happy-worker",
+        issuedAt: 1_799_999_900,
+        notBefore: 1_799_999_900,
+        expiresAt: 1_800_000_100,
+        tokenId: "test-jti",
+        environment: "staging",
+        capabilities: ["CONTROL", "VERIFY"],
+      };
+    },
+  },
+  policy: {
+    issuer: "https://issuer.example.test",
+    audience: "happy-worker",
+    environment: "staging",
+    allowedSubjects: ["node-worker:test"],
+    allowedCapabilities: ["CONTROL", "VERIFY"],
+    maxCredentialLifetimeSeconds: 300,
+  },
+  now: () => 1_800_000_000_000,
+});
+const verifiedNodeIdentity = await nodeIdentityResolver.getVerifiedWorkerIdentity();
+assert.equal(verifiedNodeIdentity.status, "VERIFIED");
+if (verifiedNodeIdentity.status === "VERIFIED") {
+  assert.equal(verifiedNodeIdentity.identity.principal, "node-worker:test");
+  assert.deepEqual(verifiedNodeIdentity.identity.capabilities, ["CONTROL", "VERIFY"]);
+}
+
 const provider: IdempotentDispatchProvider = {
   providerId: "node-bootstrap-test-provider",
   supportsIdempotencyKeys: true,
