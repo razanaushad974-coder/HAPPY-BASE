@@ -108,12 +108,7 @@ begin
   for v_role in
     select rolname
       from pg_catalog.pg_roles
-     where rolname ~ '^happy_worker_[a-z0-9_]{1,48} An operator must add the exact, verified
--- dedicated worker LOGIN role only after the hosted session_user diagnostic
--- passes. Never grant to PUBLIC, anon, authenticated, or service_role.
-
-commit;
-
+     where rolname ~ '^happy_worker_[a-z0-9_]{1,48}$'
   loop
     execute format(
       'revoke all on function private.happy_worker_list_tenant_grants(uuid,uuid,uuid,uuid,integer) from %I',
