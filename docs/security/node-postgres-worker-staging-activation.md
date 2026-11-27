@@ -162,6 +162,12 @@ Stop immediately and do not grant or dispatch if any of these occur:
 
 Record each gate as PASS/FAIL/BLOCKED with timestamp, commit SHA, staging project label, and operator. Keep secret values out of the evidence. A successful CI run is recorded as **source-level/isolated integration PASS** only. Mark hosted activation complete only after Gates 0–5 have independently passed in staging.
 
+## Host discovery checkpoint — 2026-11-27
+
+Read-only inventory of the connected Vercel team found four HAPPY application projects. No dedicated worker service or active persistent worker sandbox was identified. The only worker-named sandbox, `happy-worker-deps-check`, is stopped, non-persistent, and its command history shows dependency inspection/installation only; it is not a running worker host. The `happy-base` project has only branch-scoped Supabase preview configuration and no worker database URL or trusted-identity configuration in its visible environment-variable metadata. This is evidence about the inspected Vercel team scope only; it does not rule out a separately managed host outside that scope.
+
+No sandbox was resumed or created, no environment-variable values were decrypted, and no host credentials were read or changed.
+
 ## Current outstanding external dependencies
 
 - Staging worker database URL/secret is not confirmed provisioned.
