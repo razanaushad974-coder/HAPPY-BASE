@@ -165,6 +165,35 @@ async function main(): Promise<void> {
   });
   if (valid.status !== "VERIFIED") throw new Error("Valid trusted verifier signature was rejected.");
 
+  const unsignedPayloadExtension = authority.verify({
+    attestation: {
+      ...sign({ ...payload, unsignedExtension: "not-covered-by-canonical-signature" } as SemanticAttestationPayload),
+    },
+    scope, request, evidenceIds: ["evidence-1"], now: () => now,
+  });
+  if (unsignedPayloadExtension.status !== "REJECTED" ||
+      unsignedPayloadExtension.reason !== "ATTESTATION_MALFORMED") {
+    throw new Error("An unsigned extension field in the semantic payload was accepted.");
+  }
+
+  const unsignedEnvelopeExtension = authority.verify({
+    attestation: { ...attestation, debug: "unsigned" } as SignedSemanticAttestation,
+    scope, request, evidenceIds: ["evidence-1"], now: () => now,
+  });
+  if (unsignedEnvelopeExtension.status !== "REJECTED" ||
+      unsignedEnvelopeExtension.reason !== "ATTESTATION_MALFORMED") {
+    throw new Error("An unsigned extension field in the attestation envelope was accepted.");
+  }
+
+  const oversizedSignature = authority.verify({
+    attestation: { ...attestation, signature: "A".repeat(16_385) },
+    scope, request, evidenceIds: ["evidence-1"], now: () => now,
+  });
+  if (oversizedSignature.status !== "REJECTED" ||
+      oversizedSignature.reason !== "ATTESTATION_MALFORMED") {
+    throw new Error("An oversized verifier signature was accepted.");
+  }
+
   const wrongScope = authority.verify({
     attestation, scope: { ...scope, userId: "user-2" }, request,
     evidenceIds: ["evidence-1"], now: () => now,
