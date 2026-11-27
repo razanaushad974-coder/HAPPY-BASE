@@ -29,8 +29,8 @@ assert.match(sql, /revoke all on function private\.happy_worker_list_tenant_gran
 assert.match(sql, /intentionally no GRANT EXECUTE/i);
 assert.doesNotMatch(sql, /grant execute on function private\.happy_worker_list_tenant_grants/i);
 assert.doesNotMatch(sql, /grant execute on all functions/i);
-assert.match(sql, /revoke all on function private\\.happy_worker_list_tenant_grants[\\s\\S]*?from %I/i);
-assert.match(sql, /where rolname ~ '\\^happy_worker_\\[a-z0-9_\\]\\{1,48\\}\\
+assert.match(sql, /revoke all on function private\.happy_worker_list_tenant_grants[\s\S]*?from %I/i);
+assert.ok(sql.includes("where rolname ~ '^happy_worker_[a-z0-9_]{1,48}$'"));
 
 // The RPC's SECURITY DEFINER owner must be a non-login, non-bypass role.
 // PostgreSQL session_user is the identity source; the role is never inherited
