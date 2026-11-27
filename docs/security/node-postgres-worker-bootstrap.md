@@ -161,3 +161,18 @@ npx --yes tsx@4.23.15 src/core/mission/node-postgres-happy-worker.test.ts
 ```
 
 A passing construction test proves dependency composition and fail-closed configuration validation only. The isolated PostgreSQL 17 CI harness additionally exercises the tenant-grant SQL candidate against real PostgreSQL roles and RLS; it does not prove Supabase pooler identity behavior or a hosted worker dispatch.
+
+## Composed Node host entrypoint
+
+`runNodePostgresWorkerHost()` in
+`src/core/mission/node-postgres-worker-host.ts` now wires the runtime dependencies,
+authoritative PostgreSQL tenant-grant source, durable HAPPY worker, bounded
+scheduler, SIGINT/SIGTERM supervisor, and pool shutdown into one host call.
+The host still supplies its real pool, verified workload identity resolver,
+tenant persistence, provider adapters, and process signal emitter.
+
+The host entrypoint intentionally performs one bounded batch and closes the
+pool. It does not start an unbounded daemon, create credentials, provision
+roles, deploy the tenant-grant RPC, or grant EXECUTE. The regression test uses
+a NOT_CONNECTED identity and asserts that no PostgreSQL connection is opened,
+the worker fails closed, listeners are removed, and the pool lifecycle closes.
