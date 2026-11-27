@@ -57,17 +57,28 @@ Therefore:
 
 ## Current status
 
+### Repository implementation checkpoint — 2026-11-27
+
+The repository now contains concrete, tested integration components (source code only):
+
 - Core policy contract: implemented in `src/core/mission/trusted-worker-identity.ts`.
-- Contract regression tests: implemented and included in `test:security`.
-- Concrete Vercel token source: NOT_YET_CONNECTED.
-- Cryptographic Vercel JWKS verifier: NOT_YET_CONNECTED.
-- Dedicated worker project/runtime: NOT_YET_CONNECTED.
-- Worker registry and database principal binding: NOT_YET_CONNECTED.
-- Scheduler RPC grants: intentionally revoked from `PUBLIC`, `anon`, `authenticated`, and `service_role`.
+- Fresh-token adapter for the official `@vercel/oidc` helper: implemented in `src/core/mission/vercel-oidc-worker-credential-source.ts`. It accepts an injected token reader, never reads caller headers/body, and does not cache credentials.
+- RS256/JWKS verifier: implemented in `src/core/mission/jwks-oidc-worker-credential-verifier.ts`. It pins issuer, audience, exact subject, owner/project IDs, environment, token lifetime, and server-owned capabilities; unknown keys trigger one bounded refresh and failures deny identity.
+- Concrete Vercel + PostgreSQL runtime composition: implemented in `src/core/mission/vercel-postgres-worker-runtime.ts`; it composes the token source, verifier, trusted identity policy, and dedicated-role PostgreSQL session/registry/broker boundaries.
+- Contract and adversarial regression tests: present in the security test suite.
+- Generic Node host composition and process supervision: implemented separately; the host must still inject its real pool, identity resolver, persistence, providers, and signal lifecycle.
+
+### External connection status
+
+- Official `@vercel/oidc` helper is not yet wired into a dedicated deployed worker entrypoint.
+- Exact issuer, audience, JWKS URI, subject, owner/project claims, and staging environment are not yet provisioned from a dedicated worker project.
+- Dedicated persistent worker project/runtime: NOT_YET_CONNECTED.
+- Dedicated staging PostgreSQL LOGIN and same-pooler `session_user/current_user` proof: NOT_YET_CONNECTED.
+- Hosted worker registry/principal binding and tenant-grant RPC activation: NOT_YET_CONNECTED; worker EXECUTE remains withheld from `PUBLIC`, `anon`, `authenticated`, and `service_role`.
 - Hosted Supabase: unchanged.
 - Vercel projects/deployments: unchanged.
 
-The generic injected identity contract remains useful for future worker runtimes, but it is not production authentication until the dedicated Vercel worker and verifier are connected and tested.
+The credential source, cryptographic verifier, and runtime composition are implemented in the repository, but they are not production authentication until a dedicated worker deployment supplies the real platform helper/configuration and passes the hosted identity and database-principal gates.
 
 
 ## Database identity compatibility constraint
