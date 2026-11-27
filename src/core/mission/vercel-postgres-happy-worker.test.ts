@@ -61,6 +61,22 @@ const worker = createVercelPostgresHappyWorker({
 
 assert.equal(typeof worker.runOneReadyTask, "function");
 assert.equal(typeof worker.runOnePendingDispatch, "function");
+const tenantServices = worker.createTenantVerificationServices({
+  organizationId: "org-test",
+  workspaceId: "workspace-test",
+  userId: "user-test",
+});
+assert.equal(typeof tenantServices.evidence.capture, "function");
+assert.equal(typeof tenantServices.verification.registerRequest, "function");
+assert.equal(typeof tenantServices.verification.verifyWithExternalVerifier, "function");
+assert.throws(
+  () => worker.createTenantVerificationServices({
+    organizationId: "org-test",
+    workspaceId: "workspace-test",
+    userId: "",
+  }),
+  /Complete organization, workspace, and user scope/,
+);
 assert.equal(worker.semanticVerifier.status, "NOT_CONFIGURED");
 assert.equal(worker.semanticVerifier.client, null);
 assert.equal(worker.semanticVerifier.authority, null);
