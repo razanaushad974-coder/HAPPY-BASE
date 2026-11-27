@@ -346,7 +346,7 @@ begin
   exception when insufficient_privilege then null;
   end;
 end
-$worker_identity$
+$worker_identity$;
 SQL
 
 # Exercise bounded keyset pagination through a fresh dedicated LOGIN session.
