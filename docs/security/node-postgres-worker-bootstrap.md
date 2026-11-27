@@ -55,6 +55,62 @@ await pool.end();
 
 The names `trustedHostIdentityResolver`, `canonicalTenantPersistence`, `idempotentProviderAdapter`, and `authorizedWorkerTenantScope` are host-owned adapters, not exported HAPPY globals or preconfigured credentials. The sample is an integration shape, not a runnable deployment by itself.
 
+### Concrete Node workload-identity composition
+
+The Node bootstrap now exports `createNodeTrustedWorkerIdentityResolver()`. It composes the existing fail-closed `TrustedWorkerIdentityProvider` from three host-owned inputs:
+
+- `TrustedWorkerCredentialSource`: reads a platform workload credential from a trusted runtime channel.
+- `WorkerCredentialVerifier`: verifies the credential cryptographically. The repository's `JwksOidcWorkerCredentialVerifier` implements strict RS256/JWKS verification, issuer/audience pinning, exact subject and signed workload-claim checks, and bounded key refresh.
+- `TrustedWorkerIdentityPolicy`: independently allowlists issuer, audience, environment, exact subjects, capabilities, and maximum credential lifetime.
+
+Example shape (all values and adapters must come from the actual host's trusted deployment configuration):
+
+```ts
+import {
+  createNodeTrustedWorkerIdentityResolver,
+  createNodePostgresHappyWorker,
+} from "./src/core/mission/node-postgres-happy-worker";
+import { JwksOidcWorkerCredentialVerifier } from "./src/core/mission/jwks-oidc-worker-credential-verifier";
+
+const identityProvider = createNodeTrustedWorkerIdentityResolver({
+  credentialSource: platformWorkloadCredentialSource,
+  credentialVerifier: new JwksOidcWorkerCredentialVerifier({
+    issuer: trustedIssuer,
+    audience: trustedAudience,
+    jwksUri: trustedJwksUri,
+    environment: "staging",
+    expectedSubject: trustedExactSubject,
+    expectedWorkloadClaims: {
+      ownerId: trustedOwnerId,
+      projectId: trustedProjectId,
+      environment: "staging",
+    },
+    maxTokenLifetimeSeconds: 300,
+    capabilities: ["CONTROL", "VERIFY"],
+  }),
+  policy: {
+    issuer: trustedIssuer,
+    audience: trustedAudience,
+    environment: "staging",
+    allowedSubjects: [trustedExactSubject],
+    allowedCapabilities: ["CONTROL", "VERIFY"],
+    maxCredentialLifetimeSeconds: 300,
+  },
+});
+
+const worker = createNodePostgresHappyWorker({
+  runtime: {
+    identityProvider,
+    pool, // host-created node-postgres Pool using the dedicated LOGIN
+    expectedLoginRole: "happy_worker_staging",
+  },
+  tenantPersistence,
+  provider: idempotentProvider,
+});
+```
+
+The example deliberately leaves the credential source, issuer/JWKS metadata, subject, owner/project identifiers, pool, tenant persistence, and provider as host-supplied values. Do not substitute a request header, body field, query parameter, or user session. The verifier's signed workload claims and the identity provider's independent policy must agree; capabilities are deployment-owned, not caller-selected. The source-level regression test exercises this composition with a fake verifier and fixed clock only; it does not provision or attest a real workload identity.
+
 ## Bounded scheduler and graceful stop boundary
 
 `runNodeWorkerBatch()` is the host-independent batch runner. It is deliberately sequential (concurrency 1), validates a maximum of 20 tenant grants per invocation, re-resolves workload identity and the principal registry before each grant scan, validates the returned organization/workspace/user tuple against the worker principal ID, and stops between operations when its AbortSignal is set. It supports one bounded mode per invocation: `READY_TASK` or `PENDING_DISPATCH`.
