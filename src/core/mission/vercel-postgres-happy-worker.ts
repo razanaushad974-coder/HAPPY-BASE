@@ -146,6 +146,23 @@ export function createVercelPostgresHappyWorker(input: {
       });
     },
 
+    /**
+     * Performs a read-only recovery assessment using the authenticated worker
+     * broker for provider evidence. It never retries or mutates mission state.
+     */
+    assessTenantMissionRecovery(input: {
+      readonly scope: TenantScope & { readonly userId: string };
+      readonly workerScope: WorkerTenantScope;
+      readonly missionId: string;
+    }) {
+      return orchestrator.assessWorkerMissionRecovery({
+        scope: input.scope,
+        tenantScope: input.workerScope,
+        persistence: input.tenantPersistence,
+        missionId: input.missionId,
+      });
+    },
+
     /** Claims at most one already-enqueued outbox item for this tenant. */
     runOnePendingDispatch(workerScope: WorkerTenantScope) {
       return orchestrator.runNextWorkerDispatch({
