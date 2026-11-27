@@ -191,7 +191,8 @@ export class HttpExternalSemanticVerifierClient implements ExternalSemanticVerif
         throw new Error(`SEMANTIC_VERIFIER_HTTP_${response.status}`);
       }
       const contentType = response.headers.get("content-type") ?? "";
-      if (!contentType.toLowerCase().includes("application/json")) {
+      const mediaType = contentType.split(";", 1)[0]?.trim().toLowerCase();
+      if (mediaType !== "application/json") {
         throw new Error("SEMANTIC_VERIFIER_RESPONSE_CONTENT_TYPE_INVALID");
       }
       const rawDeclaredLength = response.headers.get("content-length");
@@ -216,7 +217,8 @@ export class HttpExternalSemanticVerifierClient implements ExternalSemanticVerif
         throw new Error("SEMANTIC_VERIFIER_RESPONSE_INVALID");
       }
       const envelope = parsed as Record<string, unknown>;
-      if (!envelope.payload || typeof envelope.payload !== "object" ||
+      if (Object.keys(envelope).sort().join(",") !== "payload,signature" ||
+          !envelope.payload || typeof envelope.payload !== "object" ||
           Array.isArray(envelope.payload) ||
           typeof envelope.signature !== "string" || !envelope.signature.trim() ||
           envelope.signature.length > 16_384) {
