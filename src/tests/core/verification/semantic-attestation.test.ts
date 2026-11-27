@@ -194,6 +194,37 @@ async function main(): Promise<void> {
     throw new Error("An oversized verifier signature was accepted.");
   }
 
+  const wrongSignatureLength = authority.verify({
+    attestation: { ...attestation, signature: "AAAA" },
+    scope, request, evidenceIds: ["evidence-1"], now: () => now,
+  });
+  if (wrongSignatureLength.status !== "REJECTED" ||
+      wrongSignatureLength.reason !== "ATTESTATION_MALFORMED") {
+    throw new Error("A base64 signature with the wrong RSA modulus length was accepted.");
+  }
+
+  const oversizedSummary = authority.verify({
+    attestation: sign({ ...payload, summary: "x".repeat(2_049) }),
+    scope, request, evidenceIds: ["evidence-1"], now: () => now,
+  });
+  if (oversizedSummary.status !== "REJECTED" ||
+      oversizedSummary.reason !== "ATTESTATION_MALFORMED") {
+    throw new Error("An oversized signed summary was accepted.");
+  }
+
+  const excessiveEvidenceIds = authority.verify({
+    attestation: sign({
+      ...payload,
+      evidenceIds: Array.from({ length: 101 }, (_, index) => `evidence-${index}`),
+    }),
+    scope, request, evidenceIds: Array.from({ length: 101 }, (_, index) => `evidence-${index}`),
+    now: () => now,
+  });
+  if (excessiveEvidenceIds.status !== "REJECTED" ||
+      excessiveEvidenceIds.reason !== "ATTESTATION_MALFORMED") {
+    throw new Error("An attestation with excessive evidence IDs was accepted.");
+  }
+
   const wrongScope = authority.verify({
     attestation, scope: { ...scope, userId: "user-2" }, request,
     evidenceIds: ["evidence-1"], now: () => now,
