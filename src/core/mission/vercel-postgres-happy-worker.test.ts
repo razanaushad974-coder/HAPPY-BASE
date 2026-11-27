@@ -96,6 +96,16 @@ assert.throws(
   }),
   /must be configured together/,
 );
+assert.throws(
+  () => createVercelPostgresHappyWorker({
+    runtime,
+    tenantPersistence,
+    provider,
+    semanticVerifierEndpoint: "https://verifier.example.test/evaluate",
+    readSemanticVerifierBearerToken: async () => "server-only-test-token",
+  }),
+  /trusted public-key allowlist/,
+);
 
 const { publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const configuredWorker = createVercelPostgresHappyWorker({
