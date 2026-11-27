@@ -100,10 +100,21 @@ export function createVercelPostgresHappyWorker(input: {
       readonly requestId: string;
       readonly evidenceIds: string[];
     }) {
-      const services = createTenantVerificationServices(input.scope);
+      if (!input || typeof input !== "object" ||
+          typeof input.requestId !== "string" || !input.requestId.trim() || input.requestId.length > 256 ||
+          !Array.isArray(input.evidenceIds) || input.evidenceIds.length < 1 || input.evidenceIds.length > 50 ||
+          input.evidenceIds.some((id) => typeof id !== "string" || !id.trim() || id.length > 256)) {
+        throw new TypeError("External verification requires a bounded request ID and 1 to 50 bounded evidence IDs.");
+      }
+      const scope = Object.freeze({
+        organizationId: input.scope?.organizationId,
+        workspaceId: input.scope?.workspaceId,
+        userId: input.scope?.userId,
+      });
+      const services = createTenantVerificationServices(scope);
       return services.verification.verifyWithExternalVerifier(
-        input.requestId,
-        input.evidenceIds,
+        input.requestId.trim(),
+        [...input.evidenceIds],
       );
     },
 
