@@ -176,3 +176,7 @@ pool. It does not start an unbounded daemon, create credentials, provision
 roles, deploy the tenant-grant RPC, or grant EXECUTE. The regression test uses
 a NOT_CONNECTED identity and asserts that no PostgreSQL connection is opened,
 the worker fails closed, listeners are removed, and the pool lifecycle closes.
+
+The composed host entrypoint requires the lifecycle adapter to be the exact same
+pool instance injected into the runtime. Shutdown therefore cannot accidentally
+close a different pool while leaving the broker's PostgreSQL connections open.
