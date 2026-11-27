@@ -69,6 +69,7 @@ const tenantServices = worker.createTenantVerificationServices({
 assert.equal(typeof tenantServices.evidence.capture, "function");
 assert.equal(typeof tenantServices.verification.registerRequest, "function");
 assert.equal(typeof tenantServices.verification.verifyWithExternalVerifier, "function");
+assert.equal(typeof worker.transitionTaskDurable, "function");
 assert.throws(
   () => worker.createTenantVerificationServices({
     organizationId: "org-test",
