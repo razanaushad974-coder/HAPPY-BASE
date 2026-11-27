@@ -71,7 +71,6 @@ assert.match(registryPrivileges, /has_table_privilege\('happy_worker_registry_ow
 assert.match(registryPrivileges, /revoke all on function private\.happy_require_worker_principal/i);
 
 console.log("Worker tenant-grant SQL and owner privilege contract: PASS");
-/i);
 
 // The RPC's SECURITY DEFINER owner must be a non-login, non-bypass role.
 // PostgreSQL session_user is the identity source; the role is never inherited
