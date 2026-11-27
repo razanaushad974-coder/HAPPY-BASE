@@ -28,7 +28,7 @@ import {
 } from "./src/core/mission/node-postgres-happy-worker";
 
 const pool = new Pool({
-  connectionString: process.env.HAPPY_WORKER_DATABASE_URL,
+  connectionString: process.env.HAPPY_STAGING_WORKER_DATABASE_URL,
   max: 4,
   connectionTimeoutMillis: 5_000,
   idleTimeoutMillis: 30_000,
@@ -38,7 +38,7 @@ const worker = createNodePostgresHappyWorkerFromEnvironment({
   runtime: {
     identityProvider: trustedHostIdentityResolver,
     pool,
-    expectedLoginRole: "happy_worker_staging",
+    expectedLoginRole: "happy_worker_dispatch",
     statementTimeoutMs: 15_000,
     idleTransactionTimeoutMs: 30_000,
   },
@@ -102,7 +102,7 @@ const worker = createNodePostgresHappyWorker({
   runtime: {
     identityProvider,
     pool, // host-created node-postgres Pool using the dedicated LOGIN
-    expectedLoginRole: "happy_worker_staging",
+    expectedLoginRole: "happy_worker_dispatch",
   },
   tenantPersistence,
   provider: idempotentProvider,
