@@ -91,27 +91,26 @@ if (!validSignature) throw new Error("GitHub OIDC signature verification failed.
 const claims = parseObject(parts[1]);
 const now = Math.floor(Date.now() / 1000);
 const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
-if (
-  claims.iss !== expected.issuer ||
-  audiences.length !== 1 ||
-  audiences[0] !== expected.audience ||
-  claims.sub !== expected.subject ||
-  claims.repository !== expected.repository ||
-  String(claims.repository_id) !== expected.repositoryId ||
-  String(claims.repository_owner_id) !== expected.ownerId ||
-  claims.ref !== expected.ref ||
-  claims.workflow_ref !== expected.workflowRef ||
-  claims.environment !== expected.environment ||
-  claims.event_name !== "push" && claims.event_name !== "workflow_dispatch" ||
-  !Number.isSafeInteger(claims.iat) ||
-  !Number.isSafeInteger(claims.nbf) ||
-  !Number.isSafeInteger(claims.exp) ||
-  claims.iat > now + 30 ||
-  claims.nbf > now + 30 ||
-  claims.exp <= now ||
-  claims.exp <= claims.iat ||
-  claims.exp - claims.iat > 600
-) {
+const checks = [
+  ["issuer", claims.iss === expected.issuer],
+  ["audience", audiences.length === 1 && audiences[0] === expected.audience],
+  ["subject", claims.sub === expected.subject],
+  ["repository", claims.repository === expected.repository],
+  ["repository_id", String(claims.repository_id) === expected.repositoryId],
+  ["repository_owner_id", String(claims.repository_owner_id) === expected.ownerId],
+  ["ref", claims.ref === expected.ref],
+  ["workflow_ref", claims.workflow_ref === expected.workflowRef],
+  ["environment", claims.environment === expected.environment],
+  ["event_name", claims.event_name === "push" || claims.event_name === "workflow_dispatch"],
+  ["iat", Number.isSafeInteger(claims.iat) && claims.iat <= now + 30],
+  ["nbf", Number.isSafeInteger(claims.nbf) && claims.nbf <= now + 30],
+  ["exp", Number.isSafeInteger(claims.exp) && claims.exp > now],
+  ["token_lifetime", Number.isSafeInteger(claims.iat) && Number.isSafeInteger(claims.exp) &&
+    claims.exp > claims.iat && claims.exp - claims.iat <= 600],
+];
+const mismatches = checks.filter(([, ok]) => !ok).map(([name]) => name);
+if (mismatches.length) {
+  console.error(`OIDC_POLICY_MISMATCH_FIELDS=${mismatches.join(",")}`);
   throw new Error("Verified JWT claims do not match the exact HAPPY staging worker policy.");
 }
 
