@@ -98,6 +98,31 @@ revoke create on schema private from happy_worker_registry_owner;
 revoke all on function private.happy_worker_list_tenant_grants(uuid,uuid,uuid,uuid,integer)
   from public, anon, authenticated, service_role;
 
+-- Fail closed on re-application too: remove any prior direct worker-login
+-- EXECUTE grants. The operator must explicitly re-grant only the verified
+-- dedicated LOGIN after the hosted session_user diagnostic passes.
+do $revoke_worker_execute$
+declare
+  v_role record;
+begin
+  for v_role in
+    select rolname
+      from pg_catalog.pg_roles
+     where rolname ~ '^happy_worker_[a-z0-9_]{1,48} An operator must add the exact, verified
+-- dedicated worker LOGIN role only after the hosted session_user diagnostic
+-- passes. Never grant to PUBLIC, anon, authenticated, or service_role.
+
+commit;
+
+  loop
+    execute format(
+      'revoke all on function private.happy_worker_list_tenant_grants(uuid,uuid,uuid,uuid,integer) from %I',
+      v_role.rolname
+    );
+  end loop;
+end
+$revoke_worker_execute$;
+
 -- Intentionally no GRANT EXECUTE. An operator must add the exact, verified
 -- dedicated worker LOGIN role only after the hosted session_user diagnostic
 -- passes. Never grant to PUBLIC, anon, authenticated, or service_role.
