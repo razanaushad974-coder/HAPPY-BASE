@@ -181,7 +181,7 @@ A first staging-host candidate is now implemented as an **ephemeral GitHub-hoste
 - OIDC audience: `happy-staging-worker`.
 - Pinned repository: `razanaushad974-coder/HAPPY-BASE` (repository ID `1368712889`, owner ID `285602201`).
 - Pinned ref: `refs/heads/docs/staging-worker-activation-runbook`.
-- Pinned subject: `repo:razanaushad974-coder/HAPPY-BASE:environment:happy-staging-worker`.
+- Pinned immutable subject: `repo:razanaushad974-coder@285602201/HAPPY-BASE@1368712889:environment:happy-staging-worker`.
 
 The preflight obtains a short-lived GitHub Actions OIDC token from the runner-provided request endpoint, verifies its RS256 signature against GitHub's published JWKS, and checks exact issuer, single audience, subject, repository IDs, ref, workflow ref, environment, event type, and token time bounds. It prints only non-secret identity labels and explicit `database_connected=false` / `worker_dispatch_executed=false` markers.
 
