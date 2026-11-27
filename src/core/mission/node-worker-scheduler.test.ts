@@ -137,4 +137,37 @@ assert.equal(successfulBatch.status, "COMPLETED");
 assert.equal(successfulBatch.tenantsVisited, 1);
 assert.equal(readyTaskCalls, 1, "one authorized tenant must receive exactly one bounded operation");
 
+const midScanController = new AbortController();
+let cancelledWorkerCalls = 0;
+const cancelledBatch = await runNodeWorkerBatch({
+  dependencies: authorizedDependencies,
+  tenantScopeSource: {
+    async nextAuthorizedTenant() {
+      midScanController.abort();
+      return {
+        scope: { organizationId: "org-1", workspaceId: "workspace-1", userId: "user-1" },
+        workerScope: {
+          workerPrincipalId: "worker-principal-staging",
+          organizationId: "org-1",
+          workspaceId: "workspace-1",
+          userId: "user-1",
+        },
+        nextCursor: "cursor-1",
+      };
+    },
+  },
+  worker: {
+    async runOneReadyTask() {
+      cancelledWorkerCalls += 1;
+      return { status: "SHOULD_NOT_RUN" };
+    },
+  } as unknown as Parameters<typeof runNodeWorkerBatch>[0]["worker"],
+  operation: "READY_TASK",
+  maxTenants: 1,
+  signal: midScanController.signal,
+});
+assert.equal(cancelledBatch.status, "STOPPED");
+assert.equal(cancelledBatch.tenantsVisited, 0);
+assert.equal(cancelledWorkerCalls, 0, "cancellation during grant resolution must prevent task execution");
+
 console.log("Bounded Node worker scheduler: PASS");
