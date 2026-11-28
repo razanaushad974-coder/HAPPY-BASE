@@ -92,7 +92,8 @@ async function main(): Promise<void> {
   const denied = await resolveSupabaseRequestTenantContext({
     async createForCurrentRequest() { return rpcFailure; },
   }, { organizationId: "org-1", workspaceId: "workspace-1" });
-  assert(denied.status === "TENANT_ACCESS_DENIED", "Membership RPC failure did not fail closed.");
+  assert(denied.status === "TENANT_CONTEXT_UNAVAILABLE",
+    "Membership RPC outage must be distinguishable from an actual membership denial.");
 
   console.log("Supabase request tenant composition contract: PASS");
 }
