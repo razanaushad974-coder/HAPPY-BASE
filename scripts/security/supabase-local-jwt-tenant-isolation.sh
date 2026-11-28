@@ -172,6 +172,53 @@ SQL
 
 scope_a="$(jq -cn --arg org "$org_a" --arg ws "$workspace_a" '{p_organization_id:$org,p_workspace_id:$ws}')"
 scope_b="$(jq -cn --arg org "$org_b" --arg ws "$workspace_b" '{p_organization_id:$org,p_workspace_id:$ws}')"
+
+# The authenticated tenant-context RPC must derive identity from auth.uid(),
+# return only the exact active org/workspace membership, and reveal no row for
+# cross-tenant or revoked selectors.
+rpc a-context resolve_authenticated_tenant_context "$token_a" "$scope_a" success
+jq -e --arg uid "$user_a" --arg org "$org_a" --arg ws "$workspace_a" '
+  length == 1 and .[0].user_id == $uid
+  and .[0].organization_id == $org and .[0].workspace_id == $ws
+  and .[0].organization_role == "MEMBER" and .[0].workspace_role == "MEMBER"
+' "$tmp_dir/a-context-result.json" >/dev/null || {
+  echo "Authenticated tenant-context RPC returned an unexpected identity/scope." >&2
+  cat "$tmp_dir/a-context-result.json" >&2
+  exit 1
+}
+rpc a-cross-context resolve_authenticated_tenant_context "$token_a" "$scope_b" success
+jq -e 'length == 0' "$tmp_dir/a-cross-context-result.json" >/dev/null || {
+  echo "Cross-tenant selector unexpectedly returned a tenant context." >&2
+  cat "$tmp_dir/a-cross-context-result.json" >&2
+  exit 1
+}
+rpc c-revoked-context resolve_authenticated_tenant_context "$token_c" "$scope_a" success
+jq -e 'length == 0' "$tmp_dir/c-revoked-context-result.json" >/dev/null || {
+  echo "Revoked membership unexpectedly returned a tenant context." >&2
+  cat "$tmp_dir/c-revoked-context-result.json" >&2
+  exit 1
+}
+
+tenant_context_owner_audit="$(psql "$DB_URL" -XAt -F '|' -v ON_ERROR_STOP=1 -c "
+SELECT
+  pg_catalog.pg_get_userbyid(p.proowner),
+  p.prosecdef::text,
+  (SELECT rolcanlogin::text || ':' || rolsuper::text || ':' || rolbypassrls::text
+     FROM pg_catalog.pg_roles WHERE rolname='happy_tenant_scope_rpc_owner'),
+  has_function_privilege('authenticated','public.resolve_authenticated_tenant_context(uuid,uuid)','EXECUTE')::text,
+  has_function_privilege('anon','public.resolve_authenticated_tenant_context(uuid,uuid)','EXECUTE')::text,
+  has_function_privilege('service_role','public.resolve_authenticated_tenant_context(uuid,uuid)','EXECUTE')::text
+FROM pg_catalog.pg_proc p
+WHERE p.oid='public.resolve_authenticated_tenant_context(uuid,uuid)'::regprocedure
+")"
+expected_tenant_context_owner_audit="happy_tenant_scope_rpc_owner|true|false:false:false|true|false|false"
+if [[ "$tenant_context_owner_audit" != "$expected_tenant_context_owner_audit" ]]; then
+  echo "Tenant-context RPC owner/grant audit mismatch." >&2
+  echo "Expected: $expected_tenant_context_owner_audit" >&2
+  echo "Actual:   $tenant_context_owner_audit" >&2
+  exit 1
+fi
+
 rpc a-active happy_has_active_tenant_scope "$token_a" "$scope_a" success
 if ! jq -e 'select(. == true)' "$tmp_dir/a-active-result.json" >/dev/null; then
   echo "User A active-scope probe returned: $(cat "$tmp_dir/a-active-result.json")" >&2
