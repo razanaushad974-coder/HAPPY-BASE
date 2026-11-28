@@ -6,7 +6,7 @@ This runbook converts the source-level Node worker into a controlled staging act
 
 ## Current source-level evidence
 
-The source-level and isolated integration checks passed on application-code head `2f8f2bb28fe6b33f1315956d8fc8587d6c3c307c`, GitHub Actions run #1869 (all workflow steps, including production build; conclusion: success). The latest PR #15 head is `3a5cbaf17d7ee3f1b124a5cc0344ff36d0a41d3c`; that follow-up changes documentation examples only (staging DB secret variable and exact worker LOGIN), with no application source, tests, SQL, or workflow changes. No separate CI run was returned for that documentation-only commit:
+The source-level and isolated integration checks passed on application-code head `2f8f2bb28fe6b33f1315956d8fc8587d6c3c307c`, GitHub Actions run #1869 (all workflow steps, including production build; conclusion: success). The latest PR #15 head is `de6fb0c5a303bfef93acd130bc8b1a4a4f59e459`. Its latest change adds a regression test proving that an absent staging DB secret exits with status 3, emits `BLOCKED_SECRET_NOT_CONFIGURED`, and never invokes `psql`. GitHub Actions run #1892 (ID `46108652876`) passed on that exact head, including the new regression step, PostgreSQL 17 RLS/CAS and worker grant integration, scheduler CONTROL/VERIFY RLS probe, orchestration tests, audit, and production build. The earlier application-code validation on #1869 remains useful evidence for the worker source implementation.
 
 - TypeScript and the complete security harness suite.
 - Async tenant persistence/provider contracts.
@@ -18,7 +18,7 @@ The source-level and isolated integration checks passed on application-code head
 
 These checks validate source behavior and isolated PostgreSQL fixtures. They do **not** validate a hosted Supabase pooler, hosted identity issuer, staging database, or real external provider dispatch.
 
-CI run #1869 validated the application-code head before the documentation-only follow-up. Earlier run #1866 (30/30 steps) also passed on a prior head. These are successful repository validations only; neither satisfies any hosted activation gate below.
+CI run #1892 is the latest complete repository validation for PR #15 and passed all 31 job steps. Run #1869 separately validates the worker application-code head. These are successful repository validations only; neither satisfies any hosted activation gate below.
 
 ## Activation gates — keep this order
 
@@ -49,7 +49,7 @@ The repository exports `createNodeTrustedWorkerIdentityResolver()`; this is a co
 
 Provision the exact dedicated `happy_worker_dispatch` LOGIN through the approved database administration process. The current SQL candidate does not create this LOGIN; role provisioning is a separate, explicitly approved DBA step. It must be a non-superuser, non-owner, non-BYPASSRLS role with no role-creation/database-creation privileges. Do not use `service_role`, `postgres`, a human login, or a shared application role.
 
-Configure the staging host's secret manager with the dedicated worker connection string. The variable name used by the host example is `HAPPY_WORKER_DATABASE_URL`; a prior staging preflight recorded `HAPPY_STAGING_WORKER_DATABASE_URL` as not set. The host must explicitly map its chosen secret to the pool configuration; do not assume either name is currently configured.
+Configure the staging host's secret manager with the dedicated worker connection string. The Node staging host example and the manual GitHub Actions principal-preflight workflow use `HAPPY_STAGING_WORKER_DATABASE_URL`. Configure that exact name as a protected GitHub Environment secret only after the staging LOGIN and connection path are approved. The script intentionally blocks with exit status 3 when the secret is absent; do not treat that blocked result as a database failure.
 
 From the **same network path, pooler endpoint, TLS mode, and connection options** that the worker will use, run this read-only diagnostic as the worker connection:
 
