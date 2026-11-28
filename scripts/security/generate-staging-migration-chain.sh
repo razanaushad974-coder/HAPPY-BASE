@@ -27,7 +27,7 @@ if [[ -e supabase/config.toml || -d supabase/migrations ]]; then
     [[ -n "$migration_file" ]] || { echo "Supabase CLI did not create migration 0019." >&2; exit 4; }
     cp supabase/drafts/20261121_authenticated_tenant_context_rpc_candidate.sql "$migration_file"
     generated="$(basename "$migration_file")"
-    sed -i "/^## Explicit exclusions/i | 19 | `$generated` | `20261121_authenticated_tenant_context_rpc_candidate.sql` |\n" docs/security/supabase-staging-migration-chain.md
+    sed -i "/^## Explicit exclusions/i | 19 | $generated | 20261121_authenticated_tenant_context_rpc_candidate.sql |" docs/security/supabase-staging-migration-chain.md
     sed -i 's/- Superseded tenant-context and execution-request RPC design notes./- Superseded legacy tenant-context and execution-request RPC design notes; replacement read-only tenant-context RPC is included as migration 0019./' docs/security/supabase-staging-migration-chain.md
     sha256sum supabase/migrations/*.sql > docs/security/supabase-staging-migration-checksums.sha256
     echo "Added one CLI-generated authenticated tenant-context RPC migration without rewriting the existing 18."
