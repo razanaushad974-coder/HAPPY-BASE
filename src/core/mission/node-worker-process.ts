@@ -105,6 +105,9 @@ function waitForNextWorkerPoll(signal: AbortSignal, pollIntervalMs: number): Pro
     };
     const timer = setTimeout(finish, pollIntervalMs);
     signal.addEventListener("abort", finish, { once: true });
+    // Close the check/listener-registration race: an abort between the
+    // initial check and addEventListener must not strand shutdown until timeout.
+    if (signal.aborted) finish();
   });
 }
 
