@@ -147,7 +147,15 @@ Before running the host:
 - confirm SIGTERM/SIGINT aborts between operations, waits for an in-flight operation to settle, removes listeners, and closes that exact pool;
 - confirm an ambiguous provider outcome is reconciled, not blindly retried.
 
-Start one bounded invocation only. Capture operation ID, tenant fixture ID, idempotency key hash (not secret material), result status, fencing/lease evidence, and reconciliation result. Do not run a continuous scheduler until separate concurrency, restart, crash-recovery, and operational alerting plans have been reviewed.
+For the first smoke test, start one bounded daemon session with `maxBatches=1`, `maxTenants` between 1 and 20, and `pollIntervalMs` between 100 and 60,000. This intentionally performs at most one batch. After that passes, a staging-only bounded session may use `maxBatches` 1–100 and the same poll interval bounds; batches are sequential and never overlap. At the cap, the process returns `MAX_BATCHES_REACHED` and closes its pool. An external supervisor may start a fresh bounded session only under a separately reviewed staging restart policy. Do not configure an unbounded loop or automatic unlimited restarts. Capture operation ID, tenant fixture ID, idempotency key hash (not secret material), result status, fencing/lease evidence, and reconciliation result. Do not run a continuous scheduler until separate cross-process concurrency, restart, crash-recovery, and operational alerting plans have been reviewed.
+
+## Bounded Node worker session contract
+
+The Node host exposes two separate entrypoints:
+- `runNodePostgresWorkerHost()`: one bounded batch, then listener cleanup and pool close.
+- `runNodePostgresWorkerDaemonHost()`: sequential polling over the same pool for a configured `maxBatches` (1–100) and `pollIntervalMs` (100–60,000 ms), then listener cleanup and pool close.
+
+Both stop on SIGINT/SIGTERM, wait for an in-flight bounded operation to settle, and do not retry DENIED, NOT_CONNECTED, STOPPED, or ambiguous provider outcomes. The daemon returns `MAX_BATCHES_REACHED` when it reaches its cap so the external process supervisor can decide whether a new bounded session is permitted. The code does not provide an unbounded daemon, cross-process lease coordination beyond the existing durable worker protocol, or an operational restart controller. Initial staging validation must use `maxBatches=1`.
 
 ## Stop conditions
 
@@ -216,5 +224,5 @@ This workflow is still read-only. It does not create roles, tables, migrations, 
 - The exact `happy_worker_dispatch` LOGIN has not been provisioned in the blank staging project; the hosted pooler `session_user/current_user` diagnostic has not been run.
 - Trusted workload credential source, issuer/JWKS, and exact staging subject are not provisioned by this repository change.
 - Tenant-grant RPC candidate has not been deployed to hosted staging; hosted EXECUTE remains withheld.
-- No real Node worker dispatch, continuous poller, concurrency controller, or crash-recovery/restart supervisor has been deployed.
+- No real Node worker dispatch or bounded poller has been deployed; the source-level daemon is only a bounded session. Cross-process concurrency control and an operational crash-recovery/restart supervisor remain unprovisioned.
 - No production action is authorized by this runbook.
