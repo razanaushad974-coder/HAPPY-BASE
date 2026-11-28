@@ -1,3 +1,4 @@
+import { TenantMembershipUnavailableError } from "../../../core/tenant/canonical-tenant-context";
 import {
   SupabaseAuthenticatedNamedExecutorGrantLookupStore,
   SupabaseCanonicalTenantMembershipStore,
@@ -143,8 +144,14 @@ async function main(): Promise<void> {
   const failedMemberships = new SupabaseCanonicalTenantMembershipStore({
     async rpc() { return { data: null, error: { message: "private schema unavailable" } }; },
   });
-  assert(await failedMemberships.getTenantMembershipPair("executor-1", "org-1", "workspace-1") === null,
-    "Membership RPC error did not fail closed.");
+  let membershipUnavailable = false;
+  try {
+    await failedMemberships.getTenantMembershipPair("executor-1", "org-1", "workspace-1");
+  } catch (error) {
+    membershipUnavailable = error instanceof TenantMembershipUnavailableError;
+  }
+  assert(membershipUnavailable,
+    "Membership RPC infrastructure error must remain distinguishable from a missing membership row.");
 
   const { SupabaseTransactionalNamedExecutorGrantStore } = await import("../../../core/tenant/supabase-private-tenant-stores");
   const consumeCalls: Array<{ functionName: string; args: Record<string, unknown> }> = [];
