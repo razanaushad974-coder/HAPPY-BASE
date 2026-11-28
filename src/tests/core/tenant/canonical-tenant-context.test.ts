@@ -1,6 +1,7 @@
 import {
   resolveCanonicalTenantContext,
   resolveAuthenticatedTenantContext,
+  TenantMembershipUnavailableError,
   type CanonicalTenantMembershipStore,
   type OrganizationMembershipRecord,
   type WorkspaceMembershipRecord,
@@ -37,7 +38,7 @@ async function main(): Promise<void> {
   ): CanonicalTenantMembershipStore {
     return {
       async getTenantMembershipPair(userId, organizationId, workspaceId) {
-        if (overrides.failLookup) throw new Error("membership RPC unavailable");
+        if (overrides.failLookup) throw new TenantMembershipUnavailableError();
         if (
           userId !== identity.userId ||
           organizationId !== scope.organizationId ||
@@ -68,7 +69,13 @@ async function main(): Promise<void> {
   assert(await resolveCanonicalTenantContext(identity, scope, store({ organization: { ...org, userId: "attacker" } })) === null, "Mismatched organization member identity was accepted.");
   assert(await resolveCanonicalTenantContext(identity, scope, store({ workspace: { ...workspace, organizationId: "other-org" } })) === null, "Cross-organization workspace membership was accepted.");
   assert(await resolveCanonicalTenantContext(identity, scope, store({ workspace: { ...workspace, workspaceId: "other-workspace" } })) === null, "Mismatched workspace membership was accepted.");
-  assert(await resolveCanonicalTenantContext(identity, scope, store({ failLookup: true })) === null, "Membership RPC failure did not fail closed.");
+  let canonicalUnavailable = false;
+  try {
+    await resolveCanonicalTenantContext(identity, scope, store({ failLookup: true }));
+  } catch (error) {
+    canonicalUnavailable = error instanceof TenantMembershipUnavailableError;
+  }
+  assert(canonicalUnavailable, "Membership RPC infrastructure failure was not preserved as unavailable.");
 
   const verifiedIdentityProvider: VerifiedServerIdentityProvider = {
     async getVerifiedIdentity() { return identity; },
@@ -93,6 +100,12 @@ async function main(): Promise<void> {
     verifiedIdentityProvider, { ...scope, workspaceId: "attacker-selected-workspace" }, store(),
   );
   assert(tenantDenied.status === "TENANT_ACCESS_DENIED", "Unmatched caller-selected workspace was accepted.");
+
+  const membershipUnavailable = await resolveAuthenticatedTenantContext(
+    verifiedIdentityProvider, scope, store({ failLookup: true }),
+  );
+  assert(membershipUnavailable.status === "TENANT_CONTEXT_UNAVAILABLE",
+    "Membership authority outage must remain distinct from a real access denial.");
 
   console.log("Canonical tenant membership contract: PASS");
 }
