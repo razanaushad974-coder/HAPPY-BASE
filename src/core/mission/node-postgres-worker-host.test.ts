@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import type { PgPoolLike } from "../persistence/adapters/postgres-tenant-adapter";
 import type { AsyncTenantPersistenceAdapter } from "../persistence/async-tenant-repository";
-import { runNodePostgresWorkerHost } from "./node-postgres-worker-host";
+import {
+  runNodePostgresWorkerDaemonHost,
+  runNodePostgresWorkerHost,
+} from "./node-postgres-worker-host";
 import type { NodeWorkerShutdownSignal } from "./node-worker-process";
 
 async function main(): Promise<void> {
@@ -54,7 +57,55 @@ async function main(): Promise<void> {
   assert.equal(poolConnections, 0, "unverified identity must fail before opening PostgreSQL");
   assert.equal(poolClosed, 1, "the host lifecycle must close the pool after the bounded run");
   assert.equal(listeners.size, 0, "shutdown listeners must be removed");
-  console.log("Node PostgreSQL worker host entrypoint: PASS");
+  let daemonPoolClosed = 0;
+  let daemonPoolConnections = 0;
+  const daemonPool: PgPoolLike & { end(): Promise<void> } = {
+    async end() { daemonPoolClosed += 1; },
+    async connect() {
+      daemonPoolConnections += 1;
+      throw new Error("An unverified daemon identity must fail before PostgreSQL access.");
+    },
+  };
+  const daemonListeners = new Map<NodeWorkerShutdownSignal, () => void>();
+  const daemon = await runNodePostgresWorkerDaemonHost({
+    runtime: {
+      identityProvider: {
+        async getVerifiedWorkerIdentity() { return { status: "NOT_CONNECTED" }; },
+      },
+      pool: daemonPool,
+      expectedLoginRole: "happy_worker_staging",
+    },
+    signals: {
+      on(signal, listener) { daemonListeners.set(signal, listener); },
+      off(signal, listener) {
+        if (daemonListeners.get(signal) === listener) daemonListeners.delete(signal);
+      },
+    },
+    tenantPersistence: {} as unknown as AsyncTenantPersistenceAdapter,
+    provider: {
+      providerId: "host-daemon-entrypoint-test",
+      supportsIdempotencyKeys: true,
+      async dispatch() {
+        return {
+          kind: "ACKNOWLEDGED",
+          provider: "host-daemon-entrypoint-test",
+          providerRequestId: "not-used",
+          response: {},
+        };
+      },
+    },
+    operation: "PENDING_DISPATCH",
+    maxTenants: 2,
+    maxBatches: 3,
+    pollIntervalMs: 100,
+  });
+  assert.equal(daemon.status, "DENIED", "unavailable workload identity must stop daemon polling");
+  assert.equal(daemon.batchesRun, 1, "daemon must not continue polling after identity denial");
+  assert.equal(daemonPoolConnections, 0, "unverified identity must not open PostgreSQL");
+  assert.equal(daemonPoolClosed, 1, "daemon host must close the same pool exactly once");
+  assert.equal(daemonListeners.size, 0, "daemon host must remove signal listeners");
+
+  console.log("Node PostgreSQL worker one-shot and daemon host entrypoints: PASS");
 }
 
 void main().catch((error: unknown) => {
