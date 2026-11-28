@@ -57,4 +57,6 @@ export interface VerificationResult {
   summary: string;
   failureReason?: string;
   verifiedAt: string;
+  /** Cryptographic proof retained so completion gates can independently re-verify it. */
+  attestation?: import("./semantic-attestation").SignedSemanticAttestation;
 }

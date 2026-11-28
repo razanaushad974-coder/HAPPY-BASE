@@ -61,21 +61,19 @@ async function main(): Promise<void> {
     executionRequestId: request.executionRequestId, type: "TEST_RESULT", source: "TEST",
     title: "Matching evidence", content: "Synthetic test evidence only.",
   });
-  const wrongTask = await evidence.capture({
-    verificationRequestId: request.id, missionId: request.missionId, taskId: "another-task",
-    executionRequestId: request.executionRequestId, type: "TEST_RESULT", source: "TEST",
-    title: "Wrong task evidence", content: "Must not be attached.",
-  });
-  const wrongExecution = await evidence.capture({
-    verificationRequestId: request.id, missionId: request.missionId, taskId: request.taskId,
-    executionRequestId: "another-execution", type: "TEST_RESULT", source: "TEST",
-    title: "Wrong execution evidence", content: "Must not be attached.",
-  });
-  const wrongRequest = await evidence.capture({
-    verificationRequestId: "another-verification", missionId: request.missionId, taskId: request.taskId,
-    executionRequestId: request.executionRequestId, type: "TEST_RESULT", source: "TEST",
-    title: "Wrong verification evidence", content: "Must not be attached.",
-  });
+  // Simulate records forged through a lower-level persistence path. The
+  // capture service itself rejects these bindings; verification must also
+  // ignore corrupted rows that bypassed that service boundary.
+  const wrongTask: Evidence = { ...valid, id: "evidence-wrong-task", taskId: "another-task" };
+  const wrongExecution: Evidence = {
+    ...valid, id: "evidence-wrong-execution", executionRequestId: "another-execution",
+  };
+  const wrongRequest: Evidence = {
+    ...valid, id: "evidence-wrong-request", verificationRequestId: "another-verification",
+  };
+  await ownerStore.evidence<Evidence>().create(wrongTask.id, wrongTask);
+  await ownerStore.evidence<Evidence>().create(wrongExecution.id, wrongExecution);
+  await ownerStore.evidence<Evidence>().create(wrongRequest.id, wrongRequest);
 
   const validRecord = await ownerStore.evidence<Evidence>().get(valid.id);
   if (!validRecord) throw new Error("Valid evidence fixture was not persisted.");
@@ -93,8 +91,14 @@ async function main(): Promise<void> {
   }
   const persisted = await verifier.get(result.id);
   const persistedResultRecord = await ownerStore.verification().get(result.id);
-  if (!persisted || persisted.requestId !== request.id || persistedResultRecord?.entityType !== "VERIFICATION") {
-    throw new Error("Verification result was not persisted in the result entity type.");
+  if (!persisted || persisted.id !== request.id || persisted.requestId !== request.id ||
+      persistedResultRecord?.id !== request.id || persistedResultRecord.entityType !== "VERIFICATION") {
+    throw new Error("Verification result was not persisted under its stable request identity.");
+  }
+  const repeated = await verifier.verify(request.id, [wrongTask.id]);
+  if (repeated.id !== result.id || repeated.status !== result.status ||
+      repeated.evidenceIds.join(",") !== result.evidenceIds.join(",")) {
+    throw new Error("Repeated verification changed the immutable persisted result.");
   }
   if ((await verifier.forRequest(" verify-1 ")).length !== 1) throw new Error("Request result lookup failed.");
   if (await otherVerifier.get(result.id)) throw new Error("Verification result leaked across tenant users.");

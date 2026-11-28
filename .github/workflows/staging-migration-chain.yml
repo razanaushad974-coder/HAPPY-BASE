@@ -1,0 +1,95 @@
+name: HAPPY Supabase staging migration chain replay
+
+on:
+  push:
+    branches:
+      - security/staging-migration-chain
+    paths:
+      - "scripts/security/generate-staging-migration-chain.sh"
+      - "scripts/security/supabase-local-jwt-tenant-isolation.sh"
+      - ".github/workflows/staging-migration-chain.yml"
+      - "supabase/drafts/**"
+      - "supabase/migrations/**"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: happy-staging-migration-chain-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  generate-and-replay:
+    name: Generate CLI migrations and replay on local PostgreSQL 17
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout isolated migration branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install pinned Supabase CLI
+        uses: supabase/setup-cli@v3
+        with:
+          version: 3.2.0
+
+      - name: Discover installed CLI command surface
+        run: |
+          supabase --version
+          supabase --help
+          supabase migration new --help
+          supabase db reset --help
+          supabase config validate --help
+
+      - name: Generate config and ordered migrations through Supabase CLI
+        run: bash scripts/security/generate-staging-migration-chain.sh
+
+      - name: Validate generated Supabase configuration
+        run: supabase config validate
+
+      - name: Start isolated local Supabase stack
+        run: supabase start
+
+      - name: Replay every migration from an empty local database
+        run: supabase db reset
+
+      - name: Verify real Supabase Auth JWT tenant isolation on local stack
+        run: bash scripts/security/supabase-local-jwt-tenant-isolation.sh
+
+      - name: Verify local migration history
+        run: supabase migration list
+
+      - name: Upload generated chain and checksums for audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: happy-supabase-staging-migration-chain
+          path: |
+            supabase/config.toml
+            supabase/.gitignore
+            supabase/migrations/*.sql
+            docs/security/supabase-staging-migration-chain.md
+            docs/security/supabase-staging-migration-checksums.sha256
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Commit generated chain only after clean replay passes
+        if: success() && github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add supabase/config.toml supabase/migrations/*.sql docs/security/supabase-staging-migration-chain.md docs/security/supabase-staging-migration-checksums.sha256
+          if git diff --cached --quiet; then
+            echo "Generated migration chain is already committed."
+            exit 0
+          fi
+          git commit -m "Add CLI-generated Supabase staging migration chain"
+          # A developer or parallel validation push may advance this branch
+          # while the disposable replay is running. Rebase the generated
+          # checksum-only commit onto the latest branch tip; never force-push.
+          git fetch origin "${GITHUB_REF_NAME}"
+          git rebase "origin/${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"

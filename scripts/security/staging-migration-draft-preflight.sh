@@ -34,6 +34,7 @@ required=(
   20261123_worker_registry_owner_privilege_candidate.sql
   20261123_worker_scheduler_rpc_owner_role_candidate.sql
   20261123_worker_scheduler_rpc_owner_privilege_candidate.sql
+  20261121_authenticated_tenant_context_rpc_candidate.sql
   20261123_worker_registry_helper_grant_candidate.sql
   20261123_worker_scheduler_rpc_grant_candidate.sql
 )
@@ -98,8 +99,7 @@ pass "five function-owner role definitions enforce NOLOGIN/NOINHERIT/NOBYPASSRLS
 # Superseded files must remain inert; stale dependency notes must not be
 # executable inputs to a future migration chain.
 for file in \
-  20261121_authenticated_execution_request_rpc_candidate.sql \
-  20261121_authenticated_tenant_context_rpc_candidate.sql; do
+  20261121_authenticated_execution_request_rpc_candidate.sql; do
   path="$DRAFTS/$file"
   grep -Eiq 'SUPERSEDED DESIGN NOTE' "$path" || fail "$file is not marked superseded"
   if grep -Eiq '^[[:space:]]*(create|alter|grant|revoke)[[:space:]]' "$path"; then
@@ -107,6 +107,70 @@ for file in \
   fi
 done
 pass "superseded SQL notes are non-executable"
+
+# The active tenant-context RPC is a read-only authenticated selector check,
+# owned by the dedicated NOLOGIN/NOBYPASSRLS role and bound to auth.uid().
+TENANT_CONTEXT_RPC="$DRAFTS/20261121_authenticated_tenant_context_rpc_candidate.sql"
+grep -Fq 'CREATE OR REPLACE FUNCTION public.resolve_authenticated_tenant_context(' "$TENANT_CONTEXT_RPC" \
+  || fail "authenticated tenant-context RPC signature is missing"
+grep -Eiq 'security definer' "$TENANT_CONTEXT_RPC" \
+  || fail "tenant-context RPC must use its reviewed function-owner boundary"
+grep -Eiq 'set search_path = pg_catalog' "$TENANT_CONTEXT_RPC" \
+  || fail "tenant-context RPC must pin search_path"
+grep -Eiq 'set row_security = on' "$TENANT_CONTEXT_RPC" \
+  || fail "tenant-context RPC must enforce row_security"
+grep -Fq 'private.happy_current_authenticated_user_id()' "$TENANT_CONTEXT_RPC" \
+  || fail "tenant-context RPC must derive identity through the private auth.uid() accessor"
+grep -Fq 'ALTER FUNCTION public.resolve_authenticated_tenant_context(uuid, uuid)' "$TENANT_CONTEXT_RPC" \
+  || fail "tenant-context RPC owner transfer is missing"
+grep -Fq 'OWNER TO happy_tenant_scope_rpc_owner;' "$TENANT_CONTEXT_RPC" \
+  || fail "tenant-context RPC must be owned by the dedicated non-bypass role"
+grep -Fq 'GRANT SELECT (role)' "$TENANT_CONTEXT_RPC" \
+  || fail "tenant-context RPC owner is missing narrow membership role column grants"
+grep -Fq 'ON private.organization_memberships TO happy_tenant_scope_rpc_owner;' "$TENANT_CONTEXT_RPC" \
+  || fail "tenant-context RPC owner is missing organization role column grant"
+grep -Fq 'ON private.workspace_memberships TO happy_tenant_scope_rpc_owner;' "$TENANT_CONTEXT_RPC" \
+  || fail "tenant-context RPC owner is missing workspace role column grant"
+grep -Fq 'REVOKE ALL ON FUNCTION public.resolve_authenticated_tenant_context(uuid, uuid)' "$TENANT_CONTEXT_RPC" \
+  || fail "tenant-context RPC must revoke default EXECUTE"
+grep -Fq 'FROM PUBLIC, anon, authenticated, service_role;' "$TENANT_CONTEXT_RPC" \
+  || fail "tenant-context RPC must revoke EXECUTE from PUBLIC and non-authenticated roles"
+grep -Fq 'GRANT EXECUTE ON FUNCTION public.resolve_authenticated_tenant_context(uuid, uuid)' "$TENANT_CONTEXT_RPC" \
+  || fail "tenant-context RPC authenticated EXECUTE grant is missing"
+grep -Fq 'TO authenticated;' "$TENANT_CONTEXT_RPC" \
+  || fail "tenant-context RPC must grant EXECUTE to authenticated"
+if grep -Eiq '^[[:space:]]*(insert|update|delete|truncate|drop)[[:space:]]' "$TENANT_CONTEXT_RPC"; then
+  fail "tenant-context RPC candidate must remain read-only"
+fi
+pass "authenticated tenant-context RPC uses a read-only NOBYPASSRLS owner and narrow authenticated EXECUTE"
+
+# The dependency manifest must reflect the split identity/request/envelope
+# baseline. Reject stale ordering or any attempt to resurrect the inert RPC
+# placeholder as a schema-producing prerequisite.
+line_stage0="$(grep -nF '| 0. Canonical identity baseline |' "$MANIFEST" | cut -d: -f1 || true)"
+line_request_base="$(grep -nF '| 2. Execution request base |' "$MANIFEST" | cut -d: -f1 || true)"
+line_envelope="$(grep -nF '| 2a. Execution request + approval envelope |' "$MANIFEST" | cut -d: -f1 || true)"
+test -n "$line_stage0" && test -n "$line_request_base" && test -n "$line_envelope" \
+  || fail "manifest is missing canonical identity/request/envelope stages"
+(( line_stage0 < line_request_base && line_request_base < line_envelope )) \
+  || fail "manifest dependency order must be identity -> request base -> approval envelope"
+grep -Fq '20261123_canonical_tenant_identity_schema_candidate.sql' "$MANIFEST" >/dev/null \
+  || fail "manifest does not identify the isolated canonical identity baseline"
+grep -Fq '20261123_execution_request_base_schema_candidate.sql' "$MANIFEST" >/dev/null \
+  || fail "manifest does not identify the isolated execution-request base"
+grep -Fq 'non-executable superseded note' "$MANIFEST" >/dev/null \
+  || fail "manifest does not explicitly mark the intermediate execution-request RPC as superseded and inert"
+grep -Fq 'Do not treat it as a schema prerequisite' "$MANIFEST" >/dev/null \
+  || fail "manifest does not prohibit the superseded RPC note as a schema prerequisite"
+
+ENVELOPE="$DRAFTS/20261121_authenticated_execution_envelope_candidate.sql"
+grep -Fq 'private.execution_requests' "$ENVELOPE" >/dev/null \
+  || fail "execution envelope does not bind to the minimal request base"
+grep -Fq 'happy_tenant_records' "$ENVELOPE" >/dev/null \
+  || fail "execution envelope does not bind task/mission selectors to persisted tenant records"
+grep -Fq '20261121_authenticated_execution_request_rpc_candidate.sql is superseded and inert' "$ENVELOPE" >/dev/null \
+  || fail "execution envelope does not identify the intermediate RPC note as superseded"
+pass "identity -> request base -> approval envelope dependency contract"
 
 # Worker scheduler definitions must withhold EXECUTE; grants remain separate.
 WORKER_SQL="$DRAFTS/20261122_worker_scheduler_rpc_candidate.sql"
@@ -141,5 +205,7 @@ if [[ ! -f "$ROOT_DIR/supabase/config.toml" || ! -d "$ROOT_DIR/supabase/migratio
 else
   echo "INFO: Supabase config and migration directory exist; ordered migration review is still required."
 fi
+
+bash "$ROOT_DIR/scripts/security/execution-decision-owner-contract.sh"
 
 echo "PASS: static staging draft preflight complete; this script does not apply SQL or certify staging readiness."

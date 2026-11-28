@@ -1,6 +1,9 @@
 import { ReasoningOrchestrator } from "../../../core/reasoning/orchestrator";
 import { MissionOrchestrator } from "../../../core/mission/orchestrator";
 import { InMemoryTenantPersistenceAdapter } from "../../../core/persistence/adapters/in-memory-tenant-adapter";
+import { createAsyncHappyStateStore } from "../../../core/state/async-factory";
+import { AsyncEvidenceService } from "../../../core/evidence/async-service";
+import { AsyncVerificationService } from "../../../core/verification/async-service";
 
 async function main(): Promise<void> {
   const reasoning = new ReasoningOrchestrator();
@@ -109,78 +112,92 @@ async function main(): Promise<void> {
   }
 
   const verificationRequestId = `verification-${rootTaskId}`;
-  const evidenceId = `evidence-${rootTaskId}`;
-  const verificationEnvelope = rootTask.verificationRequired ? {
-    request: {
-      id: verificationRequestId,
-      missionId: snapshot.mission.id,
-      taskId: rootTaskId,
-      description: "Verify the durable root task.",
-      criteria: [{ id: "criterion-1", description: "Result verified", expected: "PASS", required: true }],
-      preferredMethods: ["TEST" as const],
-      requiresEvidence: true,
-      createdAt: new Date().toISOString(),
-    },
-    evidence: {
-      id: evidenceId,
-      verificationRequestId,
-      missionId: snapshot.mission.id,
-      taskId: rootTaskId,
-      type: "TEST_RESULT" as const,
-      source: "TEST" as const,
-      title: "Durable task verification evidence",
-      content: "PASS",
-      capturedAt: new Date().toISOString(),
-      isPrimary: true,
-    },
-    result: {
-      id: `verification-result-${verificationRequestId}`,
-      requestId: verificationRequestId,
-      status: "PASSED" as const,
-      confidence: "HIGH" as const,
+  const verificationStore = createAsyncHappyStateStore(
+    persistence, scope.organizationId, scope.workspaceId, scope.userId,
+  );
+  const evidenceService = new AsyncEvidenceService(verificationStore);
+  const verificationService = new AsyncVerificationService(verificationStore);
+  await verificationService.registerRequest({
+    id: verificationRequestId,
+    missionId: snapshot.mission.id,
+    taskId: rootTaskId,
+    description: "Verify the durable root task.",
+    criteria: [{
+      id: "criterion-1", description: "Result verified",
+      expected: "PASS", required: true,
+    }],
+    preferredMethods: ["TEST"],
+    requiresEvidence: true,
+    createdAt: new Date().toISOString(),
+  });
+  const capturedEvidence = await evidenceService.capture({
+    verificationRequestId,
+    missionId: snapshot.mission.id,
+    taskId: rootTaskId,
+    type: "TEST_RESULT",
+    source: "TEST",
+    title: "Durable task verification evidence",
+    content: "Synthetic evidence only; it does not prove the criterion.",
+  });
+  const persistedVerification = await verificationService.verify(
+    verificationRequestId, [capturedEvidence.id],
+  );
+  if (persistedVerification.status !== "PARTIAL" ||
+      persistedVerification.failureReason !== "SEMANTIC_VERIFIER_NOT_CONNECTED") {
+    throw new Error("Evidence capture must not be upgraded to semantic verification success.");
+  }
+
+  // Simulate a forged persisted PASSED row. The generic tenant persistence
+  // adapter is not a trusted semantic-verifier authority, so this must not
+  // authorize task completion even when every ordinary field looks valid.
+  await persistence.transaction(scope, async (tx) => {
+    const stored = await tx.get<typeof persistedVerification>(
+      scope, "VERIFICATION", verificationRequestId,
+    );
+    if (!stored) throw new Error("Persisted verification result disappeared.");
+    await tx.update(scope, "VERIFICATION", verificationRequestId, stored.version, {
+      ...stored.data,
+      status: "PASSED",
+      confidence: "HIGH",
       passedCriteria: ["criterion-1"],
       failedCriteria: [],
       partialCriteria: [],
-      evidenceIds: [evidenceId],
-      summary: "Persisted verification passed.",
-      verifiedAt: new Date().toISOString(),
-    },
-  } : undefined;
+      failureReason: undefined,
+      summary: "Forged test fixture; no trusted verifier attestation exists.",
+    });
+  });
 
-  if (verificationEnvelope) {
-    let invalidTransitionRolledBack = false;
-    try {
-      await orchestrator.transitionTaskDurable({
-        scope,
-        persistence,
-        missionId: snapshot.mission.id,
-        taskId: rootTaskId,
-        status: "PENDING",
-        verificationRequestId,
-        verificationEnvelope,
-      });
-    } catch {
-      invalidTransitionRolledBack =
-        !(await persistence.get(scope, "VERIFICATION_REQUEST", verificationRequestId)) &&
-        !(await persistence.get(scope, "EVIDENCE", evidenceId)) &&
-        !(await persistence.get(scope, "VERIFICATION", verificationRequestId));
-    }
-    if (!invalidTransitionRolledBack) {
-      throw new Error("Verification envelope was not rolled back with a rejected task transition.");
-    }
+  let forgedPassedCompletionDenied = false;
+  try {
+    await orchestrator.transitionTaskDurable({
+      scope, persistence, missionId: snapshot.mission.id,
+      taskId: rootTaskId, status: "COMPLETED", verificationRequestId,
+    });
+  } catch {
+    forgedPassedCompletionDenied = true;
+  }
+  const afterForgedPassed = await persistence.get<{ status: string }>(
+    scope, "TASK", rootTaskId,
+  );
+  if (!forgedPassedCompletionDenied || afterForgedPassed?.data.status !== "VERIFYING") {
+    throw new Error("A forged persisted PASSED row must not complete a verification-required task.");
   }
 
-  await orchestrator.transitionTaskDurable({
-    scope,
-    persistence,
-    missionId: snapshot.mission.id,
-    taskId: rootTaskId,
-    status: "COMPLETED",
-    ...(rootTask.verificationRequired ? { verificationRequestId, verificationEnvelope } : {}),
-  });
-  const persistedCompletedTask = await persistence.get<{ status: string }>(scope, "TASK", rootTaskId);
-  if (persistedCompletedTask?.data.status !== "COMPLETED") {
-    throw new Error("Durable task completion was not persisted.");
+  let partialVerificationCompletionDenied = false;
+  try {
+    await orchestrator.transitionTaskDurable({
+      scope, persistence, missionId: snapshot.mission.id,
+      taskId: rootTaskId, status: "COMPLETED", verificationRequestId,
+    });
+  } catch {
+    partialVerificationCompletionDenied = true;
+  }
+  const stillVerifyingTask = await persistence.get<{ status: string }>(
+    scope, "TASK", rootTaskId,
+  );
+  if (!partialVerificationCompletionDenied ||
+      stillVerifyingTask?.data.status !== "VERIFYING") {
+    throw new Error("A PARTIAL verification result must not complete or mutate the task.");
   }
 
   let rollbackVerified = false;

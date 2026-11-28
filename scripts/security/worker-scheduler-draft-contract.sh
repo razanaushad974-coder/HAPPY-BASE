@@ -55,6 +55,24 @@ if ! awk -v fn="happy_worker_claim_mission_task" '
   exit 1
 fi
 
+if ! awk -v fn="happy_worker_claim_dispatch_outbox" '
+  index($0, "create or replace function private." fn "(") > 0 { inside=1 }
+  inside { print }
+  inside && /^\$[a-z_]+\$;$/ { exit }
+' "$SQL_FILE" | grep -F "v_request.approval_status IS DISTINCT FROM 'APPROVED'" >/dev/null; then
+  echo "Single-outbox dispatch claim must revalidate persisted founder approval." >&2
+  exit 1
+fi
+
+if ! awk -v fn="happy_worker_claim_dispatch_outbox" '
+  index($0, "create or replace function private." fn "(") > 0 { inside=1 }
+  inside { print }
+  inside && /^\$[a-z_]+\$;$/ { exit }
+' "$SQL_FILE" | grep -F "for share" >/dev/null; then
+  echo "Single-outbox dispatch claim must lock the approved request at dispatch time." >&2
+  exit 1
+fi
+
 if ! awk -v fn="happy_worker_claim_next_dispatch_outbox" '
   index($0, "create or replace function private." fn "(") > 0 { inside=1 }
   inside { print }

@@ -9,6 +9,7 @@ on:
       - security/durable-file-mutation-grants
       - platform/full-happy-audit-and-integration
       - security/staging-migration-readiness
+      - security/migration-dependency-preflight
     paths:
       - "src/lib/supabase/**"
       - "src/app/auth/**"
@@ -38,6 +39,7 @@ on:
       - "src/tests/core/state/**"
       - "scripts/security/**"
       - "supabase/drafts/**"
+      - "supabase/migrations/**"
       - "docs/architecture/**"
       - "package.json"
       - "package-lock.json"
@@ -105,7 +107,7 @@ jobs:
       - name: PostgreSQL reconciliation evidence store contract
         run: npx --yes tsx@4.23.15 src/tests/core/persistence/postgres-provider-reconciliation-evidence-store.test.ts
       - name: Validate PostgreSQL and staging preflight shell syntax
-        run: bash -n scripts/security/postgres-tenant-persistence-integration.sh scripts/security/postgres-tenant-cas-concurrency.sh scripts/security/postgres-reconciliation-evidence-concurrency.sh scripts/security/postgres-worker-principal-registry-integration.sh scripts/security/worker-scheduler-draft-contract.sh scripts/security/staging-migration-draft-preflight.sh
+        run: bash -n scripts/security/hosted-worker-identity-readonly.sh scripts/security/execution-decision-owner-contract.sh scripts/security/postgres-tenant-persistence-integration.sh scripts/security/postgres-tenant-cas-concurrency.sh scripts/security/postgres-reconciliation-evidence-concurrency.sh scripts/security/postgres-worker-principal-registry-integration.sh scripts/security/worker-scheduler-draft-contract.sh scripts/security/staging-migration-draft-preflight.sh
       - name: Static Supabase staging migration draft preflight
         run: bash scripts/security/staging-migration-draft-preflight.sh
       - name: Worker scheduler draft contract

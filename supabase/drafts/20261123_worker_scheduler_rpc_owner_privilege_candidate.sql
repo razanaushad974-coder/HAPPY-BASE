@@ -213,20 +213,80 @@ ALTER FUNCTION private.happy_worker_list_dispatch_reconciliation_evidence(uuid,u
 REVOKE CREATE ON SCHEMA private FROM happy_worker_scheduler_rpc_owner;
 
 DO $assert$
-DECLARE bad text;
+DECLARE
+  bad text;
+  missing text;
 BEGIN
-  SELECT format('%I.%I:%I',schemaname,tablename,policyname) INTO bad
-    FROM pg_catalog.pg_policies
-   WHERE schemaname='public'
-     AND tablename IN ('happy_mission_task_leases','happy_execution_dispatch_outbox')
-     AND cmd='UPDATE'
-     AND 'happy_worker_scheduler_rpc_owner'=ANY(roles)
+  WITH expected(schemaname, tablename, policyname, lock_only) AS (
+    VALUES
+      ('public','happy_tenant_records','happy_worker_scheduler_control_update',false),
+      ('public','happy_mission_task_leases','happy_worker_scheduler_lease_update',false),
+      ('public','happy_execution_dispatch_outbox','happy_worker_scheduler_outbox_control_update',false),
+      ('public','happy_execution_dispatch_outbox','happy_worker_scheduler_outbox_verify_lock',true),
+      ('private','execution_requests','happy_worker_scheduler_request_update',false)
+  ),
+  actual AS (
+    SELECT schemaname, tablename, policyname, qual, with_check
+      FROM pg_catalog.pg_policies
+     WHERE cmd='UPDATE'
+       AND 'happy_worker_scheduler_rpc_owner'=ANY(roles)
+  ),
+  missing_expected AS (
+    SELECT e.schemaname||'.'||e.tablename||':'||e.policyname AS item
+      FROM expected e
+      LEFT JOIN actual a
+        ON a.schemaname=e.schemaname
+       AND a.tablename=e.tablename
+       AND a.policyname=e.policyname
+     WHERE a.policyname IS NULL
+  ),
+  unexpected AS (
+    SELECT a.schemaname||'.'||a.tablename||':'||a.policyname AS item
+      FROM actual a
+      LEFT JOIN expected e
+        ON e.schemaname=a.schemaname
+       AND e.tablename=a.tablename
+       AND e.policyname=a.policyname
+     WHERE a.schemaname IN ('public','private')
+       AND a.tablename IN (
+         'happy_tenant_records','happy_mission_task_leases',
+         'happy_execution_dispatch_outbox','execution_requests'
+       )
+       AND e.policyname IS NULL
+  )
+  SELECT string_agg(item, ', ') INTO missing FROM (
+    SELECT item FROM missing_expected
+    UNION ALL
+    SELECT item FROM unexpected
+  ) problems;
+  IF missing IS NOT NULL THEN
+    RAISE EXCEPTION 'Worker UPDATE policy set is incomplete or unexpectedly broad: %',missing;
+  END IF;
+
+  SELECT a.schemaname||'.'||a.tablename||':'||a.policyname
+    INTO bad
+    FROM pg_catalog.pg_policies a
+    JOIN (VALUES
+      ('public','happy_tenant_records','happy_worker_scheduler_control_update',false),
+      ('public','happy_mission_task_leases','happy_worker_scheduler_lease_update',false),
+      ('public','happy_execution_dispatch_outbox','happy_worker_scheduler_outbox_control_update',false),
+      ('public','happy_execution_dispatch_outbox','happy_worker_scheduler_outbox_verify_lock',true),
+      ('private','execution_requests','happy_worker_scheduler_request_update',false)
+    ) e(schemaname,tablename,policyname,lock_only)
+      ON e.schemaname=a.schemaname
+     AND e.tablename=a.tablename
+     AND e.policyname=a.policyname
+   WHERE a.cmd='UPDATE'
+     AND 'happy_worker_scheduler_rpc_owner'=ANY(a.roles)
      AND (
-       (policyname='happy_worker_scheduler_outbox_verify_lock' AND coalesce(with_check,'')<>'false')
-       OR (policyname<>'happy_worker_scheduler_outbox_verify_lock' AND with_check='false')
+       coalesce(a.qual,'')=''
+       OR (e.lock_only AND coalesce(a.with_check,'')<>'false')
+       OR (NOT e.lock_only AND coalesce(a.with_check,'') IN ('','false'))
      )
    LIMIT 1;
-  IF bad IS NOT NULL THEN RAISE EXCEPTION 'Unexpected worker lock/update policy: %',bad; END IF;
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION 'Worker UPDATE policy has an unsafe USING/WITH CHECK contract: %',bad;
+  END IF;
 
   IF has_column_privilege('happy_worker_scheduler_rpc_owner','private.execution_requests','status','UPDATE') IS DISTINCT FROM true
      OR has_column_privilege('happy_worker_scheduler_rpc_owner','private.execution_requests','approval_status','UPDATE')
@@ -245,7 +305,7 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'API or worker LOGIN is a member of scheduler owner';
   END IF;
-END
+END;
 $assert$;
 
 COMMIT;

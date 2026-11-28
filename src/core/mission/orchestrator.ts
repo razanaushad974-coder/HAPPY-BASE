@@ -28,9 +28,16 @@ import {
   type IdempotentDispatchProvider,
 } from "./durable-dispatch-worker-contract";
 import type { ProviderStatusReader } from "./provider-dispatch-reconciliation";
+import {
+  assessPersistedMissionRecovery,
+  createWorkerBrokerRecoveryEvidenceReader,
+  type PersistedMissionRecoveryResult,
+  type RecoveryEvidenceReader,
+} from "./persisted-recovery-assessment";
 import type { TenantScope } from "../state/types";
-import type { VerificationRequest, VerificationResult } from "../verification/types";
 import type { Evidence } from "../evidence/types";
+import type { VerificationRequest, VerificationResult } from "../verification/types";
+import type { TrustedSemanticAttestationAuthority } from "../verification/semantic-attestation";
 import {
   requireCompleteScope,
   TenantPersistenceError,
@@ -43,6 +50,7 @@ export class MissionOrchestrator {
 
   constructor(
     private readonly workerRuntimeDependencies: WorkerRuntimeCompositionDependencies | null = null,
+    private readonly semanticAttestationAuthority: TrustedSemanticAttestationAuthority | null = null,
   ) {}
 
   /**
@@ -165,6 +173,7 @@ export class MissionOrchestrator {
     ApprovedTaskEnqueueResult |
     DurableDispatchPollResult |
     { status: "NO_READY_TASK" } |
+    { status: "SCHEDULER_SCAN_INCOMPLETE"; missionCount: number; taskCount: number } |
     { status: "NOT_CONNECTED"; missing: "TENANT_PERSISTENCE" }
   > {
     // Resolve trusted workload identity and the live principal registry
@@ -187,6 +196,17 @@ export class MissionOrchestrator {
       input.persistence.list<Mission>(scope, { entityType: "MISSION", limit: 200 }),
       input.persistence.list<MissionTask>(scope, { entityType: "TASK", limit: 1000 }),
     ]);
+    // list() exposes a hard limit but no cursor/total count. Reaching either
+    // limit means the candidate set may be truncated; never report NO_READY_TASK
+    // or dispatch from an incomplete scheduler snapshot.
+    if (missions.length >= 200 || tasks.length >= 1000) {
+      return {
+        status: "SCHEDULER_SCAN_INCOMPLETE",
+        missionCount: missions.length,
+        taskCount: tasks.length,
+      };
+    }
+
     const tasksByMission = new Map<string, MissionTask[]>();
     for (const record of tasks) {
       const task = record.data;
@@ -229,6 +249,68 @@ export class MissionOrchestrator {
   }
 
   /**
+   * Exposes the persisted crash-recovery assessment through the orchestrator.
+   * This is deliberately read-only: it never retries, dispatches, or changes
+   * mission/task state. Ambiguous external side effects remain review-gated.
+   */
+  async assessDurableMissionRecovery(input: {
+    scope: TenantScope & { userId: string };
+    persistence: AsyncTenantPersistenceAdapter;
+    missionId: string;
+    evidenceReader?: RecoveryEvidenceReader;
+  }): Promise<PersistedMissionRecoveryResult> {
+    requireCompleteScope(input.scope);
+    return assessPersistedMissionRecovery(
+      input.scope,
+      input.missionId,
+      input.persistence,
+      input.evidenceReader,
+    );
+  }
+
+  /**
+   * Runs the read-only persisted recovery assessment through the authenticated
+   * worker broker. The worker principal and tenant tuple must match the live
+   * registry snapshot; evidence reads are re-authorized by the broker facade.
+   */
+  async assessWorkerMissionRecovery(input: {
+    scope: TenantScope & { userId: string };
+    tenantScope: WorkerTenantScope;
+    persistence: AsyncTenantPersistenceAdapter;
+    missionId: string;
+    now?: () => number;
+  }): Promise<WorkerRuntimeComposition | PersistedMissionRecoveryResult> {
+    requireCompleteScope(input.scope);
+    if (input.scope.organizationId !== input.tenantScope.organizationId ||
+        input.scope.workspaceId !== input.tenantScope.workspaceId ||
+        input.scope.userId !== input.tenantScope.userId) {
+      throw new TenantPersistenceError(
+        "INVALID_TENANT_SCOPE",
+        "Recovery assessment and worker evidence reader must use the same tenant scope.",
+      );
+    }
+    const composition = await this.prepareWorkerRuntimeOperation(
+      "list_reconciliation_evidence",
+      input.now,
+    );
+    if (composition.status !== "COMPOSITION_AVAILABLE") return composition;
+    if (composition.registration.principalId !== input.tenantScope.workerPrincipalId) {
+      return { status: "DENIED", reason: "PRINCIPAL_NOT_AUTHORIZED" };
+    }
+    const evidenceReader = createWorkerBrokerRecoveryEvidenceReader(
+      composition.broker,
+      input.tenantScope,
+      input.scope,
+    );
+    return this.assessDurableMissionRecovery({
+      scope: input.scope,
+      persistence: input.persistence,
+      missionId: input.missionId,
+      evidenceReader,
+    });
+  }
+
+  /**
    * Applies a mission-engine task transition and persists both task and
    * aggregate mission state with version-checked writes in one transaction.
    * A rejected graph/transition or stale version rolls back the whole change.
@@ -242,38 +324,11 @@ export class MissionOrchestrator {
       status: MissionTask["status"];
       /** Required when a verification-gated task is being completed. */
       verificationRequestId?: string;
-      /** Verification records to persist atomically with the task/mission transition. */
-      verificationEnvelope?: {
-        request: VerificationRequest;
-        evidence: Evidence;
-        result: VerificationResult;
-      };
     },
   ): Promise<MissionSnapshot> {
     const scope = input.scope;
     requireCompleteScope(scope);
     return input.persistence.transaction(scope, async (transaction) => {
-      if (input.verificationEnvelope) {
-        const { request, evidence, result } = input.verificationEnvelope;
-        if (
-          request.id !== evidence.verificationRequestId ||
-          request.id !== result.requestId ||
-          !result.evidenceIds.includes(evidence.id) ||
-          evidence.missionId !== input.missionId ||
-          evidence.taskId !== input.taskId ||
-          request.missionId !== input.missionId ||
-          request.taskId !== input.taskId
-        ) {
-          throw new TenantPersistenceError(
-            "INVALID_RECORD_DATA",
-            "Verification envelope is not bound to the requested mission task.",
-          );
-        }
-        await transaction.create(scope, "VERIFICATION_REQUEST", request.id, request);
-        await transaction.create(scope, "EVIDENCE", evidence.id, evidence);
-        await transaction.create(scope, "VERIFICATION", request.id, result);
-      }
-
       const missionRecord = await transaction.get<Mission>(
         scope, "MISSION", input.missionId,
       );
@@ -296,38 +351,98 @@ export class MissionOrchestrator {
       }
 
       if (input.status === "COMPLETED" && targetTask.verificationRequired) {
-        const verificationRequestId = input.verificationRequestId;
-        if (!verificationRequestId?.trim()) {
-          throw new TenantPersistenceError("INVALID_RECORD_DATA", "A persisted PASSED verification is required before completing this task.");
+        if (!this.semanticAttestationAuthority || !input.verificationRequestId?.trim()) {
+          throw new TenantPersistenceError(
+            "INVALID_RECORD_DATA",
+            "Trusted semantic verification authority and an exact verification request are required.",
+          );
         }
-        const verificationRequest = await transaction.get<VerificationRequest>(
-          scope, "VERIFICATION_REQUEST", verificationRequestId,
-        );
-        const verification = await transaction.get<VerificationResult>(
-          scope, "VERIFICATION", verificationRequestId,
-        );
-        if (!verificationRequest || !verification ||
-            verificationRequest.data.id !== verificationRequestId ||
-            verificationRequest.data.missionId !== input.missionId ||
-            verificationRequest.data.taskId !== input.taskId ||
-            verification.data.requestId !== verificationRequestId ||
-            verification.data.status !== "PASSED" ||
-            !Array.isArray(verification.data.evidenceIds) ||
-            verification.data.evidenceIds.length === 0) {
-          throw new TenantPersistenceError("INVALID_RECORD_DATA", "Persisted verification is not PASSED or is not bound to this mission task.");
+
+        const requestId = input.verificationRequestId.trim();
+        const [requestRecord, resultRecord] = await Promise.all([
+          transaction.get<VerificationRequest>(scope, "VERIFICATION_REQUEST", requestId),
+          transaction.get<VerificationResult>(scope, "VERIFICATION", requestId),
+        ]);
+        if (!requestRecord || !resultRecord ||
+            requestRecord.id !== requestId || requestRecord.data.id !== requestId ||
+            requestRecord.data.missionId !== input.missionId ||
+            requestRecord.data.taskId !== input.taskId ||
+            resultRecord.id !== requestId || resultRecord.data.id !== requestId ||
+            resultRecord.data.requestId !== requestId ||
+            resultRecord.data.status !== "PASSED" ||
+            !resultRecord.data.attestation) {
+          throw new TenantPersistenceError(
+            "INVALID_RECORD_DATA",
+            "A matching persisted PASSED result with signed verifier attestation is required.",
+          );
         }
-        const evidence = await Promise.all(
-          verification.data.evidenceIds.map((evidenceId) =>
-            transaction.get<Evidence>(scope, "EVIDENCE", evidenceId),
-          ),
+
+        const request = requestRecord.data;
+        const persistedResult = resultRecord.data;
+        const attestation = persistedResult.attestation;
+        if (!attestation || typeof attestation !== "object" ||
+            !attestation.payload || typeof attestation.payload !== "object" ||
+            !Array.isArray(attestation.payload.evidenceIds) ||
+            !Array.isArray(persistedResult.evidenceIds) ||
+            !Array.isArray(persistedResult.passedCriteria) ||
+            !Array.isArray(persistedResult.failedCriteria) ||
+            !Array.isArray(persistedResult.partialCriteria)) {
+          throw new TenantPersistenceError(
+            "INVALID_RECORD_DATA",
+            "Persisted semantic verification proof is malformed.",
+          );
+        }
+        const evidenceIds = attestation.payload.evidenceIds;
+        if (evidenceIds.length === 0 ||
+            evidenceIds.some((id) => typeof id !== "string" || !id.trim()) ||
+            new Set(evidenceIds).size !== evidenceIds.length ||
+            JSON.stringify([...persistedResult.evidenceIds].sort()) !==
+              JSON.stringify([...evidenceIds].sort()) ||
+            persistedResult.confidence !== attestation.payload.confidence ||
+            persistedResult.summary !== attestation.payload.summary ||
+            JSON.stringify([...persistedResult.passedCriteria].sort()) !==
+              JSON.stringify([...attestation.payload.passedCriteria].sort()) ||
+            JSON.stringify([...persistedResult.failedCriteria].sort()) !==
+              JSON.stringify([...attestation.payload.failedCriteria].sort()) ||
+            JSON.stringify([...persistedResult.partialCriteria].sort()) !==
+              JSON.stringify([...attestation.payload.partialCriteria].sort()) ||
+            attestation.payload.outcome !== "PASSED") {
+          throw new TenantPersistenceError(
+            "INVALID_RECORD_DATA",
+            "Persisted verification result does not match its signed attestation.",
+          );
+        }
+
+        const evidenceRecords = await Promise.all(
+          evidenceIds.map((id) => transaction.get<Evidence>(scope, "EVIDENCE", id)),
         );
-        if (evidence.some((record) =>
-          !record ||
-          record.data.verificationRequestId !== verificationRequestId ||
+        if (evidenceRecords.some((record, index) =>
+          !record || record.id !== evidenceIds[index] ||
+          record.data.id !== evidenceIds[index] ||
+          record.data.verificationRequestId !== requestId ||
           record.data.missionId !== input.missionId ||
-          record.data.taskId !== input.taskId
+          record.data.taskId !== input.taskId ||
+          (record.data.executionRequestId || undefined) !==
+            (request.executionRequestId || undefined)
         )) {
-          throw new TenantPersistenceError("INVALID_RECORD_DATA", "Verification evidence is missing or belongs to a different mission task.");
+          throw new TenantPersistenceError(
+            "INVALID_RECORD_DATA",
+            "Signed verification evidence is missing or no longer matches the task scope.",
+          );
+        }
+
+        const attestationCheck = this.semanticAttestationAuthority.verify({
+          attestation,
+          scope,
+          request,
+          evidenceIds,
+        });
+        if (attestationCheck.status !== "VERIFIED" ||
+            attestationCheck.payload.outcome !== "PASSED") {
+          throw new TenantPersistenceError(
+            "INVALID_RECORD_DATA",
+            "Trusted semantic verifier attestation is invalid or does not pass all required criteria.",
+          );
         }
       }
 

@@ -571,6 +571,82 @@ async function run(): Promise<void> {
   assert(reconciliationEvidenceCalls === 1,
     "provider reconciliation must append exactly one immutable evidence record");
 
+  let mismatchedProviderLookupCalls = 0;
+  const mismatchedProviderRun = await runNextDurableDispatch({
+    broker: ambiguousBroker,
+    tenantScope,
+    ownerId: "worker-instance-42",
+    leaseMilliseconds: 30_000,
+    identityProvider: { async getVerifiedWorkerIdentity() { return workerIdentity; } },
+    provider: {
+      providerId: "dispatch-provider-a",
+      supportsIdempotencyKeys: true,
+      async dispatch() { throw new Error("transport closed after provider accepted request"); },
+    },
+    reconciliationProvider: {
+      providerId: "different-provider-b",
+      supportsIdempotencyKeys: true,
+      async lookupByIdempotencyKey() {
+        mismatchedProviderLookupCalls += 1;
+        return { status: "SUCCEEDED", providerRequestId: "wrong-provider-remote", result: {} };
+      },
+    },
+    now: () => workerNow * 1000,
+  });
+  assert(mismatchedProviderRun.status === "PROCESSED" &&
+    mismatchedProviderRun.result.status === "RECORDED" &&
+    mismatchedProviderRun.reconciliation?.status === "RECONCILIATION_REQUIRED" &&
+    mismatchedProviderRun.reconciliation.reason === "RECONCILIATION_PROVIDER_MISMATCH" &&
+    mismatchedProviderLookupCalls === 0 && reconciliationEvidenceCalls === 1,
+  "reconciliation must fail closed without querying or recording evidence from a different provider");
+
+  // A provider response arriving after the worker deadline must never overwrite
+  // the already-persisted ambiguous outcome or trigger an automatic replay.
+  let lateProviderCalls = 0;
+  let lateProviderCompleted = false;
+  const lateOutcomes: PersistedDispatchOutcome[] = [];
+  const lateResponseRun = await runNextDurableDispatch({
+    broker: {
+      async claimNextDispatch() { return queuedOutbox; },
+      async heartbeatLease() { return "2026-11-21T10:05:00.000Z"; },
+      async recordDispatchOutcome(input) {
+        lateOutcomes.push({ status: input.status, outcome: { ...input.outcome } });
+        return { ...queuedOutbox, status: input.status, outcome: { ...input.outcome } };
+      },
+      async appendReconciliationEvidence() { return "unused"; },
+    },
+    tenantScope,
+    ownerId: "worker-instance-42",
+    leaseMilliseconds: 5_000,
+    heartbeatIntervalMilliseconds: 100,
+    dispatchTimeoutMilliseconds: 1_000,
+    identityProvider: { async getVerifiedWorkerIdentity() { return workerIdentity; } },
+    provider: {
+      providerId: "late-response-provider",
+      supportsIdempotencyKeys: true,
+      async dispatch() {
+        lateProviderCalls += 1;
+        await new Promise((resolve) => setTimeout(resolve, 1_150));
+        lateProviderCompleted = true;
+        return {
+          kind: "ACKNOWLEDGED",
+          provider: "late-response-provider",
+          providerRequestId: "late-ack-1",
+          response: { accepted: true },
+        };
+      },
+    },
+  });
+  assert(lateResponseRun.status === "PROCESSED" &&
+    lateResponseRun.result.status === "RECORDED" &&
+    lateResponseRun.result.outcome === "AMBIGUOUS",
+  "provider timeout must persist an ambiguous outcome instead of treating a late acknowledgement as success");
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert(lateProviderCompleted && lateProviderCalls === 1,
+    "late provider response test did not complete exactly one original provider call");
+  assert(lateOutcomes.length === 1 && lateOutcomes[0].status === "AMBIGUOUS",
+    "late provider acknowledgement must not overwrite the fenced ambiguous outcome");
+
   const emptyQueueResult = await runNextDurableDispatch({
     broker: {
       async claimNextDispatch() { return null; },

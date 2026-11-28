@@ -87,6 +87,41 @@ async function run() {
   assert(defaultWorkerStatus.status === "NOT_CONNECTED",
     "default mission orchestrator must not claim a worker runtime is connected");
 
+  const disconnectedRecovery = await defaultOrchestrator.assessWorkerMissionRecovery({
+    scope: { organizationId: "org-1", workspaceId: "ws-1", userId: "user-1" },
+    tenantScope: {
+      workerPrincipalId: "principal-1",
+      organizationId: "org-1",
+      workspaceId: "ws-1",
+      userId: "user-1",
+    },
+    persistence: {} as never,
+    missionId: "mission-1",
+  });
+  assert("status" in disconnectedRecovery && disconnectedRecovery.status === "NOT_CONNECTED",
+    "worker recovery assessment must remain disconnected without trusted worker dependencies");
+
+  let mismatchedRecoveryScopeDenied = false;
+  try {
+    await defaultOrchestrator.assessWorkerMissionRecovery({
+      scope: { organizationId: "org-1", workspaceId: "ws-1", userId: "user-1" },
+      tenantScope: {
+        workerPrincipalId: "principal-1",
+        organizationId: "other-org",
+        workspaceId: "ws-1",
+        userId: "user-1",
+      },
+      persistence: {} as never,
+      missionId: "mission-1",
+    });
+  } catch (error) {
+    mismatchedRecoveryScopeDenied =
+      error instanceof Error && error.name === "TenantPersistenceError" &&
+      error.message.includes("same tenant scope");
+  }
+  assert(mismatchedRecoveryScopeDenied,
+    "worker recovery must reject mismatched scheduler and worker tenant scopes before composition");
+
   const configuredOrchestrator = new MissionOrchestrator(complete);
   const orchestratorWorkerStatus = await configuredOrchestrator.prepareWorkerRuntimeOperation(
     "claim_task",
@@ -94,6 +129,61 @@ async function run() {
   );
   assert(orchestratorWorkerStatus.status === "COMPOSITION_AVAILABLE",
     "configured orchestrator must expose the explicit worker authorization seam");
+
+  const recoveryMission = {
+    id: "mission-recovery", goal: "recover", planId: "plan-recovery",
+    status: "RUNNING", taskIds: ["task-recovery"], rootTaskIds: ["task-recovery"],
+    completedTaskIds: [], failedTaskIds: [], blockedTaskIds: [], progressPercent: 0,
+    createdAt: new Date(now * 1000).toISOString(),
+    updatedAt: new Date(now * 1000).toISOString(),
+  };
+  const recoveryTask = {
+    id: "task-recovery", missionId: "mission-recovery", action: "BUILD",
+    title: "Recovery task", description: "Test recovery evidence",
+    status: "RUNNING", dependencyIds: [], dependentTaskIds: [], order: 1,
+    retryCount: 0, maxRetries: 3, requiresApproval: false,
+    verificationRequired: true, createdAt: recoveryMission.createdAt,
+    updatedAt: recoveryMission.updatedAt,
+  };
+  const recoveryPersistence = {
+    async get(_scope: unknown, entityType: string) {
+      const data = entityType === "MISSION" ? recoveryMission :
+        entityType === "TASK" ? recoveryTask : undefined;
+      if (!data) return undefined;
+      return {
+        id: data.id, entityType, version: 1,
+        createdAt: recoveryMission.createdAt, updatedAt: recoveryMission.updatedAt,
+        organizationId: "org-1", workspaceId: "ws-1", userId: "user-1", data,
+      };
+    },
+    async list() {
+      return [{
+        id: "execution-recovery", entityType: "EXECUTION", version: 1,
+        createdAt: recoveryMission.createdAt, updatedAt: recoveryMission.updatedAt,
+        organizationId: "org-1", workspaceId: "ws-1", userId: "user-1",
+        data: {
+          id: "result-recovery", missionId: "mission-recovery",
+          taskId: "task-recovery", requestId: "execution-recovery",
+          outboxId: "outbox-recovery", status: "RUNNING",
+        },
+      }];
+    },
+  } as never;
+  const workerRecovery = await configuredOrchestrator.assessWorkerMissionRecovery({
+    scope: { organizationId: "org-1", workspaceId: "ws-1", userId: "user-1" },
+    tenantScope: {
+      workerPrincipalId: "principal-1", organizationId: "org-1",
+      workspaceId: "ws-1", userId: "user-1",
+    },
+    persistence: recoveryPersistence,
+    missionId: "mission-recovery",
+    now: () => now * 1000,
+  });
+  assert("assessments" in workerRecovery &&
+    workerRecovery.assessments[0]?.disposition === "EXECUTION_OUTCOME_UNKNOWN",
+    "configured orchestrator must return the read-only recovery assessment");
+  assert(brokerCalls === 1,
+    "orchestrator recovery must retrieve evidence through the guarded worker broker");
 
   const missingIdentity = await composeTrustedWorkerRuntime({
     dependencies: { ...complete, identityProvider: null },
@@ -150,7 +240,7 @@ async function run() {
       missionId: "mission-1", taskId: "task-1", ownerId: claims.subject, leaseMilliseconds: 30_000,
     });
   }
-  assert(brokerCalls === 1, "authorized broker call should reach the underlying broker");
+  assert(Number(brokerCalls) === 2, "authorized broker call should reach the underlying broker after the recovery evidence read");
   liveRegistration = { ...liveRegistration, enabled: false };
   let revokedCallDenied = false;
   try {
@@ -165,7 +255,7 @@ async function run() {
       error.reason === "PRINCIPAL_NOT_AUTHORIZED";
   }
   assert(revokedCallDenied, "revocation after composition must deny subsequent broker calls");
-  assert(brokerCalls === 1, "revoked call must not reach the raw broker");
+  assert(Number(brokerCalls) === 2, "revoked call must not reach the raw broker after the earlier recovery and authorized claim calls");
 
   if (composed.status === "COMPOSITION_AVAILABLE") {
     const scope = {
@@ -220,7 +310,7 @@ async function run() {
       assert(denied, "every broker method must recheck and reject a revoked principal");
     }
   }
-  assert(brokerCalls === 1,
+  assert(Number(brokerCalls) === 2,
     "revocation must block every guarded broker method before any raw broker operation");
   liveRegistration = { ...liveRegistration, enabled: true };
 
@@ -330,8 +420,8 @@ async function run() {
   });
   assert(orchestratedPoll.status === "NO_PENDING_DISPATCH",
     "mission orchestrator must route worker polling through the durable dispatch runtime");
-  assert(Number(brokerCalls) === 2,
-    "orchestrated durable poll must call only the guarded broker facade");
+  assert(Number(brokerCalls) === 3,
+    "orchestrated durable poll must call only the guarded broker facade after recovery and claim calls");
 
   console.log("Worker runtime composition tests: PASS");
 }

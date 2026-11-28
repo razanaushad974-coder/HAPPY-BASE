@@ -4,6 +4,7 @@ import type { TenantScope } from "../state/types";
 import type { Mission, MissionTask } from "./types";
 import { assessMissionRecovery, type MissionRecoveryExecution, type MissionTaskRecoveryAssessment } from "./recovery-assessment";
 import type { PersistedProviderReconciliationEvidence } from "../persistence/postgres-provider-reconciliation-evidence-store";
+import type { WorkerDatabaseBroker, WorkerTenantScope } from "./worker-database-broker";
 
 export interface RecoveryEvidenceReader {
   listForExecution(binding: {
@@ -12,6 +13,79 @@ export interface RecoveryEvidenceReader {
     taskId: string;
     executionRequestId: string;
   }): Promise<PersistedProviderReconciliationEvidence[]>;
+}
+
+/**
+ * Adapts the authenticated durable worker broker to the mission recovery
+ * reader. The broker RPC performs the authoritative tenant/outbox/mission/
+ * task/request binding in PostgreSQL; this adapter additionally rejects any
+ * response that escapes the requested outbox binding.
+ */
+export function createWorkerBrokerRecoveryEvidenceReader(
+  broker: Pick<WorkerDatabaseBroker, "listReconciliationEvidence">,
+  tenantScope: WorkerTenantScope,
+  scope: TenantScope & { userId: string },
+): RecoveryEvidenceReader {
+  if (!broker || typeof broker.listReconciliationEvidence !== "function" ||
+      !tenantScope || typeof tenantScope.workerPrincipalId !== "string" ||
+      !tenantScope.workerPrincipalId.trim() ||
+      tenantScope.organizationId !== scope.organizationId ||
+      tenantScope.workspaceId !== scope.workspaceId ||
+      tenantScope.userId !== scope.userId) {
+    throw new Error("MISSION_RECOVERY_WORKER_SCOPE_INVALID");
+  }
+  // Snapshot the authenticated tenant binding so callers cannot mutate the
+  // scope after construction and redirect a later evidence lookup.
+  const workerScope: WorkerTenantScope = Object.freeze({
+    workerPrincipalId: tenantScope.workerPrincipalId,
+    organizationId: tenantScope.organizationId,
+    workspaceId: tenantScope.workspaceId,
+    userId: tenantScope.userId,
+  });
+  return Object.freeze({
+    async listForExecution(binding: Parameters<RecoveryEvidenceReader["listForExecution"]>[0]) {
+      if (!binding || typeof binding !== "object" ||
+          typeof binding.outboxId !== "string" || !binding.outboxId.trim() ||
+          typeof binding.missionId !== "string" || !binding.missionId.trim() ||
+          typeof binding.taskId !== "string" || !binding.taskId.trim() ||
+          typeof binding.executionRequestId !== "string" || !binding.executionRequestId.trim()) {
+        throw new Error("MISSION_RECOVERY_EVIDENCE_BINDING_INVALID");
+      }
+      const rows = await broker.listReconciliationEvidence({
+        tenantScope: workerScope,
+        outboxId: binding.outboxId,
+        missionId: binding.missionId,
+        taskId: binding.taskId,
+        executionRequestId: binding.executionRequestId,
+      });
+      if (!Array.isArray(rows) || rows.some((row) =>
+        !row || typeof row !== "object" ||
+        row.outboxId !== binding.outboxId ||
+        typeof row.evidenceId !== "string" || !row.evidenceId.trim() ||
+        typeof row.idempotencyKey !== "string" || !row.idempotencyKey.trim() ||
+        typeof row.providerId !== "string" || !row.providerId.trim() ||
+        typeof row.observedAt !== "string" || !Number.isFinite(Date.parse(row.observedAt)) ||
+        !["SUCCEEDED", "FAILED", "PROCESSING", "NOT_FOUND", "UNKNOWN"].includes(row.observationStatus) ||
+        !row.observation || typeof row.observation !== "object" || Array.isArray(row.observation) ||
+        row.observation.status !== row.observationStatus
+      )) {
+        throw new Error("MISSION_RECOVERY_EVIDENCE_BINDING_INVALID");
+      }
+      return rows.map((row) => ({
+        evidenceId: row.evidenceId,
+        outboxId: row.outboxId,
+        idempotencyKey: row.idempotencyKey,
+        providerId: row.providerId,
+        observationStatus: row.observationStatus,
+        observedAt: row.observedAt,
+        observation: Object.fromEntries(
+          Object.entries(row.observation).filter((entry): entry is [string, string] =>
+            typeof entry[1] === "string"
+          ),
+        ),
+      }));
+    },
+  });
 }
 
 interface PersistedExecutionSnapshot {
@@ -23,10 +97,74 @@ interface PersistedExecutionSnapshot {
   outboxId?: string;
 }
 
+export type ProviderRecoveryDisposition =
+  | "NO_EVIDENCE_RECORDED"
+  | "VERIFICATION_REQUIRED"
+  | "FAILED_EXECUTION_REVIEW_REQUIRED"
+  | "PROVIDER_STILL_PROCESSING"
+  | "NO_PROVIDER_RECORD_REVIEW_REQUIRED"
+  | "RECONCILIATION_REQUIRED"
+  | "CONFLICTING_PROVIDER_EVIDENCE_REVIEW_REQUIRED";
+
+export interface ProviderRecoveryAssessment {
+  disposition: ProviderRecoveryDisposition;
+  evidenceCount: number;
+  providerId?: string;
+  idempotencyKey?: string;
+  providerRequestId?: string;
+}
+
 export interface PersistedMissionRecoveryResult {
   missionId: string;
   assessments: MissionTaskRecoveryAssessment[];
   evidenceByTask: Record<string, PersistedProviderReconciliationEvidence[]>;
+  providerRecoveryByTask: Record<string, ProviderRecoveryAssessment>;
+}
+
+function assessProviderEvidence(
+  evidence: PersistedProviderReconciliationEvidence[],
+): ProviderRecoveryAssessment {
+  if (evidence.length === 0) {
+    return { disposition: "NO_EVIDENCE_RECORDED", evidenceCount: 0 };
+  }
+
+  const first = evidence[0];
+  const requestIds = evidence.map((item) => item.observation.providerRequestId ?? "");
+  const hasConsistentBinding = evidence.every((item) =>
+    item.providerId === first.providerId &&
+    item.idempotencyKey === first.idempotencyKey &&
+    item.observationStatus === first.observationStatus
+  );
+  const hasConsistentRequestId = requestIds.every((id) => id === requestIds[0]);
+  const statusRequiresRequestId = ["SUCCEEDED", "FAILED", "PROCESSING"].includes(first.observationStatus);
+  if (!hasConsistentBinding || !hasConsistentRequestId ||
+      (statusRequiresRequestId && !requestIds[0].trim())) {
+    return {
+      disposition: "CONFLICTING_PROVIDER_EVIDENCE_REVIEW_REQUIRED",
+      evidenceCount: evidence.length,
+    };
+  }
+
+  const common = {
+    evidenceCount: evidence.length,
+    providerId: first.providerId,
+    idempotencyKey: first.idempotencyKey,
+    ...(requestIds[0] ? { providerRequestId: requestIds[0] } : {}),
+  };
+  switch (first.observationStatus) {
+    case "SUCCEEDED":
+      // A provider acknowledgement is not application-level verification.
+      return { ...common, disposition: "VERIFICATION_REQUIRED" };
+    case "FAILED":
+      return { ...common, disposition: "FAILED_EXECUTION_REVIEW_REQUIRED" };
+    case "PROCESSING":
+      return { ...common, disposition: "PROVIDER_STILL_PROCESSING" };
+    case "NOT_FOUND":
+      // Absence at the provider is not proof that the side effect never occurred.
+      return { ...common, disposition: "NO_PROVIDER_RECORD_REVIEW_REQUIRED" };
+    case "UNKNOWN":
+      return { ...common, disposition: "RECONCILIATION_REQUIRED" };
+  }
 }
 
 /**
@@ -124,27 +262,43 @@ export async function assessPersistedMissionRecovery(
 
   const assessments = assessMissionRecovery(mission, tasks, executions);
   const evidenceByTask: Record<string, PersistedProviderReconciliationEvidence[]> = {};
-  if (evidenceReader) {
-    for (const assessment of assessments) {
-      if (assessment.disposition !== "RECONCILIATION_REQUIRED" &&
-          assessment.disposition !== "EXECUTION_OUTCOME_UNKNOWN") continue;
-      const binding = executionBindings.find((item) =>
-        item.taskId === assessment.taskId && item.executionId === assessment.executionId
-      );
-      // The current synchronous orchestration producer does not create a
-      // durable outbox ID. Evidence lookup is only allowed when one is truly
-      // present on the persisted record; never synthesize an outbox binding.
-      if (!binding?.outboxId) continue;
-      evidenceByTask[assessment.taskId] = await evidenceReader.listForExecution({
-        outboxId: binding.outboxId,
-        missionId,
-        taskId: assessment.taskId,
-        executionRequestId: binding.requestId,
-      });
+  const providerRecoveryByTask: Record<string, ProviderRecoveryAssessment> = {};
+  for (const assessment of assessments) {
+    if (assessment.disposition !== "RECONCILIATION_REQUIRED" &&
+        assessment.disposition !== "EXECUTION_OUTCOME_UNKNOWN") continue;
+    const binding = executionBindings.find((item) =>
+      item.taskId === assessment.taskId && item.executionId === assessment.executionId
+    );
+    // The current synchronous orchestration producer does not create a
+    // durable outbox ID. Evidence lookup is only allowed when one is truly
+    // present on the persisted record; never synthesize an outbox binding.
+    if (!binding?.outboxId) continue;
+    // An outbox-bound ambiguous execution must not silently look like it has
+    // no reconciliation evidence merely because the caller omitted its reader.
+    if (!evidenceReader) throw new Error("MISSION_RECOVERY_EVIDENCE_READER_REQUIRED");
+    const evidence = await evidenceReader.listForExecution({
+      outboxId: binding.outboxId,
+      missionId,
+      taskId: assessment.taskId,
+      executionRequestId: binding.requestId,
+    });
+    if (!Array.isArray(evidence) || evidence.some((item) =>
+      !item || typeof item !== "object" ||
+      item.outboxId !== binding.outboxId ||
+      typeof item.evidenceId !== "string" || !item.evidenceId.trim() ||
+      typeof item.idempotencyKey !== "string" || !item.idempotencyKey.trim() ||
+      typeof item.providerId !== "string" || !item.providerId.trim() ||
+      !Number.isFinite(Date.parse(item.observedAt)) ||
+      !["SUCCEEDED", "FAILED", "PROCESSING", "NOT_FOUND", "UNKNOWN"].includes(item.observationStatus) ||
+      item.observation?.status !== item.observationStatus
+    )) {
+      throw new Error("MISSION_RECOVERY_EVIDENCE_BINDING_INVALID");
     }
+    evidenceByTask[assessment.taskId] = evidence;
+    providerRecoveryByTask[assessment.taskId] = assessProviderEvidence(evidence);
   }
 
-  return { missionId, assessments, evidenceByTask };
+  return { missionId, assessments, evidenceByTask, providerRecoveryByTask };
 }
 
 function assertTenantRecordScope(

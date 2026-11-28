@@ -3,6 +3,9 @@ set -euo pipefail
 
 : "${DATABASE_URL:?DATABASE_URL is required}"
 
+# Fixed test-only password; this script runs only against the disposable CI PostgreSQL service.
+WORKER_TEST_PASSWORD="happy_ci_worker_only_password"
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 REGISTRY_SQL="$ROOT_DIR/supabase/drafts/20261122_worker_principal_registry_candidate.sql"
 if [[ ! -f "$REGISTRY_SQL" ]]; then
@@ -10,7 +13,7 @@ if [[ ! -f "$REGISTRY_SQL" ]]; then
   exit 1
 fi
 
-psql=(psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1)
+psql=(psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -v "worker_password=$WORKER_TEST_PASSWORD")
 
 "${psql[@]}" <<'SQL'
 do $roles$
@@ -37,6 +40,8 @@ begin
 exception when duplicate_object then null;
 end
 $roles$;
+-- Set a disposable password so the test can authenticate over a fresh TCP connection.
+alter role happy_worker_dispatch login noinherit nosuperuser nocreatedb nocreaterole noreplication nobypassrls password :'worker_password';
 do $roles$
 begin
   create role happy_worker_registry_owner nologin noinherit nosuperuser nocreatedb nocreaterole noreplication nobypassrls;
@@ -230,8 +235,18 @@ select 'workspace-membership-lock' as check_name, status
    and user_id = '30000000-0000-4000-8000-000000000003'
  for share;
 reset role;
+SQL
 
-set session authorization happy_worker_dispatch;
+worker_database_url="$(printf '%s' "$DATABASE_URL" | sed -E "s#(://)[^/@]+@#\\1happy_worker_dispatch:${WORKER_TEST_PASSWORD}@#")"
+if [[ "$worker_database_url" == "$DATABASE_URL" ]]; then
+  echo "Could not derive a dedicated worker-login connection URL from DATABASE_URL." >&2
+  exit 1
+fi
+worker_psql=(psql "$worker_database_url" -X -v ON_ERROR_STOP=1)
+
+# Authenticate as the dedicated LOGIN over a new PostgreSQL connection.
+# This verifies server-authenticated session_user, not SET ROLE/SET SESSION AUTHORIZATION.
+"${worker_psql[@]}" <<'SQL'
 select 'worker-session-diagnostic' as check_name,
        session_user::text as session_user,
        current_user::text as current_user;
@@ -241,7 +256,7 @@ declare
   v_principal record;
 begin
   if session_user::text <> 'happy_worker_dispatch' then
-    raise exception 'worker session authorization did not switch to the dedicated LOGIN role';
+    raise exception 'fresh PostgreSQL connection did not authenticate as the dedicated worker LOGIN';
   end if;
 
   select * into v_principal
@@ -286,16 +301,17 @@ begin
   end;
 end
 $worker_identity$;
+SQL
 
-reset session authorization;
-
+"${psql[@]}" <<'SQL'
 update private.workspace_memberships
    set status = 'REVOKED'
  where organization_id = '10000000-0000-4000-8000-000000000001'
    and workspace_id = '20000000-0000-4000-8000-000000000002'
    and user_id = '30000000-0000-4000-8000-000000000003';
+SQL
 
-set session authorization happy_worker_dispatch;
+"${worker_psql[@]}" <<'SQL'
 do $revoked_membership$
 begin
   begin
@@ -311,10 +327,11 @@ begin
   end;
 end
 $revoked_membership$;
-reset session authorization;
+SQL
 
--- A human/application DB role cannot resolve the worker principal, even if it
--- attempts to use the same function. The session_user is the authority.
+# A human/application DB role cannot resolve the worker principal, even if it
+# attempts to use the same function. The session_user is the authority.
+"${psql[@]}" <<'SQL'
 set role authenticated;
 do $human_denial$
 begin
@@ -331,8 +348,9 @@ reset role;
 update private.happy_worker_principal_registry
    set enabled = false, revoked_at = clock_timestamp(), updated_at = clock_timestamp()
  where db_login_role = 'happy_worker_dispatch';
+SQL
 
-set session authorization happy_worker_dispatch;
+"${worker_psql[@]}" <<'SQL'
 do $revoked_worker$
 begin
   begin
@@ -342,7 +360,8 @@ begin
   end;
 end
 $revoked_worker$;
-reset session authorization;
+SQL
 
+"${psql[@]}" <<'SQL'
 select 'PostgreSQL worker principal registry integration: PASS (isolated PostgreSQL roles; no hosted Supabase)' as result;
 SQL

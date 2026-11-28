@@ -10,6 +10,11 @@ import {
   type VercelPostgresWorkerRuntimeConfig,
 } from "./vercel-postgres-worker-runtime";
 import { MissionOrchestrator } from "./orchestrator";
+import { createTrustedSemanticAttestationAuthority } from "../verification/semantic-attestation-config";
+import { HttpExternalSemanticVerifierClient } from "../verification/external-verifier-client";
+import { createAsyncHappyStateStore } from "../state/async-factory";
+import { AsyncEvidenceService } from "../evidence/async-service";
+import { AsyncVerificationService } from "../verification/async-service";
 
 /**
  * Server-only one-shot worker entrypoint for a dedicated Vercel deployment.
@@ -24,12 +29,51 @@ import { MissionOrchestrator } from "./orchestrator";
  * the supplied pool is live; the session provider verifies session_user and
  * current_user on every broker transaction.
  */
+/**
+ * Server-side environment adapter for the dedicated worker deployment.
+ * Pass process.env only from the trusted server entrypoint; never expose this
+ * environment object to browser code or client-controlled request data.
+ */
+export function createVercelPostgresHappyWorkerFromEnvironment(input: {
+  readonly runtime: VercelPostgresWorkerRuntimeConfig;
+  readonly tenantPersistence: AsyncTenantPersistenceAdapter;
+  readonly provider: IdempotentDispatchProvider;
+  readonly reconciliationProvider?: ProviderStatusReader;
+  readonly leaseMilliseconds?: number;
+  readonly environment?: Readonly<Record<string, string | undefined>>;
+  readonly readSemanticVerifierBearerToken?: () => Promise<string>;
+}) {
+  const environment = input.environment ?? process.env;
+  return createVercelPostgresHappyWorker({
+    runtime: input.runtime,
+    tenantPersistence: input.tenantPersistence,
+    provider: input.provider,
+    ...(input.reconciliationProvider ? { reconciliationProvider: input.reconciliationProvider } : {}),
+    ...(input.leaseMilliseconds !== undefined ? { leaseMilliseconds: input.leaseMilliseconds } : {}),
+    ...(environment.HAPPY_SEMANTIC_VERIFIER_KEYS
+      ? { semanticVerifierKeysJson: environment.HAPPY_SEMANTIC_VERIFIER_KEYS }
+      : {}),
+    ...(environment.HAPPY_SEMANTIC_VERIFIER_ENDPOINT
+      ? { semanticVerifierEndpoint: environment.HAPPY_SEMANTIC_VERIFIER_ENDPOINT }
+      : {}),
+    ...(input.readSemanticVerifierBearerToken
+      ? { readSemanticVerifierBearerToken: input.readSemanticVerifierBearerToken }
+      : {}),
+  });
+}
+
 export function createVercelPostgresHappyWorker(input: {
   readonly runtime: VercelPostgresWorkerRuntimeConfig;
   readonly tenantPersistence: AsyncTenantPersistenceAdapter;
   readonly provider: IdempotentDispatchProvider;
   readonly reconciliationProvider?: ProviderStatusReader;
   readonly leaseMilliseconds?: number;
+  /** Operator-provisioned JSON public-key allowlist; pass from server deployment config only. */
+  readonly semanticVerifierKeysJson?: string;
+  /** Fixed HTTPS endpoint from server-only deployment configuration. */
+  readonly semanticVerifierEndpoint?: string;
+  /** Reads the verifier bearer token from a server-side secret store. */
+  readonly readSemanticVerifierBearerToken?: () => Promise<string>;
 }) {
   const leaseMilliseconds = input.leaseMilliseconds ?? 60_000;
   if (!Number.isSafeInteger(leaseMilliseconds) ||
@@ -38,9 +82,102 @@ export function createVercelPostgresHappyWorker(input: {
   }
 
   const dependencies = createVercelPostgresWorkerRuntimeDependencies(input.runtime);
-  const orchestrator = new MissionOrchestrator(dependencies);
+  const semanticAuthority = createTrustedSemanticAttestationAuthority(input.semanticVerifierKeysJson);
+  if (Boolean(input.semanticVerifierEndpoint) !== Boolean(input.readSemanticVerifierBearerToken)) {
+    throw new TypeError("External semantic verifier endpoint and server-side bearer-token reader must be configured together.");
+  }
+  const externalSemanticVerifierClient = input.semanticVerifierEndpoint && input.readSemanticVerifierBearerToken
+    ? new HttpExternalSemanticVerifierClient({
+        endpoint: input.semanticVerifierEndpoint,
+        readBearerToken: input.readSemanticVerifierBearerToken,
+      })
+    : null;
+  if (externalSemanticVerifierClient && !semanticAuthority) {
+    throw new TypeError("External semantic verifier requires a trusted public-key allowlist.");
+  }
+  const orchestrator = new MissionOrchestrator(dependencies, semanticAuthority);
+
+  const createTenantVerificationServices = (scope: TenantScope & { readonly userId: string }) => {
+    if (!scope.organizationId?.trim() || !scope.workspaceId?.trim() || !scope.userId?.trim()) {
+      throw new TypeError("Complete organization, workspace, and user scope is required.");
+    }
+    const state = createAsyncHappyStateStore(
+      input.tenantPersistence,
+      scope.organizationId,
+      scope.workspaceId,
+      scope.userId,
+    );
+    return Object.freeze({
+      evidence: new AsyncEvidenceService(state),
+      verification: new AsyncVerificationService(
+        state,
+        semanticAuthority,
+        externalSemanticVerifierClient,
+      ),
+    });
+  };
 
   return Object.freeze({
+    /**
+     * Creates the tenant-bound verification and evidence services over the
+     * worker's durable tenant adapter. Scope must come from the caller's
+     * already-authenticated/authorized tenant resolution, never request IDs.
+     */
+    createTenantVerificationServices,
+
+
+    /**
+     * Runs one registered verification request through the configured external
+     * verifier, using only the tenant-scoped evidence store and server-side
+     * verifier transport. The caller must supply an authenticated tenant scope.
+     */
+    verifyTenantRequest(input: {
+      readonly scope: TenantScope & { readonly userId: string };
+      readonly requestId: string;
+      readonly evidenceIds: string[];
+    }) {
+      if (!input || typeof input !== "object" ||
+          typeof input.requestId !== "string" || !input.requestId.trim() || input.requestId.length > 256 ||
+          !Array.isArray(input.evidenceIds) || input.evidenceIds.length < 1 || input.evidenceIds.length > 50 ||
+          input.evidenceIds.some((id) => typeof id !== "string" || !id.trim() || id.length > 256)) {
+        throw new TypeError("External verification requires a bounded request ID and 1 to 50 bounded evidence IDs.");
+      }
+      const scope = Object.freeze({
+        organizationId: input.scope.organizationId,
+        workspaceId: input.scope.workspaceId,
+        userId: input.scope.userId,
+      });
+      const services = createTenantVerificationServices(scope);
+      return services.verification.verifyWithExternalVerifier(
+        input.requestId.trim(),
+        [...input.evidenceIds],
+      );
+    },
+
+    /**
+     * Persists a task transition using the same trusted signing authority that
+     * validates verifier results. Verification-gated completion requires the
+     * exact persisted request/result/evidence chain in the same tenant.
+     */
+    transitionTaskDurable(transition: {
+      readonly scope: TenantScope & { readonly userId: string };
+      readonly missionId: string;
+      readonly taskId: string;
+      readonly status: import("./types").MissionTask["status"];
+      readonly verificationRequestId?: string;
+    }) {
+      return orchestrator.transitionTaskDurable({
+        ...transition,
+        persistence: input.tenantPersistence,
+      });
+    },
+
+    /** Server-configured verifier transport for tenant-scoped verification services. */
+    semanticVerifier: Object.freeze({
+      authority: semanticAuthority,
+      client: externalSemanticVerifierClient,
+      status: semanticAuthority && externalSemanticVerifierClient ? "CONFIGURED" as const : "NOT_CONFIGURED" as const,
+    }),
     /** Scans only this exact tenant and processes at most one ready task. */
     runOneReadyTask(tenant: { readonly scope: TenantScope; readonly workerScope: WorkerTenantScope }) {
       return orchestrator.runNextReadyMissionTaskDispatch({
@@ -53,6 +190,23 @@ export function createVercelPostgresHappyWorker(input: {
         ...(input.reconciliationProvider
           ? { reconciliationProvider: input.reconciliationProvider }
           : {}),
+      });
+    },
+
+    /**
+     * Performs a read-only recovery assessment using the authenticated worker
+     * broker for provider evidence. It never retries or mutates mission state.
+     */
+    assessTenantMissionRecovery(request: {
+      readonly scope: TenantScope & { readonly userId: string };
+      readonly workerScope: WorkerTenantScope;
+      readonly missionId: string;
+    }) {
+      return orchestrator.assessWorkerMissionRecovery({
+        scope: request.scope,
+        tenantScope: request.workerScope,
+        persistence: input.tenantPersistence,
+        missionId: request.missionId,
       });
     },
 

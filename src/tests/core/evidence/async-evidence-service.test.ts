@@ -1,4 +1,5 @@
 import { AsyncEvidenceService } from "../../../core/evidence/async-service";
+import type { VerificationRequest } from "../../../core/verification/types";
 import { InMemoryTenantPersistenceAdapter } from "../../../core/persistence/adapters/in-memory-tenant-adapter";
 import { createAsyncHappyStateStore } from "../../../core/state/async-factory";
 
@@ -8,6 +9,16 @@ async function main(): Promise<void> {
   const otherUserStore = createAsyncHappyStateStore(adapter, "org-1", "workspace-1", "user-2");
   const service = new AsyncEvidenceService(ownerStore);
   const otherUser = new AsyncEvidenceService(otherUserStore);
+
+  const verificationRequest: VerificationRequest = {
+    id: "verification-1", missionId: "mission-1", taskId: "task-1",
+    executionRequestId: "execution-1", description: "Evidence contract request",
+    criteria: [{ id: "criterion-1", description: "Result exists", expected: "PASS", required: true }],
+    preferredMethods: ["TEST"], requiresEvidence: true, createdAt: new Date().toISOString(),
+  };
+  await ownerStore.verificationRequest<VerificationRequest>().create(
+    verificationRequest.id, verificationRequest,
+  );
 
   const input = {
     verificationRequestId: "verification-1",
@@ -44,6 +55,39 @@ async function main(): Promise<void> {
     throw new Error("Evidence without non-empty content or URI was accepted.");
   }
 
+  let mismatchedRequestRejected = false;
+  try {
+    await service.capture({ ...input, taskId: "task-other" });
+  } catch (error) {
+    mismatchedRequestRejected = error instanceof Error &&
+      error.message === "Evidence must match a registered verification request in the active tenant.";
+  }
+  if (!mismatchedRequestRejected) {
+    throw new Error("Evidence bound to a different task was accepted.");
+  }
+
+  let mismatchedExecutionRejected = false;
+  try {
+    await service.capture({ ...input, executionRequestId: "execution-other" });
+  } catch (error) {
+    mismatchedExecutionRejected = error instanceof Error &&
+      error.message === "Evidence must match a registered verification request in the active tenant.";
+  }
+  if (!mismatchedExecutionRejected) {
+    throw new Error("Evidence bound to a different execution request was accepted.");
+  }
+
+  let missingRequestRejected = false;
+  try {
+    await service.capture({ ...input, verificationRequestId: "unregistered-request" });
+  } catch (error) {
+    missingRequestRejected = error instanceof Error &&
+      error.message === "Evidence must match a registered verification request in the active tenant.";
+  }
+  if (!missingRequestRejected) {
+    throw new Error("Evidence for an unregistered verification request was accepted.");
+  }
+
   const captured = await service.capture({ ...input, title: "  Async evidence contract  ", verificationRequestId: " verification-1 " });
   const loaded = await service.get(captured.id);
   if (!loaded || loaded.id !== captured.id || loaded.title !== input.title) {
@@ -65,7 +109,7 @@ async function main(): Promise<void> {
   console.log("Async tenant-scoped evidence service: PASS");
   console.log({
     evidenceCaptured: true,
-    validationFailClosed: missingVerificationRejected && missingPayloadRejected,
+    validationFailClosed: missingVerificationRejected && missingPayloadRejected && mismatchedRequestRejected && mismatchedExecutionRejected && missingRequestRejected,
     tenantIsolation: true,
     appendOnlyServiceSurface: true,
   });

@@ -304,6 +304,11 @@ begin
     raise exception 'INVALID_RECORD_INPUT' using errcode = '22023';
   end if;
 
+  if p_entity_type = 'VERIFICATION' then
+    raise exception 'VERIFICATION_WRITE_REQUIRES_TRUSTED_VERIFIER'
+      using errcode = '42501';
+  end if;
+
   insert into public.happy_tenant_records
     (organization_id, workspace_id, user_id, entity_type, record_id, version, data)
   values
@@ -350,6 +355,11 @@ begin
      or p_data is null or jsonb_typeof(p_data) <> 'object'
      or p_record_id is null or length(btrim(p_record_id)) = 0 then
     raise exception 'INVALID_RECORD_INPUT' using errcode = '22023';
+  end if;
+
+  if p_entity_type in ('VERIFICATION', 'VERIFICATION_REQUEST', 'EVIDENCE') then
+    raise exception 'IMMUTABLE_VERIFICATION_RECORD'
+      using errcode = '42501';
   end if;
 
   update public.happy_tenant_records as r
@@ -412,6 +422,11 @@ begin
   if p_expected_version is null or p_expected_version < 1
      or p_record_id is null or length(btrim(p_record_id)) = 0 then
     raise exception 'INVALID_RECORD_INPUT' using errcode = '22023';
+  end if;
+
+  if p_entity_type in ('VERIFICATION', 'VERIFICATION_REQUEST', 'EVIDENCE') then
+    raise exception 'IMMUTABLE_VERIFICATION_RECORD'
+      using errcode = '42501';
   end if;
 
   delete from public.happy_tenant_records as r

@@ -348,12 +348,115 @@ $execution_owner_privileges$;
 
 SQL
 
+# Seed immutable verification lifecycle rows as the isolated database owner.
+# Authenticated tenant members must not be able to forge PASSED results through
+# the generic record RPC or rewrite/delete requests, results, or evidence.
+"${psql_base[@]}" <<'SQL'
+insert into public.happy_tenant_records
+  (organization_id, workspace_id, user_id, entity_type, record_id, version, data)
+values
+  ('10000000-0000-4000-8000-000000000001',
+   '20000000-0000-4000-8000-000000000002',
+   '30000000-0000-4000-8000-000000000003',
+   'VERIFICATION', 'seed-verification', 1,
+   '{"id":"seed-verification","requestId":"seed-verification","status":"PARTIAL"}'::jsonb),
+  ('10000000-0000-4000-8000-000000000001',
+   '20000000-0000-4000-8000-000000000002',
+   '30000000-0000-4000-8000-000000000003',
+   'VERIFICATION_REQUEST', 'seed-verification-request', 1,
+   '{"id":"seed-verification-request"}'::jsonb),
+  ('10000000-0000-4000-8000-000000000001',
+   '20000000-0000-4000-8000-000000000002',
+   '30000000-0000-4000-8000-000000000003',
+   'EVIDENCE', 'seed-evidence', 1,
+   '{"id":"seed-evidence"}'::jsonb);
+SQL
+
 # Real PostgreSQL 17 roles/RLS/functions; auth.uid() is stubbed from a local
 # claim setting. This is not Supabase JWT signature or hosted-project testing.
 "${psql_base[@]}" <<'SQL'
 set role authenticated;
 select set_config('request.jwt.claim.sub',
   '30000000-0000-4000-8000-000000000003', false);
+
+do $verification_write_boundary$
+declare
+  v_rejected boolean;
+begin
+  v_rejected := false;
+  begin
+    perform public.happy_create_tenant_record(
+      '10000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000002',
+      'VERIFICATION', 'forged-passed-result',
+      '{"id":"forged-passed-result","requestId":"forged-passed-result","status":"PASSED"}'::jsonb
+    );
+  exception when insufficient_privilege then
+    v_rejected := true;
+  end;
+  if not v_rejected then
+    raise exception 'authenticated generic create forged a PASSED verification result';
+  end if;
+
+  begin
+    perform public.happy_update_tenant_record(
+      '10000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000002',
+      'VERIFICATION', 'seed-verification', 1,
+      '{"id":"seed-verification","requestId":"seed-verification","status":"PASSED"}'::jsonb
+    );
+    raise exception 'generic update rewrote a verification result';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    perform public.happy_delete_tenant_record(
+      '10000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000002',
+      'VERIFICATION', 'seed-verification', 1
+    );
+    raise exception 'generic delete removed a verification result';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    perform public.happy_update_tenant_record(
+      '10000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000002',
+      'VERIFICATION_REQUEST', 'seed-verification-request', 1,
+      '{"id":"seed-verification-request","missionId":"other"}'::jsonb
+    );
+    raise exception 'generic update rewrote a verification request';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    perform public.happy_delete_tenant_record(
+      '10000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000002',
+      'VERIFICATION_REQUEST', 'seed-verification-request', 1
+    );
+    raise exception 'generic delete removed a verification request';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    perform public.happy_update_tenant_record(
+      '10000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000002',
+      'EVIDENCE', 'seed-evidence', 1,
+      '{"id":"seed-evidence","content":"tampered"}'::jsonb
+    );
+    raise exception 'generic update rewrote append-only evidence';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    perform public.happy_delete_tenant_record(
+      '10000000-0000-4000-8000-000000000001',
+      '20000000-0000-4000-8000-000000000002',
+      'EVIDENCE', 'seed-evidence', 1
+    );
+    raise exception 'generic delete removed append-only evidence';
+  exception when insufficient_privilege then null;
+  end;
+end
+$verification_write_boundary$;
 
 do $execution_request_rpc$
 declare

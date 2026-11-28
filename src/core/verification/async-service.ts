@@ -3,6 +3,8 @@ import type { Evidence } from "../evidence/types";
 import type { Mission, MissionTask } from "../mission/types";
 import type { ExecutionRequest } from "../execution/types";
 import type { VerificationRequest, VerificationResult } from "./types";
+import type { SignedSemanticAttestation, TrustedSemanticAttestationAuthority } from "./semantic-attestation";
+import type { ExternalSemanticVerifierClient } from "./external-verifier-client";
 
 function isVerificationResult(value: unknown): value is VerificationResult {
   return Boolean(
@@ -22,6 +24,9 @@ function isVerificationResult(value: unknown): value is VerificationResult {
 export class AsyncVerificationService {
   constructor(
     private readonly state: AsyncHappyStateStore,
+    private readonly semanticAttestationAuthority: TrustedSemanticAttestationAuthority | null = null,
+    /** Operator-configured client; never select a verifier endpoint from request data. */
+    private readonly externalSemanticVerifierClient: ExternalSemanticVerifierClient | null = null,
   ) {}
 
   async registerRequest(request: VerificationRequest): Promise<VerificationRequest> {
@@ -68,6 +73,166 @@ export class AsyncVerificationService {
     });
   }
 
+  /**
+   * Persists a semantic result only when a configured public-key authority
+   * verifies the exact tenant, request, evidence set, criteria, and freshness.
+   * No authority is configured by default; callers cannot supply a public key.
+   */
+  /**
+   * Evaluates registered, tenant-scoped evidence through an operator-configured
+   * external verifier. Network I/O happens outside the persistence transaction;
+   * the signed result is then re-bound and verified in a fresh transaction.
+   */
+  async verifyWithExternalVerifier(
+    requestId: string,
+    observedEvidenceIds: string[],
+  ): Promise<VerificationResult> {
+    if (!this.semanticAttestationAuthority || !this.externalSemanticVerifierClient) {
+      throw new Error("TRUSTED_SEMANTIC_VERIFIER_NOT_CONFIGURED");
+    }
+    const normalizedId = requestId.trim();
+    if (!normalizedId || !Array.isArray(observedEvidenceIds) ||
+        observedEvidenceIds.some((id) => typeof id !== "string" || !id.trim())) {
+      throw new Error("EXTERNAL_SEMANTIC_VERIFIER_INPUT_INVALID");
+    }
+
+    const evaluation = await this.state.transaction(async (transactionState) => {
+      const storedRequest = await transactionState
+        .verificationRequest<VerificationRequest>().get(normalizedId);
+      if (!storedRequest || storedRequest.id !== normalizedId ||
+          storedRequest.data.id !== normalizedId) {
+        throw new Error("Verification request is not registered in the active tenant.");
+      }
+      const existingResult = await transactionState
+        .verification<VerificationResult>().get(normalizedId);
+      if (existingResult &&
+          (existingResult.id !== normalizedId ||
+           existingResult.data.id !== normalizedId ||
+           existingResult.data.requestId !== normalizedId ||
+           existingResult.data.status !== "PARTIAL" ||
+           existingResult.data.failureReason !== "SEMANTIC_VERIFIER_NOT_CONNECTED")) {
+        throw new Error("VERIFICATION_RESULT_ALREADY_RECORDED");
+      }
+      const uniqueIds = [...new Set(observedEvidenceIds.map((id) => id.trim()))];
+      const rows = await Promise.all(
+        uniqueIds.map((id) => transactionState.evidence<Evidence>().get(id)),
+      );
+      const evidence = rows.flatMap((row) =>
+        row && row.id === row.data.id && this.matchesRequest(row.data, storedRequest.data)
+          ? [row.data]
+          : [],
+      );
+      if (evidence.length !== uniqueIds.length ||
+          (storedRequest.data.requiresEvidence && evidence.length === 0)) {
+        throw new Error("TRUSTED_ATTESTATION_EVIDENCE_SET_MISMATCH");
+      }
+      return {
+        request: structuredClone(storedRequest.data),
+        evidence: structuredClone(evidence),
+      };
+    });
+
+    const attestation = await this.externalSemanticVerifierClient.evaluate({
+      scope: this.state.getTenantScope(),
+      request: evaluation.request,
+      evidence: evaluation.evidence,
+    });
+    return this.verifyWithTrustedAttestation(
+      normalizedId,
+      evaluation.evidence.map((item) => item.id),
+      attestation,
+    );
+  }
+
+  async verifyWithTrustedAttestation(
+    requestId: string,
+    observedEvidenceIds: string[],
+    attestation: SignedSemanticAttestation,
+  ): Promise<VerificationResult> {
+    const authority = this.semanticAttestationAuthority;
+    if (!authority) {
+      throw new Error("TRUSTED_SEMANTIC_VERIFIER_NOT_CONFIGURED");
+    }
+    const normalizedId = requestId.trim();
+    if (!normalizedId) throw new Error("Verification request ID is required.");
+    if (!Array.isArray(observedEvidenceIds) ||
+        observedEvidenceIds.some((id) => typeof id !== "string" || !id.trim())) {
+      throw new Error("Observed evidence IDs must be non-empty strings.");
+    }
+
+    return this.state.transaction(async (transactionState) => {
+      const storedRequest = await transactionState
+        .verificationRequest<VerificationRequest>()
+        .get(normalizedId);
+      if (!storedRequest || storedRequest.id !== normalizedId ||
+          storedRequest.data.id !== normalizedId) {
+        throw new Error("Verification request is not registered in the active tenant.");
+      }
+      const existingResult = await transactionState
+        .verification<VerificationResult>()
+        .get(normalizedId);
+      if (existingResult &&
+          (existingResult.id !== normalizedId ||
+           existingResult.data.id !== normalizedId ||
+           existingResult.data.requestId !== normalizedId ||
+           existingResult.data.status !== "PARTIAL" ||
+           existingResult.data.failureReason !== "SEMANTIC_VERIFIER_NOT_CONNECTED")) {
+        throw new Error("VERIFICATION_RESULT_ALREADY_RECORDED");
+      }
+
+      const uniqueEvidenceIds = [...new Set(observedEvidenceIds.map((id) => id.trim()))];
+      const evidenceRows = await Promise.all(
+        uniqueEvidenceIds.map((id) => transactionState.evidence<Evidence>().get(id)),
+      );
+      const matchedEvidence = evidenceRows.flatMap((item) => {
+        if (!item || item.id !== item.data.id ||
+            !this.matchesRequest(item.data, storedRequest.data)) {
+          return [];
+        }
+        return [item];
+      });
+      if (matchedEvidence.length !== uniqueEvidenceIds.length) {
+        throw new Error("TRUSTED_ATTESTATION_EVIDENCE_SET_MISMATCH");
+      }
+      const evidenceIds = matchedEvidence.map((item) => item.id);
+      if (storedRequest.data.requiresEvidence && evidenceIds.length === 0) {
+        throw new Error("TRUSTED_ATTESTATION_REQUIRED_EVIDENCE_MISSING");
+      }
+      const check = authority.verify({
+        attestation,
+        scope: this.state.getTenantScope(),
+        request: storedRequest.data,
+        evidenceIds,
+      });
+      if (check.status !== "VERIFIED") {
+        throw new Error(`TRUSTED_SEMANTIC_ATTESTATION_REJECTED:${check.reason}`);
+      }
+
+      const payload = check.payload;
+      const result = this.result(storedRequest.data, {
+        status: payload.outcome,
+        confidence: payload.confidence,
+        passedCriteria: [...payload.passedCriteria],
+        failedCriteria: [...payload.failedCriteria],
+        partialCriteria: [...payload.partialCriteria],
+        evidenceIds,
+        summary: payload.summary,
+        attestation: structuredClone(attestation),
+        ...(payload.outcome === "PASSED" ? {} : {
+          failureReason: `TRUSTED_VERIFIER_REPORTED_${payload.outcome}`,
+        }),
+      });
+      if (existingResult) {
+        await transactionState.verification<VerificationResult>().update(
+          normalizedId, existingResult.version, result,
+        );
+      } else {
+        await transactionState.verification<VerificationResult>().create(result.id, result);
+      }
+      return result;
+    });
+  }
+
   async verify(
     requestId: string,
     observedEvidenceIds: string[],
@@ -92,6 +257,20 @@ export class AsyncVerificationService {
       const request = storedRequest.data;
       if (storedRequest.id !== normalizedId || request.id !== normalizedId) {
         throw new Error("Verification request storage identity does not match its registered ID.");
+      }
+
+      // One immutable result per request. A repeated call returns the first
+      // persisted decision instead of silently replacing its evidence snapshot.
+      const existingResult = await transactionState
+        .verification<VerificationResult>()
+        .get(normalizedId);
+      if (existingResult) {
+        if (existingResult.id !== normalizedId ||
+            existingResult.data.id !== normalizedId ||
+            existingResult.data.requestId !== normalizedId) {
+          throw new Error("Persisted verification result identity does not match its request.");
+        }
+        return existingResult.data;
       }
 
       const uniqueEvidenceIds = [...new Set(
@@ -210,7 +389,9 @@ export class AsyncVerificationService {
     fields: Omit<VerificationResult, "id" | "requestId" | "verifiedAt">,
   ): VerificationResult {
     return {
-      id: `verification-result-${crypto.randomUUID()}`,
+      // The request ID is the stable primary key for its immutable result.
+      // This lets completion gates resolve the exact result without a global scan.
+      id: request.id,
       requestId: request.id,
       ...fields,
       verifiedAt: new Date().toISOString(),
