@@ -190,11 +190,13 @@ export class WorkspaceService {
             this.currentMission?.status === "FAILED";
 
         const health =
-            blockedMission
-                ? "BLOCKED"
-                : failedMission
-                    ? "DEGRADED"
-                    : "HEALTHY";
+            !this.currentMission
+                ? "UNKNOWN"
+                : blockedMission
+                    ? "BLOCKED"
+                    : failedMission
+                        ? "DEGRADED"
+                        : "HEALTHY";
 
         return {
             identity: {
