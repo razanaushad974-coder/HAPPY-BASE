@@ -34,6 +34,7 @@ required=(
   20261123_worker_registry_owner_privilege_candidate.sql
   20261123_worker_scheduler_rpc_owner_role_candidate.sql
   20261123_worker_scheduler_rpc_owner_privilege_candidate.sql
+  20261121_authenticated_tenant_context_rpc_candidate.sql
   20261123_worker_registry_helper_grant_candidate.sql
   20261123_worker_scheduler_rpc_grant_candidate.sql
 )
@@ -98,8 +99,7 @@ pass "five function-owner role definitions enforce NOLOGIN/NOINHERIT/NOBYPASSRLS
 # Superseded files must remain inert; stale dependency notes must not be
 # executable inputs to a future migration chain.
 for file in \
-  20261121_authenticated_execution_request_rpc_candidate.sql \
-  20261121_authenticated_tenant_context_rpc_candidate.sql; do
+  20261121_authenticated_execution_request_rpc_candidate.sql; do
   path="$DRAFTS/$file"
   grep -Eiq 'SUPERSEDED DESIGN NOTE' "$path" || fail "$file is not marked superseded"
   if grep -Eiq '^[[:space:]]*(create|alter|grant|revoke)[[:space:]]' "$path"; then
@@ -107,6 +107,34 @@ for file in \
   fi
 done
 pass "superseded SQL notes are non-executable"
+
+# The active tenant-context RPC is a read-only authenticated selector check,
+# owned by the dedicated NOLOGIN/NOBYPASSRLS role and bound to auth.uid().
+TENANT_CONTEXT_RPC="$DRAFTS/20261121_authenticated_tenant_context_rpc_candidate.sql"
+grep -Eiq 'create or replace function public\.resolve_authenticated_tenant_context\(uuid,[[:space:]]*uuid\)' "$TENANT_CONTEXT_RPC" \
+  || fail "authenticated tenant-context RPC signature is missing"
+grep -Eiq 'security definer' "$TENANT_CONTEXT_RPC" \
+  || fail "tenant-context RPC must use its reviewed function-owner boundary"
+grep -Eiq 'set search_path = pg_catalog' "$TENANT_CONTEXT_RPC" \
+  || fail "tenant-context RPC must pin search_path"
+grep -Eiq 'set row_security = on' "$TENANT_CONTEXT_RPC" \
+  || fail "tenant-context RPC must enforce row_security"
+grep -Fq 'private.happy_current_authenticated_user_id()' "$TENANT_CONTEXT_RPC" \
+  || fail "tenant-context RPC must derive identity through the private auth.uid() accessor"
+grep -Eiq 'alter function public\.resolve_authenticated_tenant_context\(uuid,[[:space:]]*uuid\)[[:space:]]+owner to happy_tenant_scope_rpc_owner' "$TENANT_CONTEXT_RPC" \
+  || fail "tenant-context RPC must be owned by the dedicated non-bypass role"
+grep -Eiq 'grant select \(role\)[[:space:]]+on private\.organization_memberships to happy_tenant_scope_rpc_owner' "$TENANT_CONTEXT_RPC" \
+  || fail "tenant-context RPC owner is missing its narrow organization role column grant"
+grep -Eiq 'grant select \(role\)[[:space:]]+on private\.workspace_memberships to happy_tenant_scope_rpc_owner' "$TENANT_CONTEXT_RPC" \
+  || fail "tenant-context RPC owner is missing its narrow workspace role column grant"
+grep -Eiq 'revoke all on function public\.resolve_authenticated_tenant_context\(uuid,[[:space:]]*uuid\)[[:space:]]+from public,[[:space:]]*anon,[[:space:]]*authenticated,[[:space:]]*service_role' "$TENANT_CONTEXT_RPC" \
+  || fail "tenant-context RPC must revoke default/public and non-authenticated EXECUTE"
+grep -Eiq 'grant execute on function public\.resolve_authenticated_tenant_context\(uuid,[[:space:]]*uuid\)[[:space:]]+to authenticated' "$TENANT_CONTEXT_RPC" \
+  || fail "tenant-context RPC must grant EXECUTE only to authenticated"
+if grep -Eiq '^[[:space:]]*(insert|update|delete|truncate|drop)[[:space:]]' "$TENANT_CONTEXT_RPC"; then
+  fail "tenant-context RPC candidate must remain read-only"
+fi
+pass "authenticated tenant-context RPC uses a read-only NOBYPASSRLS owner and narrow authenticated EXECUTE"
 
 # The dependency manifest must reflect the split identity/request/envelope
 # baseline. Reject stale ordering or any attempt to resurrect the inert RPC
