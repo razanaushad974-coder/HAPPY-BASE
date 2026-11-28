@@ -108,6 +108,34 @@ for file in \
 done
 pass "superseded SQL notes are non-executable"
 
+# The dependency manifest must reflect the split identity/request/envelope
+# baseline. Reject stale ordering or any attempt to resurrect the inert RPC
+# placeholder as a schema-producing prerequisite.
+line_stage0="$(grep -nF '| 0. Canonical identity baseline |' "$MANIFEST" | cut -d: -f1 || true)"
+line_request_base="$(grep -nF '| 2. Execution request base |' "$MANIFEST" | cut -d: -f1 || true)"
+line_envelope="$(grep -nF '| 2a. Execution request + approval envelope |' "$MANIFEST" | cut -d: -f1 || true)"
+test -n "$line_stage0" && test -n "$line_request_base" && test -n "$line_envelope" \
+  || fail "manifest is missing canonical identity/request/envelope stages"
+(( line_stage0 < line_request_base && line_request_base < line_envelope )) \
+  || fail "manifest dependency order must be identity -> request base -> approval envelope"
+grep -Fq '20261123_canonical_tenant_identity_schema_candidate.sql' "$MANIFEST" >/dev/null \
+  || fail "manifest does not identify the isolated canonical identity baseline"
+grep -Fq '20261123_execution_request_base_schema_candidate.sql' "$MANIFEST" >/dev/null \
+  || fail "manifest does not identify the isolated execution-request base"
+grep -Fq 'non-executable superseded note' "$MANIFEST" >/dev/null \
+  || fail "manifest does not explicitly mark the intermediate execution-request RPC as superseded and inert"
+grep -Fq 'Do not treat it as a schema prerequisite' "$MANIFEST" >/dev/null \
+  || fail "manifest does not prohibit the superseded RPC note as a schema prerequisite"
+
+ENVELOPE="$DRAFTS/20261121_authenticated_execution_envelope_candidate.sql"
+grep -Fq 'private.execution_requests' "$ENVELOPE" >/dev/null \
+  || fail "execution envelope does not bind to the minimal request base"
+grep -Fq 'happy_tenant_records' "$ENVELOPE" >/dev/null \
+  || fail "execution envelope does not bind task/mission selectors to persisted tenant records"
+grep -Fq '20261121_authenticated_execution_request_rpc_candidate.sql is superseded and inert' "$ENVELOPE" >/dev/null \
+  || fail "execution envelope does not identify the intermediate RPC note as superseded"
+pass "identity -> request base -> approval envelope dependency contract"
+
 # Worker scheduler definitions must withhold EXECUTE; grants remain separate.
 WORKER_SQL="$DRAFTS/20261122_worker_scheduler_rpc_candidate.sql"
 WORKER_GRANTS="$DRAFTS/20261123_worker_scheduler_rpc_grant_candidate.sql"
@@ -141,5 +169,7 @@ if [[ ! -f "$ROOT_DIR/supabase/config.toml" || ! -d "$ROOT_DIR/supabase/migratio
 else
   echo "INFO: Supabase config and migration directory exist; ordered migration review is still required."
 fi
+
+bash "$ROOT_DIR/scripts/security/execution-decision-owner-contract.sh"
 
 echo "PASS: static staging draft preflight complete; this script does not apply SQL or certify staging readiness."
