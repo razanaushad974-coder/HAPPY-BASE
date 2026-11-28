@@ -24,6 +24,7 @@ on:
       - "src/core/mission/**"
       - "src/core/persistence/**"
       - "src/core/state/**"
+      - "src/core/workspace/**"
       - "src/core/memory/**"
       - "src/core/verification/**"
       - "src/tests/core/approval/**"
@@ -34,6 +35,7 @@ on:
       - "src/tests/core/mission/**"
       - "src/tests/core/persistence/**"
       - "src/tests/core/state/**"
+      - "src/tests/core/workspace/**"
       - "scripts/security/**"
       - "supabase/drafts/**"
       - "docs/architecture/**"
@@ -122,6 +124,8 @@ jobs:
         run: npx --yes tsx@4.23.15 src/tests/core/verification/async-verification-service.test.ts
       - name: Orchestration and mission harnesses
         run: npx --yes tsx@4.23.15 src/tests/core/orchestration/orchestration.test.ts && npx --yes tsx@4.23.15 src/tests/core/mission/mission-task-graph.test.ts
+      - name: Workspace OS model contract
+        run: npx --yes tsx@4.23.15 src/tests/core/workspace/user-os.test.ts
       - name: ESLint
         run: npm run lint
       - name: Dependency audit
