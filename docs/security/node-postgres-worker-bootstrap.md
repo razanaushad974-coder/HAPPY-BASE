@@ -129,11 +129,15 @@ The matching SQL is intentionally in `supabase/drafts/20261127_worker_tenant_gra
 
 **Not yet deployable to Supabase:** an operator must review the draft, verify the hosted dedicated LOGIN using the read-only principal diagnostic, and explicitly grant EXECUTE only to that exact verified LOGIN. The isolated CI grant is disposable and is not in the SQL draft. No hosted tenant grant is created or changed by this code. Each claim/dispatch operation still rechecks the grant and memberships transactionally through the worker RPCs.
 
-## Node process signal supervision
+## Node process signal supervision and bounded polling
 
-`runNodeWorkerProcess()` wraps exactly one bounded batch. It registers SIGINT/SIGTERM handlers, aborts the batch on the first shutdown signal, waits for the batch promise to settle, removes both listeners, and only then closes the host-owned PostgreSQL pool. It deliberately does not call `process.exit()` or retry provider side effects. The Node host should wire its actual `process` EventEmitter and `Pool.end()` into this adapter, then apply its own hard shutdown deadline and supervisor restart policy.
+`runNodeWorkerProcess()` remains the one-shot entrypoint. `runNodeWorkerDaemon()` adds a bounded sequential polling session over the same pool: the host configures a poll interval (100 ms–60 s) and a maximum of 1–100 batches. Batches never overlap; DENIED, NOT_CONNECTED, and STOPPED outcomes terminate the session without retry. A session reaching its batch cap returns so the external process supervisor can restart a fresh bounded session.
 
-This is a supervised one-shot worker entrypoint, not a continuous daemon or scheduler service. Continuous scheduling, worker instance provisioning, provider configuration, and host deployment remain external integration work.
+Both supervisors register SIGINT/SIGTERM handlers, abort between tenant operations, wait for the active bounded operation to settle, remove both listeners, and only then close the exact host-owned PostgreSQL pool. They deliberately do not call `process.exit()` or replay ambiguous provider effects. The Node host wires its actual `process` EventEmitter and `Pool.end()` into the selected adapter and owns the hard shutdown deadline/restart policy.
+
+`runNodePostgresWorkerDaemonHost()` composes the real Node PostgreSQL pool, trusted identity resolver, authoritative tenant-grant source, durable worker, bounded scheduler, polling supervisor, and graceful pool shutdown. The existing `runNodePostgresWorkerHost()` remains available for exactly one batch.
+
+The one-shot host remains available, and a bounded multi-batch polling host is now available as a separate entrypoint. Neither is deployed as an always-on service; external scheduling/restart, worker instance provisioning, provider configuration, and host deployment remain integration work.
 
 ## Security invariants
 
@@ -148,8 +152,8 @@ This is a supervised one-shot worker entrypoint, not a continuous daemon or sche
 
 - No concrete host identity provider or cryptographic workload credential source has been provisioned.
 - No `pg` package or database URL has been added to the web application's dependencies.
-- The tenant-grant source and bounded scheduler are implemented at source level. No continuous cross-tenant polling daemon or deployed host scheduler is wired; the Node host must schedule bounded batches after the reviewed tenant-grant RPC is deployed.
-- No continuous daemon loop, process supervisor, graceful-shutdown controller, or concurrency controller is supplied. The host should schedule bounded one-shot work and enforce its own shutdown/concurrency policy.
+- A bounded sequential polling session is implemented at source level, but no always-on host service or automatic restart policy is deployed. The host supervisor must restart bounded sessions after the configured batch cap and only after the reviewed tenant-grant RPC is deployed.
+- No hosted worker instance, process-manager configuration, live workload identity source, or production concurrency policy is provisioned. The code enforces concurrency=1 within each process; the host operator must bound the number of worker instances.
 - Hosted pooler identity verification, staging RPC deployment, live database integration tests, and any production deployment remain separate approval-gated steps.
 
 ## Verification
