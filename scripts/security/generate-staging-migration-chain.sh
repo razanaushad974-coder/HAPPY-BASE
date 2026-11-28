@@ -21,7 +21,7 @@ if [[ -e supabase/config.toml || -d supabase/migrations ]]; then
         && -f docs/security/supabase-staging-migration-checksums.sha256 \
         && -s supabase/drafts/20261121_authenticated_tenant_context_rpc_candidate.sql \
         && -z "$(find supabase/migrations -maxdepth 1 -type f -name '*_0019_authenticated_tenant_context_rpc.sql' -print -quit)" \
-        && grep -q '20261124123003_0018_worker_scheduler_owner_privileges.sql' docs/security/supabase-staging-migration-chain.md ]]; then
+        && -n "$(grep -F '20261124123003_0018_worker_scheduler_owner_privileges.sql' docs/security/supabase-staging-migration-chain.md)" ]]; then
     supabase migration new "0019_authenticated_tenant_context_rpc"
     migration_file="$(find supabase/migrations -maxdepth 1 -type f -name '*_0019_authenticated_tenant_context_rpc.sql' -print -quit)"
     [[ -n "$migration_file" ]] || { echo "Supabase CLI did not create migration 0019." >&2; exit 4; }
