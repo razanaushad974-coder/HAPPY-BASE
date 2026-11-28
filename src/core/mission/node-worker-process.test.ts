@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
-import { runNodeWorkerProcess, type NodeWorkerShutdownSignal } from "./node-worker-process";
+import {
+  runNodeWorkerDaemon,
+  runNodeWorkerProcess,
+  type NodeWorkerShutdownSignal,
+} from "./node-worker-process";
 
 async function main(): Promise<void> {
   const listeners = new Map<NodeWorkerShutdownSignal, () => void>();
@@ -92,7 +96,82 @@ async function main(): Promise<void> {
   assert.equal(firstListenerRemoved, 1, "any listener registered before failure must be removed");
   assert.equal(listeners.has("SIGINT"), false);
 
-  console.log("Node worker process supervisor: PASS");
+  const daemonListeners = new Map<NodeWorkerShutdownSignal, () => void>();
+  let daemonCalls = 0;
+  let daemonPoolClosed = 0;
+  let daemonRemoved = 0;
+  const daemonResult = await runNodeWorkerDaemon({
+    signals: {
+      on(signal, listener) { daemonListeners.set(signal, listener); },
+      off(signal, listener) {
+        if (daemonListeners.get(signal) === listener) {
+          daemonListeners.delete(signal);
+          daemonRemoved += 1;
+        }
+      },
+    },
+    pool: {
+      async end() {
+        daemonPoolClosed += 1;
+        assert.equal(daemonListeners.size, 0, "daemon listeners must be removed before pool shutdown");
+      },
+    },
+    maxBatches: 5,
+    pollIntervalMs: 100,
+    async runBatch(signal) {
+      daemonCalls += 1;
+      assert.equal(signal.aborted, false);
+      if (daemonCalls === 2) {
+        daemonListeners.get("SIGTERM")?.();
+        assert.equal(signal.aborted, true, "SIGTERM must abort the active daemon session");
+        return {
+          status: "STOPPED",
+          operation: "PENDING_DISPATCH",
+          tenantsVisited: 1,
+          results: [],
+        };
+      }
+      return {
+        status: "COMPLETED",
+        operation: "PENDING_DISPATCH",
+        tenantsVisited: 1,
+        results: [],
+      };
+    },
+  });
+  assert.equal(daemonResult.status, "STOPPED");
+  assert.equal(daemonResult.shutdownSignal, "SIGTERM");
+  assert.equal(daemonResult.batchesRun, 2, "daemon must run sequential batches until shutdown");
+  assert.equal(daemonResult.tenantsVisited, 2);
+  assert.equal(daemonCalls, 2, "daemon must not start a new batch after shutdown");
+  assert.equal(daemonPoolClosed, 1, "daemon must close the shared pool exactly once");
+  assert.equal(daemonRemoved, 2, "daemon must remove both shutdown listeners");
+  assert.equal(daemonListeners.size, 0);
+
+  let deniedBatches = 0;
+  let deniedPoolClosed = 0;
+  const deniedDaemon = await runNodeWorkerDaemon({
+    signals: { on() {}, off() {} },
+    pool: { async end() { deniedPoolClosed += 1; } },
+    maxBatches: 5,
+    pollIntervalMs: 100,
+    async runBatch() {
+      deniedBatches += 1;
+      return {
+        status: "DENIED",
+        operation: "READY_TASK",
+        tenantsVisited: 0,
+        results: [],
+        reason: "PRINCIPAL_NOT_AUTHORIZED",
+      };
+    },
+  });
+  assert.equal(deniedDaemon.status, "DENIED");
+  assert.equal(deniedDaemon.batchesRun, 1, "denied authorization must stop the polling session");
+  assert.equal(deniedBatches, 1);
+  assert.equal(deniedPoolClosed, 1);
+
+  console.log("Node worker process and bounded daemon supervisor: PASS");
 }
 
 void main().catch((error: unknown) => {
