@@ -111,7 +111,7 @@ pass "superseded SQL notes are non-executable"
 # The active tenant-context RPC is a read-only authenticated selector check,
 # owned by the dedicated NOLOGIN/NOBYPASSRLS role and bound to auth.uid().
 TENANT_CONTEXT_RPC="$DRAFTS/20261121_authenticated_tenant_context_rpc_candidate.sql"
-grep -Eiq 'create or replace function public\.resolve_authenticated_tenant_context\(uuid,[[:space:]]*uuid\)' "$TENANT_CONTEXT_RPC" \
+grep -Fq 'CREATE OR REPLACE FUNCTION public.resolve_authenticated_tenant_context(' "$TENANT_CONTEXT_RPC" \
   || fail "authenticated tenant-context RPC signature is missing"
 grep -Eiq 'security definer' "$TENANT_CONTEXT_RPC" \
   || fail "tenant-context RPC must use its reviewed function-owner boundary"
@@ -121,16 +121,24 @@ grep -Eiq 'set row_security = on' "$TENANT_CONTEXT_RPC" \
   || fail "tenant-context RPC must enforce row_security"
 grep -Fq 'private.happy_current_authenticated_user_id()' "$TENANT_CONTEXT_RPC" \
   || fail "tenant-context RPC must derive identity through the private auth.uid() accessor"
-grep -Eiq 'alter function public\.resolve_authenticated_tenant_context\(uuid,[[:space:]]*uuid\)[[:space:]]+owner to happy_tenant_scope_rpc_owner' "$TENANT_CONTEXT_RPC" \
+grep -Fq 'ALTER FUNCTION public.resolve_authenticated_tenant_context(uuid, uuid)' "$TENANT_CONTEXT_RPC" \
+  || fail "tenant-context RPC owner transfer is missing"
+grep -Fq 'OWNER TO happy_tenant_scope_rpc_owner;' "$TENANT_CONTEXT_RPC" \
   || fail "tenant-context RPC must be owned by the dedicated non-bypass role"
-grep -Eiq 'grant select \(role\)[[:space:]]+on private\.organization_memberships to happy_tenant_scope_rpc_owner' "$TENANT_CONTEXT_RPC" \
-  || fail "tenant-context RPC owner is missing its narrow organization role column grant"
-grep -Eiq 'grant select \(role\)[[:space:]]+on private\.workspace_memberships to happy_tenant_scope_rpc_owner' "$TENANT_CONTEXT_RPC" \
-  || fail "tenant-context RPC owner is missing its narrow workspace role column grant"
-grep -Eiq 'revoke all on function public\.resolve_authenticated_tenant_context\(uuid,[[:space:]]*uuid\)[[:space:]]+from public,[[:space:]]*anon,[[:space:]]*authenticated,[[:space:]]*service_role' "$TENANT_CONTEXT_RPC" \
-  || fail "tenant-context RPC must revoke default/public and non-authenticated EXECUTE"
-grep -Eiq 'grant execute on function public\.resolve_authenticated_tenant_context\(uuid,[[:space:]]*uuid\)[[:space:]]+to authenticated' "$TENANT_CONTEXT_RPC" \
-  || fail "tenant-context RPC must grant EXECUTE only to authenticated"
+grep -Fq 'GRANT SELECT (role)' "$TENANT_CONTEXT_RPC" \
+  || fail "tenant-context RPC owner is missing narrow membership role column grants"
+grep -Fq 'ON private.organization_memberships TO happy_tenant_scope_rpc_owner;' "$TENANT_CONTEXT_RPC" \
+  || fail "tenant-context RPC owner is missing organization role column grant"
+grep -Fq 'ON private.workspace_memberships TO happy_tenant_scope_rpc_owner;' "$TENANT_CONTEXT_RPC" \
+  || fail "tenant-context RPC owner is missing workspace role column grant"
+grep -Fq 'REVOKE ALL ON FUNCTION public.resolve_authenticated_tenant_context(uuid, uuid)' "$TENANT_CONTEXT_RPC" \
+  || fail "tenant-context RPC must revoke default EXECUTE"
+grep -Fq 'FROM PUBLIC, anon, authenticated, service_role;' "$TENANT_CONTEXT_RPC" \
+  || fail "tenant-context RPC must revoke EXECUTE from PUBLIC and non-authenticated roles"
+grep -Fq 'GRANT EXECUTE ON FUNCTION public.resolve_authenticated_tenant_context(uuid, uuid)' "$TENANT_CONTEXT_RPC" \
+  || fail "tenant-context RPC authenticated EXECUTE grant is missing"
+grep -Fq 'TO authenticated;' "$TENANT_CONTEXT_RPC" \
+  || fail "tenant-context RPC must grant EXECUTE to authenticated"
 if grep -Eiq '^[[:space:]]*(insert|update|delete|truncate|drop)[[:space:]]' "$TENANT_CONTEXT_RPC"; then
   fail "tenant-context RPC candidate must remain read-only"
 fi
