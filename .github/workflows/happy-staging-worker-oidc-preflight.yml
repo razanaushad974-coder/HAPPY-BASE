@@ -1,0 +1,35 @@
+name: HAPPY staging worker OIDC preflight
+
+on:
+  push:
+    branches:
+      - docs/staging-worker-activation-runbook
+    paths:
+      - ".github/workflows/happy-staging-worker-oidc-preflight.yml"
+      - "scripts/security/github-actions-staging-worker-oidc-preflight.mjs"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: happy-staging-worker-oidc-preflight
+  cancel-in-progress: false
+
+jobs:
+  verify-staging-workload-identity:
+    name: Verify pinned GitHub Actions staging identity
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    environment:
+      name: happy-staging-worker
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify GitHub OIDC signature and exact staging claims
+        run: node scripts/security/github-actions-staging-worker-oidc-preflight.mjs
