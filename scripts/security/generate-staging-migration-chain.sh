@@ -6,7 +6,7 @@ cd "$repo_root"
 
 if [[ -e supabase/config.toml || -d supabase/migrations ]]; then
   existing_count="$(find supabase/migrations -maxdepth 1 -type f -name '*.sql' 2>/dev/null | wc -l | tr -d ' ')"
-  if [[ -f supabase/config.toml && "$existing_count" == "18" \
+  if [[ -f supabase/config.toml && "$existing_count" == "19" \
         && -f docs/security/supabase-staging-migration-chain.md \
         && -f docs/security/supabase-staging-migration-checksums.sha256 ]]; then
     sha256sum supabase/migrations/*.sql > docs/security/supabase-staging-migration-checksums.sha256
