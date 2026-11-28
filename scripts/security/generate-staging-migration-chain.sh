@@ -13,6 +13,27 @@ if [[ -e supabase/config.toml || -d supabase/migrations ]]; then
     echo "Complete committed migration chain detected; preserve SQL and refresh checksums."
     exit 0
   fi
+
+  # The reviewed 18-migration baseline may receive only this exact additive
+  # tenant-context RPC migration. Never rewrite or regenerate existing SQL.
+  if [[ -f supabase/config.toml && "$existing_count" == "18" \
+        && -f docs/security/supabase-staging-migration-chain.md \
+        && -f docs/security/supabase-staging-migration-checksums.sha256 \
+        && -s supabase/drafts/20261121_authenticated_tenant_context_rpc_candidate.sql \
+        && -z "$(find supabase/migrations -maxdepth 1 -type f -name '*_0019_authenticated_tenant_context_rpc.sql' -print -quit)" \
+        && grep -q '20261124123003_0018_worker_scheduler_owner_privileges.sql' docs/security/supabase-staging-migration-chain.md ]]; then
+    supabase migration new "0019_authenticated_tenant_context_rpc"
+    migration_file="$(find supabase/migrations -maxdepth 1 -type f -name '*_0019_authenticated_tenant_context_rpc.sql' -print -quit)"
+    [[ -n "$migration_file" ]] || { echo "Supabase CLI did not create migration 0019." >&2; exit 4; }
+    cp supabase/drafts/20261121_authenticated_tenant_context_rpc_candidate.sql "$migration_file"
+    generated="$(basename "$migration_file")"
+    sed -i "/^## Explicit exclusions/i | 19 | `$generated` | `20261121_authenticated_tenant_context_rpc_candidate.sql` |\n" docs/security/supabase-staging-migration-chain.md
+    sed -i 's/- Superseded tenant-context and execution-request RPC design notes./- Superseded legacy tenant-context and execution-request RPC design notes; replacement read-only tenant-context RPC is included as migration 0019./' docs/security/supabase-staging-migration-chain.md
+    sha256sum supabase/migrations/*.sql > docs/security/supabase-staging-migration-checksums.sha256
+    echo "Added one CLI-generated authenticated tenant-context RPC migration without rewriting the existing 18."
+    exit 0
+  fi
+
   echo "Refusing to overwrite an incomplete Supabase CLI bootstrap or migration chain." >&2
   exit 2
 fi
