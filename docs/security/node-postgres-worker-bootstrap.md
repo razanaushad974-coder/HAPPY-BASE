@@ -28,7 +28,7 @@ import {
 } from "./src/core/mission/node-postgres-happy-worker";
 
 const pool = new Pool({
-  connectionString: process.env.HAPPY_WORKER_DATABASE_URL,
+  connectionString: process.env.HAPPY_STAGING_WORKER_DATABASE_URL,
   max: 4,
   connectionTimeoutMillis: 5_000,
   idleTimeoutMillis: 30_000,
@@ -38,7 +38,7 @@ const worker = createNodePostgresHappyWorkerFromEnvironment({
   runtime: {
     identityProvider: trustedHostIdentityResolver,
     pool,
-    expectedLoginRole: "happy_worker_staging",
+    expectedLoginRole: "happy_worker_dispatch",
     statementTimeoutMs: 15_000,
     idleTransactionTimeoutMs: 30_000,
   },
@@ -102,7 +102,7 @@ const worker = createNodePostgresHappyWorker({
   runtime: {
     identityProvider,
     pool, // host-created node-postgres Pool using the dedicated LOGIN
-    expectedLoginRole: "happy_worker_staging",
+    expectedLoginRole: "happy_worker_dispatch",
   },
   tenantPersistence,
   provider: idempotentProvider,
@@ -115,7 +115,7 @@ The example deliberately leaves the credential source, issuer/JWKS metadata, sub
 
 `runNodeWorkerBatch()` is the host-independent batch runner. It is deliberately sequential (concurrency 1), validates a maximum of 20 tenant grants per invocation, re-resolves workload identity and the principal registry before each grant scan, validates the returned organization/workspace/user tuple against the worker principal ID, and stops between operations when its AbortSignal is set. It supports one bounded mode per invocation: `READY_TASK` or `PENDING_DISPATCH`.
 
-The required `AuthorizedWorkerTenantScopeSource` is an adapter contract, not a built-in grant implementation. A production host must implement it over the authoritative tenant-scope grant RPC, bound pagination, and return only grants active for the supplied verified identity and registry registration. No request-provided tenant IDs or arbitrary cross-tenant scans are accepted by the batch runner. The worker broker still re-verifies identity and registration immediately before each database operation.
+`AuthorizedWorkerTenantScopeSource` is the scheduler contract. This PR includes `PostgresWorkerTenantGrantSource`, which implements it using the fixed `private.happy_worker_list_tenant_grants` RPC through the dedicated PostgreSQL session provider. The Node factory `createNodePostgresWorkerTenantScopeSource()` wires that source. The host still owns deployment of the reviewed SQL candidate and the staging-only EXECUTE grant; until those are approved, the source cannot enumerate hosted grants. No request-provided tenant IDs or arbitrary cross-tenant scans are accepted. The worker broker re-verifies identity and registration immediately before each database operation.
 
 The host owns process signal wiring: on SIGTERM/SIGINT it should abort the batch signal, await the in-flight bounded database/provider operation to settle, close the PostgreSQL pool, and exit. The batch runner does not forcibly cancel a provider request after it has begun, because that could create an ambiguous external side effect. The host must enforce its own process deadline and persist/reconcile ambiguous outcomes through the existing durable protocol.
 
@@ -149,7 +149,7 @@ This is a supervised one-shot worker entrypoint, not a continuous daemon or sche
 - No concrete host identity provider or cryptographic workload credential source has been provisioned.
 - No `pg` package or database URL has been added to the web application's dependencies.
 - The tenant-grant source and bounded scheduler are implemented at source level. No continuous cross-tenant polling daemon or deployed host scheduler is wired; the Node host must schedule bounded batches after the reviewed tenant-grant RPC is deployed.
-- No continuous daemon loop, process supervisor, graceful-shutdown controller, or concurrency controller is supplied. The host should schedule bounded one-shot work and enforce its own shutdown/concurrency policy.
+- No continuous daemon loop, restart controller, or multi-process concurrency controller is supplied. `runNodeWorkerProcess()` provides one-shot SIGINT/SIGTERM supervision for a bounded batch; the host still owns scheduling, hard shutdown deadlines, restart policy, and cross-process concurrency.
 - Hosted pooler identity verification, staging RPC deployment, live database integration tests, and any production deployment remain separate approval-gated steps.
 
 ## Verification
@@ -161,6 +161,10 @@ npx --yes tsx@4.23.15 src/core/mission/node-postgres-happy-worker.test.ts
 ```
 
 A passing construction test proves dependency composition and fail-closed configuration validation only. The isolated PostgreSQL 17 CI harness additionally exercises the tenant-grant SQL candidate against real PostgreSQL roles and RLS; it does not prove Supabase pooler identity behavior or a hosted worker dispatch.
+
+## Staging activation runbook
+
+See [node-postgres-worker-staging-activation.md](./node-postgres-worker-staging-activation.md) for the ordered, operator-gated procedure to provision trusted workload identity, verify the actual pooler LOGIN, review/apply the SQL candidate in staging, grant the exact worker EXECUTE privilege, and run one bounded staging smoke test. No hosted change is made by the runbook.
 
 ## Composed Node host entrypoint
 

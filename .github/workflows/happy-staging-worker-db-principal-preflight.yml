@@ -1,0 +1,36 @@
+name: HAPPY staging worker DB principal preflight
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: happy-staging-worker-db-principal-preflight
+  cancel-in-progress: false
+
+jobs:
+  verify-staging-database-principal:
+    name: Verify exact staging PostgreSQL LOGIN (read-only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment:
+      name: happy-staging-worker
+    env:
+      HAPPY_STAGING_WORKER_DATABASE_URL: ${{ secrets.HAPPY_STAGING_WORKER_DATABASE_URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify pinned GitHub Actions staging identity
+        run: node scripts/security/github-actions-staging-worker-oidc-preflight.mjs
+      - name: Install PostgreSQL client only when the staging secret exists
+        if: env.HAPPY_STAGING_WORKER_DATABASE_URL != ''
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Verify same-pooler session_user and current_user (read-only)
+        run: bash scripts/security/hosted-worker-postgres-principal-readonly.sh

@@ -41,6 +41,7 @@ on:
       - "supabase/drafts/**"
       - "supabase/migrations/**"
       - "docs/architecture/**"
+      - "docs/security/**"
       - "package.json"
       - "package-lock.json"
       - "tsconfig.json"
@@ -52,6 +53,7 @@ on:
       - security/staging-migration-readiness
       - fix/durable-verification-persistence-20261124
       - security/node-postgres-worker-bootstrap
+      - docs/staging-worker-activation-runbook
 
 permissions:
   contents: read
@@ -108,7 +110,28 @@ jobs:
       - name: PostgreSQL reconciliation evidence store contract
         run: npx --yes tsx@4.23.15 src/tests/core/persistence/postgres-provider-reconciliation-evidence-store.test.ts
       - name: Validate PostgreSQL and staging preflight shell syntax
-        run: bash -n scripts/security/hosted-worker-identity-readonly.sh scripts/security/postgres-tenant-persistence-integration.sh scripts/security/postgres-tenant-cas-concurrency.sh scripts/security/postgres-reconciliation-evidence-concurrency.sh scripts/security/postgres-worker-principal-registry-integration.sh scripts/security/worker-scheduler-draft-contract.sh scripts/security/staging-migration-draft-preflight.sh scripts/security/execution-decision-owner-contract.sh
+        run: bash -n scripts/security/hosted-worker-identity-readonly.sh scripts/security/postgres-tenant-persistence-integration.sh scripts/security/postgres-tenant-cas-concurrency.sh scripts/security/postgres-reconciliation-evidence-concurrency.sh scripts/security/postgres-worker-principal-registry-integration.sh scripts/security/worker-scheduler-draft-contract.sh scripts/security/staging-migration-draft-preflight.sh scripts/security/hosted-worker-postgres-principal-readonly.sh scripts/security/execution-decision-owner-contract.sh
+      - name: Verify missing staging DB secret blocks without connecting
+        shell: bash
+        run: |
+          set -euo pipefail
+          temp_bin="$(mktemp -d)"
+          marker_file="$(mktemp)"
+          trap 'rm -rf "$temp_bin" "$marker_file"' EXIT
+          cat > "$temp_bin/psql" <<'PSQL'
+          #!/usr/bin/env bash
+          printf 'invoked\\n' >> "$HAPPY_TEST_PSQL_MARKER"
+          exit 99
+          PSQL
+          chmod +x "$temp_bin/psql"
+          set +e
+          output="$(PATH="$temp_bin:$PATH" HAPPY_TEST_PSQL_MARKER="$marker_file" env -u HAPPY_STAGING_WORKER_DATABASE_URL bash scripts/security/hosted-worker-postgres-principal-readonly.sh 2>&1)"
+          status=$?
+          set -e
+          printf '%s\\n' "$output"
+          [[ "$status" -eq 3 ]]
+          grep -Fq 'HAPPY_STAGING_DB_PRINCIPAL_PREFLIGHT=BLOCKED_SECRET_NOT_CONFIGURED' <<< "$output"
+          [[ ! -s "$marker_file" ]]
       - name: Static Supabase staging migration draft preflight
         run: bash scripts/security/staging-migration-draft-preflight.sh
       - name: Worker scheduler draft contract
