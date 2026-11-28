@@ -10,6 +10,10 @@
 BEGIN;
 
 GRANT CREATE ON SCHEMA public TO happy_tenant_scope_rpc_owner;
+GRANT SELECT (role)
+  ON private.organization_memberships TO happy_tenant_scope_rpc_owner;
+GRANT SELECT (role)
+  ON private.workspace_memberships TO happy_tenant_scope_rpc_owner;
 
 CREATE OR REPLACE FUNCTION public.resolve_authenticated_tenant_context(
   p_organization_id uuid,
@@ -102,18 +106,40 @@ BEGIN
   END IF;
 
   IF NOT has_function_privilege('authenticated',
-       'public.resolve_authenticated_tenant_context(uuid,uuid)', 'EXECUTE')
-     OR has_function_privilege('anon',
-       'public.resolve_authenticated_tenant_context(uuid,uuid)', 'EXECUTE')
-     OR has_function_privilege('service_role',
-       'public.resolve_authenticated_tenant_context(uuid,uuid)', 'EXECUTE')
-     OR NOT has_function_privilege('happy_tenant_scope_rpc_owner',
-       'private.happy_current_authenticated_user_id()', 'EXECUTE')
-     OR NOT has_table_privilege('happy_tenant_scope_rpc_owner',
-       'private.organization_memberships', 'SELECT')
-     OR NOT has_table_privilege('happy_tenant_scope_rpc_owner',
-       'private.workspace_memberships', 'SELECT') THEN
-    RAISE EXCEPTION 'Tenant-context RPC grants/read boundary mismatch';
+       'public.resolve_authenticated_tenant_context(uuid,uuid)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'Authenticated role is missing tenant-context RPC EXECUTE';
+  END IF;
+  IF has_function_privilege('anon',
+       'public.resolve_authenticated_tenant_context(uuid,uuid)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'Anonymous role unexpectedly has tenant-context RPC EXECUTE';
+  END IF;
+  IF has_function_privilege('service_role',
+       'public.resolve_authenticated_tenant_context(uuid,uuid)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'Service role unexpectedly has tenant-context RPC EXECUTE';
+  END IF;
+  IF NOT has_function_privilege('happy_tenant_scope_rpc_owner',
+       'private.happy_current_authenticated_user_id()', 'EXECUTE') THEN
+    RAISE EXCEPTION 'Tenant-context owner is missing the private JWT subject accessor';
+  END IF;
+  IF NOT has_column_privilege('happy_tenant_scope_rpc_owner',
+       'private.organization_memberships', 'organization_id', 'SELECT')
+     OR NOT has_column_privilege('happy_tenant_scope_rpc_owner',
+       'private.organization_memberships', 'user_id', 'SELECT')
+     OR NOT has_column_privilege('happy_tenant_scope_rpc_owner',
+       'private.organization_memberships', 'status', 'SELECT')
+     OR NOT has_column_privilege('happy_tenant_scope_rpc_owner',
+       'private.organization_memberships', 'role', 'SELECT')
+     OR NOT has_column_privilege('happy_tenant_scope_rpc_owner',
+       'private.workspace_memberships', 'organization_id', 'SELECT')
+     OR NOT has_column_privilege('happy_tenant_scope_rpc_owner',
+       'private.workspace_memberships', 'workspace_id', 'SELECT')
+     OR NOT has_column_privilege('happy_tenant_scope_rpc_owner',
+       'private.workspace_memberships', 'user_id', 'SELECT')
+     OR NOT has_column_privilege('happy_tenant_scope_rpc_owner',
+       'private.workspace_memberships', 'status', 'SELECT')
+     OR NOT has_column_privilege('happy_tenant_scope_rpc_owner',
+       'private.workspace_memberships', 'role', 'SELECT') THEN
+    RAISE EXCEPTION 'Tenant-context owner lacks exact membership SELECT columns';
   END IF;
 
   IF (SELECT rolcanlogin OR rolsuper OR rolbypassrls OR rolinherit
