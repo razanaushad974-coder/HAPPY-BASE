@@ -3,6 +3,7 @@ import type {
   OrganizationMembershipRecord,
   WorkspaceMembershipRecord,
 } from "../tenant/canonical-tenant-context";
+import { TenantMembershipUnavailableError } from "../tenant/canonical-tenant-context";
 import type {
   NamedExecutorGrant,
   NamedExecutorGrantBinding,
@@ -130,51 +131,53 @@ implements CanonicalTenantMembershipStore {
     organization: OrganizationMembershipRecord;
     workspace: WorkspaceMembershipRecord;
   } | null> {
+    let result: DatabaseResult;
     try {
-      const result = await this.client.rpc("resolve_authenticated_tenant_context", {
+      result = await this.client.rpc("resolve_authenticated_tenant_context", {
         p_organization_id: organizationId,
         p_workspace_id: workspaceId,
       });
-      if (result.error) return null;
-      const rows = Array.isArray(result.data)
-        ? result.data
-        : result.data === null || result.data === undefined
-          ? []
-          : [result.data];
-      if (rows.length !== 1 || !isRecord(rows[0])) return null;
-
-      const row = rows[0];
-      const returnedUserId = stringField(row, "user_id");
-      const returnedOrganizationId = stringField(row, "organization_id");
-      const returnedWorkspaceId = stringField(row, "workspace_id");
-      const organizationRole = stringField(row, "organization_role");
-      const workspaceRole = stringField(row, "workspace_role");
-      if (
-        returnedUserId !== userId ||
-        returnedOrganizationId !== organizationId ||
-        returnedWorkspaceId !== workspaceId ||
-        !organizationRole ||
-        !workspaceRole
-      ) return null;
-
-      return {
-        organization: {
-          userId: returnedUserId,
-          organizationId: returnedOrganizationId,
-          status: "ACTIVE",
-          role: organizationRole,
-        },
-        workspace: {
-          userId: returnedUserId,
-          organizationId: returnedOrganizationId,
-          workspaceId: returnedWorkspaceId,
-          status: "ACTIVE",
-          role: workspaceRole,
-        },
-      };
     } catch {
-      return null;
+      throw new TenantMembershipUnavailableError();
     }
+    if (result.error) throw new TenantMembershipUnavailableError();
+
+    const rows = Array.isArray(result.data)
+      ? result.data
+      : result.data === null || result.data === undefined
+        ? []
+        : [result.data];
+    if (rows.length !== 1 || !isRecord(rows[0])) return null;
+
+    const row = rows[0];
+    const returnedUserId = stringField(row, "user_id");
+    const returnedOrganizationId = stringField(row, "organization_id");
+    const returnedWorkspaceId = stringField(row, "workspace_id");
+    const organizationRole = stringField(row, "organization_role");
+    const workspaceRole = stringField(row, "workspace_role");
+    if (
+      returnedUserId !== userId ||
+      returnedOrganizationId !== organizationId ||
+      returnedWorkspaceId !== workspaceId ||
+      !organizationRole ||
+      !workspaceRole
+    ) return null;
+
+    return {
+      organization: {
+        userId: returnedUserId,
+        organizationId: returnedOrganizationId,
+        status: "ACTIVE",
+        role: organizationRole,
+      },
+      workspace: {
+        userId: returnedUserId,
+        organizationId: returnedOrganizationId,
+        workspaceId: returnedWorkspaceId,
+        status: "ACTIVE",
+        role: workspaceRole,
+      },
+    };
   }
 }
 
