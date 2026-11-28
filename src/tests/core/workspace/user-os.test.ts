@@ -208,8 +208,8 @@ async function main(): Promise<void> {
         os.commandCenter.snapshot();
 
     assert(
-        commandCenter.commandReady,
-        "Command center readiness failed.",
+        !commandCenter.commandReady,
+        "Command intake must remain disabled without a connected runtime.",
     );
 
     assert(
