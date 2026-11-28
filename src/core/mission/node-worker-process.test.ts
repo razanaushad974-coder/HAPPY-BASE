@@ -171,6 +171,29 @@ async function main(): Promise<void> {
   assert.equal(deniedBatches, 1);
   assert.equal(deniedPoolClosed, 1);
 
+  let cappedPoolClosed = 0;
+  let cappedBatchCalls = 0;
+  const cappedDaemon = await runNodeWorkerDaemon({
+    signals: { on() {}, off() {} },
+    pool: { async end() { cappedPoolClosed += 1; } },
+    maxBatches: 1,
+    pollIntervalMs: 100,
+    async runBatch() {
+      cappedBatchCalls += 1;
+      return {
+        status: "COMPLETED",
+        operation: "READY_TASK",
+        tenantsVisited: 2,
+        results: [],
+      };
+    },
+  });
+  assert.equal(cappedDaemon.status, "COMPLETED");
+  assert.equal(cappedDaemon.reason, "MAX_BATCHES_REACHED",
+    "bounded daemon must expose its configured batch cap to the host supervisor");
+  assert.equal(cappedBatchCalls, 1);
+  assert.equal(cappedPoolClosed, 1);
+
   console.log("Node worker process and bounded daemon supervisor: PASS");
 }
 
