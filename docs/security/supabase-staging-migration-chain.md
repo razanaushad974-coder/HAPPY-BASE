@@ -27,9 +27,10 @@
 | 17 | `20261124123001_0017_worker_scheduler_rpcs.sql` | `20261122_worker_scheduler_rpc_candidate.sql` |
 | 18 | `20261124123003_0018_worker_scheduler_owner_privileges.sql` | `20261123_worker_scheduler_rpc_owner_privilege_candidate.sql` |
 
+| 19 | 20261128072322_0019_authenticated_tenant_context_rpc.sql | 20261121_authenticated_tenant_context_rpc_candidate.sql |
 ## Explicit exclusions
 
-- Superseded tenant-context and execution-request RPC design notes.
+- Superseded legacy tenant-context and execution-request RPC design notes; replacement read-only tenant-context RPC is included as migration 0019.
 - Legacy file-mutation atomic-consume candidate.
 - Worker registry and scheduler LOGIN grant candidates; worker EXECUTE grants remain withheld pending real dedicated-LOGIN and hosted-pooler `session_user` evidence.
 
