@@ -86,6 +86,9 @@ export async function POST(request: NextRequest) {
     if (tenant.status === "UNAUTHENTICATED") {
       return response(401, { status: "UNAUTHENTICATED" });
     }
+    if (tenant.status === "TENANT_CONTEXT_UNAVAILABLE") {
+      return response(503, { status: "TENANT_CONTEXT_NOT_YET_CONNECTED" });
+    }
     if (tenant.status !== "AUTHENTICATED") {
       return response(403, { status: "TENANT_ACCESS_DENIED" });
     }
