@@ -37,6 +37,14 @@ export interface CanonicalTenantMembershipPair {
   workspace: WorkspaceMembershipRecord;
 }
 
+/** Distinguishes an unavailable membership authority from a real membership denial. */
+export class TenantMembershipUnavailableError extends Error {
+  constructor() {
+    super("Tenant membership authority is unavailable.");
+    this.name = "TenantMembershipUnavailableError";
+  }
+}
+
 export interface CanonicalTenantMembershipStore {
   /** One authoritative, user-bound lookup for the exact organization/workspace pair. */
   getTenantMembershipPair(
@@ -108,8 +116,10 @@ export async function resolveCanonicalTenantContext(
       organizationRole: organization.role,
       workspaceRole: workspace.role,
     };
-  } catch {
-    // Membership lookup errors are authorization failures, never fallbacks.
+  } catch (error) {
+    // Preserve infrastructure failure as a distinct fail-closed outcome so
+    // callers can report service unavailability rather than false denial.
+    if (error instanceof TenantMembershipUnavailableError) throw error;
     return null;
   }
 }
@@ -126,7 +136,7 @@ export interface VerifiedServerIdentityProvider {
 
 export type AuthenticatedTenantResolution =
   | { status: "AUTHENTICATED"; context: CanonicalTenantContext }
-  | { status: "UNAUTHENTICATED" | "TENANT_ACCESS_DENIED" };
+  | { status: "UNAUTHENTICATED" | "TENANT_ACCESS_DENIED" | "TENANT_CONTEXT_UNAVAILABLE" };
 
 /**
  * Fail-closed composition helper for server routes. It deliberately accepts
@@ -148,11 +158,19 @@ export async function resolveAuthenticatedTenantContext(
     return { status: "UNAUTHENTICATED" };
   }
 
-  const context = await resolveCanonicalTenantContext(
-    identity,
-    requestedScope,
-    memberships,
-  );
+  let context: CanonicalTenantContext | null;
+  try {
+    context = await resolveCanonicalTenantContext(
+      identity,
+      requestedScope,
+      memberships,
+    );
+  } catch (error) {
+    if (error instanceof TenantMembershipUnavailableError) {
+      return { status: "TENANT_CONTEXT_UNAVAILABLE" };
+    }
+    return { status: "TENANT_ACCESS_DENIED" };
+  }
 
   return context
     ? { status: "AUTHENTICATED", context }
