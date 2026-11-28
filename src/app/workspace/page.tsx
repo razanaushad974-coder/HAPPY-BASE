@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getVerifiedIdentity } from "@/lib/supabase/auth";
+import TenantContextSelector from "./tenant-context-selector";
 
 export const dynamic = "force-dynamic";
 
@@ -61,6 +62,7 @@ export default async function WorkspacePage() {
               {areas.map((area) => <article id={area.id} key={area.id} className="rounded-2xl border border-white/[0.09] bg-white/[0.025] p-5 transition hover:border-white/[0.16]"><div className="flex items-start justify-between gap-3"><span className="text-xs font-semibold tracking-[0.18em] text-slate-500">{area.number}</span><StatusPill>{area.state}</StatusPill></div><h3 className="mt-5 text-base font-semibold">{area.title}</h3><p className="mt-2 min-h-12 text-sm leading-6 text-slate-400">{area.description}</p></article>)}
             </div>
           </section>
+          <TenantContextSelector />
           <section className="mt-8 rounded-2xl border border-white/[0.09] bg-white/[0.025] p-5 sm:p-6">
             <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-[10px] font-bold tracking-[0.2em] text-cyan-200">COMMAND CENTER</p><h2 className="mt-2 text-lg font-semibold">Talk to HAPPY</h2></div><StatusPill>EXECUTION LOCKED</StatusPill></div>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-400">The command interface will activate after HAPPY can resolve your verified organization and workspace, persist the request, and enforce the approval and worker lifecycle end to end.</p>
