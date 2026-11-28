@@ -43,6 +43,7 @@ entries=(
   "0016_worker_registry_owner_privileges|20261123_worker_registry_owner_privilege_candidate.sql"
   "0017_worker_scheduler_rpcs|20261122_worker_scheduler_rpc_candidate.sql"
   "0018_worker_scheduler_owner_privileges|20261123_worker_scheduler_rpc_owner_privilege_candidate.sql"
+  "0019_authenticated_tenant_context_rpc|20261121_authenticated_tenant_context_rpc_candidate.sql"
 )
 
 for entry in "${entries[@]}"; do
@@ -99,7 +100,7 @@ mkdir -p "$(dirname "$manifest")"
   echo
   echo "## Explicit exclusions"
   echo
-  echo "- Superseded tenant-context and execution-request RPC design notes."
+  echo "- Superseded legacy tenant-context and execution-request RPC design notes; the replacement read-only tenant-context RPC is included as migration 0019."
   echo "- Legacy file-mutation atomic-consume candidate."
   echo '- Worker registry and scheduler LOGIN grant candidates; worker EXECUTE grants remain withheld pending real dedicated-LOGIN and hosted-pooler `session_user` evidence.'
   echo
