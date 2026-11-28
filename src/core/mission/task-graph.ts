@@ -9,18 +9,93 @@ export class TaskGraphEngine {
     errors: string[];
   } {
     const errors: string[] = [];
+    if (!Array.isArray(tasks) || tasks.some((task) => !task || typeof task !== "object")) {
+      return {
+        valid: false,
+        errors: ["Task graph must be an array of valid task records."],
+      };
+    }
     const ids = new Set<string>();
 
+    const allowedActions = new Set([
+      "UNDERSTAND", "RESEARCH", "CREATE", "MODIFY", "BUILD", "TEST",
+      "REQUEST", "CALL", "GET", "POST", "PUT", "PATCH", "DELETE",
+      "VERIFY", "DEPLOY", "PUBLISH", "AUTOMATE", "CONTROL",
+      "DB_SELECT", "DB_QUERY", "DB_INSERT", "DB_UPDATE", "DB_DELETE",
+      "DB_TRANSACTION",
+    ]);
+    const allowedStatuses = new Set([
+      "PENDING", "BLOCKED", "READY", "RUNNING", "VERIFYING",
+      "COMPLETED", "FAILED", "CANCELLED",
+    ]);
+    const approvalRequiredActions = new Set([
+      "POST", "PUT", "PATCH", "DELETE", "DEPLOY", "PUBLISH", "CONTROL",
+      "DB_INSERT", "DB_UPDATE", "DB_DELETE", "DB_TRANSACTION",
+    ]);
+
     for (const task of tasks) {
-      if (ids.has(task.id)) {
+      if (typeof task.id !== "string" || !task.id.trim()) {
+        errors.push("Task ID must be a non-empty string.");
+      } else if (ids.has(task.id)) {
         errors.push(`Duplicate task ID: ${task.id}`);
       }
+      if (typeof task.missionId !== "string" || !task.missionId.trim()) {
+        errors.push(`Task ${task.id || "<unknown>"} has an empty mission ID.`);
+      }
+      if (typeof task.title !== "string" || !task.title.trim()) {
+        errors.push(`Task ${task.id || "<unknown>"} has an empty title.`);
+      }
+      if (!allowedActions.has(task.action)) {
+        errors.push(`Task ${task.id || "<unknown>"} has an unsupported action.`);
+      }
+      if (!allowedStatuses.has(task.status)) {
+        errors.push(`Task ${task.id || "<unknown>"} has an unsupported status.`);
+      }
+      if (!Number.isInteger(task.order) || task.order < 1) {
+        errors.push(`Task ${task.id || "<unknown>"} has an invalid order.`);
+      }
+      if (
+        !Number.isInteger(task.retryCount) ||
+        !Number.isInteger(task.maxRetries) ||
+        task.retryCount < 0 ||
+        task.maxRetries < 0 ||
+        task.retryCount > task.maxRetries
+      ) {
+        errors.push(`Task ${task.id || "<unknown>"} has invalid retry counters.`);
+      }
+      if (typeof task.requiresApproval !== "boolean" ||
+          typeof task.verificationRequired !== "boolean") {
+        errors.push(`Task ${task.id || "<unknown>"} has invalid security flags.`);
+      } else if (approvalRequiredActions.has(task.action) && !task.requiresApproval) {
+        errors.push(
+          `Task ${task.id || "<unknown>"} (${task.action}) must require approval.`,
+        );
+      }
+      if (!Array.isArray(task.dependencyIds)) {
+        errors.push(`Task ${task.id || "<unknown>"} has invalid dependencies.`);
+      } else if (typeof task.id === "string" && task.id.trim()) {
+        ids.add(task.id);
+      }
+    }
 
-      ids.add(task.id);
+    const missionIds = new Set(tasks.map((task) => task.missionId));
+    if (missionIds.size > 1) {
+      errors.push("Task graph cannot contain tasks from multiple missions.");
     }
 
     for (const task of tasks) {
+      if (!Array.isArray(task.dependencyIds)) {
+        continue;
+      }
+      const dependencyIds = new Set<string>();
       for (const dependencyId of task.dependencyIds) {
+        if (dependencyIds.has(dependencyId)) {
+          errors.push(
+            `Task ${task.id} contains duplicate dependency ${dependencyId}.`,
+          );
+        }
+        dependencyIds.add(dependencyId);
+
         if (!ids.has(dependencyId)) {
           errors.push(
             `Task ${task.id} references missing dependency ${dependencyId}.`,
@@ -35,7 +110,11 @@ export class TaskGraphEngine {
       }
     }
 
-    const cycleDetected = this.hasCycle(tasks);
+    // Malformed dependency payloads are already reported above; avoid
+    // traversing them while producing the validation result.
+    const cycleDetected =
+      tasks.every((task) => Array.isArray(task.dependencyIds)) &&
+      this.hasCycle(tasks);
 
     if (cycleDetected) {
       errors.push("Task graph contains a dependency cycle.");
@@ -97,10 +176,6 @@ export class TaskGraphEngine {
       );
     }
 
-    const taskMap = new Map(
-      tasks.map((task) => [task.id, task]),
-    );
-
     const roots = tasks
       .filter((task) => task.dependencyIds.length === 0)
       .map((task) => task.id);
@@ -135,6 +210,22 @@ export class TaskGraphEngine {
   }
 
   getReadyTasks(graph: TaskGraph): MissionTask[] {
+    const validation = this.validate(graph.tasks);
+    if (!validation.valid) {
+      throw new Error(
+        `Invalid task graph: ${validation.errors.join(" | ")}`,
+      );
+    }
+
+    if (
+      graph.tasks.length > 0 &&
+      graph.missionId !== graph.tasks[0].missionId
+    ) {
+      throw new Error(
+        "Task graph mission ID does not match its task snapshot.",
+      );
+    }
+
     const completed = new Set(
       graph.tasks
         .filter((task) => task.status === "COMPLETED")

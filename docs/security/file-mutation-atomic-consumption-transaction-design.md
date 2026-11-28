@@ -71,3 +71,23 @@ Do not wire the authorizer into FILE execution composition until the schema/UUID
 ## 7. Explicit non-actions
 
 This document does not create/apply SQL, migrations, tables, functions, grants, RLS policies, Supabase data, or production configuration. It does not activate FILE READ or FILE mutations. PR merge and deployment remain separate approval gates.
+
+## 8. Requester-membership policy decision — intentionally unresolved
+
+The current consume candidate binds the grant requester to the immutable requester on the durable execution request, but it does not re-read or lock the requester's current organization/workspace membership. The existing security contract explicitly requires active membership for the executor and approver; it does not yet state whether later requester suspension/revocation invalidates an already-approved grant.
+
+Do not infer this policy from the executor/approver checks. Before adding requester membership checks, the product/security owner must select and document one of these semantics:
+
+- **Approval-time authorization:** requester must be an eligible active tenant member when the request/grant is created; later requester departure does not invalidate an independently approved grant, provided the immutable request remains READY and executor/approver remain authorized.
+- **Consumption-time authorization:** requester must still have ACTIVE organization and exact workspace membership at the consume serialization point; requester membership rows must join the same deterministic lock order and revocation protocol.
+- **Explicit cancellation/revocation semantics:** requester departure triggers a separately authorized cancellation/revocation transition; consumption then denies because the durable request is no longer READY or the grant is REVOKED. This requires a defined trusted actor and transactional writer, not an implicit side effect.
+
+Until that decision is made, preserve the existing exact requester binding and READY-request check, keep the lifecycle marked incomplete, and do not claim requester-revocation protection. Add a dedicated test only after the intended semantics are approved; a test that silently chooses one policy would encode an unreviewed authorization rule.
+
+## 9. Lifecycle RPC boundary — remaining implementation contract
+
+The consume RPC alone is not a complete approval lifecycle. The production design still needs separate, narrowly scoped transactional entry points for: (a) creating a PENDING grant from a validated immutable execution request; (b) APPROVED/REJECTED decision by a currently authorized approver distinct from the requester; (c) REVOKED transition under an explicitly approved actor policy; (d) expiry handling using the database clock; and (e) request cancellation/status transitions that serialize against consumption.
+
+Each entry point must derive its actor from a verified user-scoped JWT or a separately reviewed non-forgeable server identity assertion; accept no caller-supplied actor ID as proof; lock the canonical tenant/request/membership/grant rows in the same global order; enforce immutable binding and legal state transitions in the database; and append its audit event in the same transaction. The service-role table privileges currently present in the candidate are not a substitute for these RPCs: direct grant UPDATE is deliberately unavailable.
+
+No lifecycle RPC is approved or implemented by this documentation update. The candidate remains design-only, and FILE READ/mutations remain default-deny until the full lifecycle, production schema, JWT path, adapter, and migration-backed tests are reviewed together.

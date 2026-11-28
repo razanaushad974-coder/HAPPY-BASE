@@ -12,6 +12,22 @@ function assert(
 }
 
 async function main(): Promise<void> {
+    const emptyOS =
+        new UserOSOrchestrator();
+
+    emptyOS.workspace.setIdentity({
+        organizationId: "org-empty",
+        workspaceId: "workspace-empty",
+        name: "HAPPY Workspace",
+        language: "en-IN",
+        timezone: "Asia/Kolkata",
+    });
+
+    assert(
+        emptyOS.workspace.dashboard().health === "UNKNOWN",
+        "Workspace health must remain unknown before a mission/runtime is observed.",
+    );
+
     const os =
         new UserOSOrchestrator();
 
@@ -208,8 +224,8 @@ async function main(): Promise<void> {
         os.commandCenter.snapshot();
 
     assert(
-        commandCenter.commandReady,
-        "Command center readiness failed.",
+        !commandCenter.commandReady,
+        "Command intake must remain disabled without a connected runtime.",
     );
 
     assert(

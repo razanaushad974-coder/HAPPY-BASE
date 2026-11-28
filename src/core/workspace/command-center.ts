@@ -30,7 +30,10 @@ export class CommandCenterService {
 
         return {
             dashboard,
-            commandReady: true,
+            // The current workspace service is an in-memory view model only.
+            // Keep command intake disabled until a verified tenant and durable
+            // execution runtime are composed by the server.
+            commandReady: false,
             voiceReady: false,
             approvalRequired,
         };

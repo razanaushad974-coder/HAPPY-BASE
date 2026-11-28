@@ -5,6 +5,18 @@ import type {
 
 import { ExecutionAdapterRegistry } from "./registry";
 
+const APPROVAL_REQUIRED_ACTIONS = new Set([
+  "POST", "PUT", "PATCH", "DELETE", "DEPLOY", "PUBLISH", "CONTROL",
+  "DB_INSERT", "DB_UPDATE", "DB_DELETE", "DB_TRANSACTION",
+]);
+
+function requiresExecutionApproval(request: ExecutionRequest): boolean {
+  const action = request.action.trim().toUpperCase().replace(/[\\s-]+/g, "_");
+  return request.requiresApproval ||
+    request.risk !== "LOW" ||
+    APPROVAL_REQUIRED_ACTIONS.has(action);
+}
+
 export class ExecutionEngine {
   constructor(
     private readonly registry: ExecutionAdapterRegistry,
@@ -31,8 +43,12 @@ export class ExecutionEngine {
       };
     }
 
+    // Defense in depth: callers cannot downgrade a non-LOW risk or
+    // intrinsically sensitive action by setting requiresApproval=false.
+    // The orchestration boundary must still verify persisted approval;
+    // request.approved is only the result propagated from that trusted check.
     if (
-      request.requiresApproval &&
+      requiresExecutionApproval(request) &&
       !request.approved
     ) {
       return {

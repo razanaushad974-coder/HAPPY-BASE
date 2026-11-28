@@ -14,6 +14,7 @@ import {
 
 import {
   WorkspaceCodeExecutor,
+  type WorkspaceFileExecutor,
 } from "../../../core/execution/workspace-code-executor";
 
 function assert(
@@ -35,6 +36,159 @@ async function main(): Promise<void> {
     const executor =
       new WorkspaceCodeExecutor(root);
 
+    const remoteExecutor: WorkspaceFileExecutor = {
+      async executeOperation(operation) {
+        return {
+          action: operation.action,
+          status: "COMPLETED",
+          path: operation.path,
+          content: "remote-worker-content",
+          changedFiles: [],
+          errors: [],
+        };
+      },
+    };
+    const remoteAdapter = new FileExecutionAdapter(remoteExecutor, undefined, {
+      async authorizeRead(_request, operation) {
+        return operation.action === "READ" && operation.path === "remote/README.md";
+      },
+    });
+    const remoteResult = await remoteAdapter.execute({
+      id: "file-remote-worker-test",
+      taskId: "task-remote",
+      missionId: "mission-remote",
+      capability: "FILE",
+      action: "READ",
+      input: { operation: "READ", path: "remote/README.md" },
+      targetReference: {
+        token: "remote-file",
+        entityType: "FILE",
+        entityId: "remote-file-1",
+        confidence: "HIGH",
+        source: "ACTIVE_CONTEXT",
+      },
+      requiresApproval: false,
+      approved: false,
+      risk: "LOW",
+      createdAt: new Date().toISOString(),
+    });
+    assert(
+      remoteResult.status === "COMPLETED" &&
+        (remoteResult.output as { content?: string }).content === "remote-worker-content",
+      "FILE adapter must await and consume a trusted remote workspace executor result.",
+    );
+
+    const throwingRemoteAdapter = new FileExecutionAdapter({
+      async executeOperation() {
+        throw new Error("provider secret details must not escape");
+      },
+    }, undefined, {
+      async authorizeRead() { return true; },
+    });
+    const throwingRemoteResult = await throwingRemoteAdapter.execute({
+      id: "file-remote-worker-error-test",
+      taskId: "task-remote",
+      missionId: "mission-remote",
+      capability: "FILE",
+      action: "READ",
+      input: { operation: "READ", path: "remote/README.md" },
+      targetReference: {
+        token: "remote-file",
+        entityType: "FILE",
+        entityId: "remote-file-1",
+        confidence: "HIGH",
+        source: "ACTIVE_CONTEXT",
+      },
+      requiresApproval: false,
+      approved: false,
+      risk: "LOW",
+      createdAt: new Date().toISOString(),
+    });
+    assert(
+      throwingRemoteResult.status === "FAILED" &&
+        throwingRemoteResult.error === "Tenant workspace executor failed.",
+      "Remote worker exceptions must be contained and sanitized.",
+    );
+
+    const malformedRemoteAdapter = new FileExecutionAdapter({
+      async executeOperation() {
+        return {
+          action: "READ",
+          status: "COMPLETED",
+          path: "remote/other-file.md",
+          content: "unrelated content",
+          changedFiles: [],
+          errors: [],
+        } as unknown as Awaited<ReturnType<WorkspaceFileExecutor["executeOperation"]>>;
+      },
+    }, undefined, {
+      async authorizeRead() { return true; },
+    });
+    const malformedRemoteResult = await malformedRemoteAdapter.execute({
+      id: "file-remote-worker-mismatch-test",
+      taskId: "task-remote",
+      missionId: "mission-remote",
+      capability: "FILE",
+      action: "READ",
+      input: { operation: "READ", path: "remote/README.md" },
+      targetReference: {
+        token: "remote-file",
+        entityType: "FILE",
+        entityId: "remote-file-1",
+        confidence: "HIGH",
+        source: "ACTIVE_CONTEXT",
+      },
+      requiresApproval: false,
+      approved: false,
+      risk: "LOW",
+      createdAt: new Date().toISOString(),
+    });
+    assert(
+      malformedRemoteResult.status === "FAILED" &&
+        malformedRemoteResult.error === "Tenant workspace executor returned an invalid or mismatched operation result.",
+      "Remote worker responses for a different operation/path must be rejected.",
+    );
+
+    let unsafeRemoteCalls = 0;
+    const unsafePathAdapter = new FileExecutionAdapter({
+      async executeOperation(operation) {
+        unsafeRemoteCalls += 1;
+        return {
+          action: operation.action,
+          status: "COMPLETED",
+          path: operation.path,
+          content: "must not be read",
+          changedFiles: [],
+          errors: [],
+        };
+      },
+    }, undefined, {
+      async authorizeRead() { return true; },
+    });
+    const unsafePathResult = await unsafePathAdapter.execute({
+      id: "file-remote-traversal-test",
+      taskId: "task-remote",
+      missionId: "mission-remote",
+      capability: "FILE",
+      action: "READ",
+      input: { operation: "READ", path: "../outside/secret.txt" },
+      targetReference: {
+        token: "remote-file",
+        entityType: "FILE",
+        entityId: "remote-file-1",
+        confidence: "HIGH",
+        source: "ACTIVE_CONTEXT",
+      },
+      requiresApproval: false,
+      approved: false,
+      risk: "LOW",
+      createdAt: new Date().toISOString(),
+    });
+    assert(
+      unsafePathResult.status === "BLOCKED" && unsafeRemoteCalls === 0,
+      "Traversal paths must be rejected before invoking a remote workspace worker.",
+    );
+
     const adapter =
       new FileExecutionAdapter(executor);
 
@@ -45,6 +199,51 @@ async function main(): Promise<void> {
       confidence: "HIGH" as const,
       source: "ACTIVE_CONTEXT" as const,
     };
+
+    const implicitWorkspaceRelativePath =
+      `.happy-implicit-workspace-must-not-write-${Date.now()}.tmp`;
+    const implicitWorkspacePath = join(
+      process.cwd(),
+      implicitWorkspaceRelativePath,
+    );
+    assert(
+      !existsSync(implicitWorkspacePath),
+      "The implicit-workspace regression target unexpectedly exists.",
+    );
+    const unconfiguredAdapter = new FileExecutionAdapter(
+      undefined,
+      {
+        async authorize() {
+          return true;
+        },
+      },
+    );
+    assert(
+      unconfiguredAdapter.status() === "NOT_YET_CONNECTED",
+      "FILE adapter without an explicit workspace executor must remain disconnected.",
+    );
+    const unconfiguredResult = await unconfiguredAdapter.execute({
+      id: "file-no-workspace-test",
+      taskId: "task-file",
+      missionId: "mission-file",
+      capability: "FILE",
+      action: "CREATE",
+      input: {
+        operation: "CREATE",
+        path: implicitWorkspaceRelativePath,
+        content: "must never be written",
+      },
+      targetReference: target,
+      requiresApproval: false,
+      approved: true,
+      risk: "HIGH",
+      createdAt: new Date().toISOString(),
+    });
+    assert(
+      unconfiguredResult.status === "NOT_YET_CONNECTED" &&
+        !existsSync(implicitWorkspacePath),
+      "FILE adapter used an implicit process.cwd() workspace without explicit provisioning.",
+    );
 
     assert(
       adapter.status() === "AVAILABLE",
@@ -283,7 +482,9 @@ async function main(): Promise<void> {
 
     console.log({
       fileTargetSupported: true,
-      fileCapabilityAvailable: true,
+      fileCapabilityAvailableWithExplicitExecutor: true,
+      missingExecutorStaysNotYetConnected: true,
+      implicitProcessCwdWorkspaceDenied: true,
       forgedApprovedFlagDenied: true,
       defaultDenyMutationGate: true,
       injectedAuthorizerPath: true,

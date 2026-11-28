@@ -11,7 +11,6 @@ interface ApiExecutionInput {
   headers?: unknown;
   body?: unknown;
   timeoutMs?: unknown;
-  allowedHosts?: unknown;
 }
 
 interface ApiExecutionOutput {
@@ -49,7 +48,6 @@ function extractInput(
   headers: Record<string, string>;
   body?: string;
   timeoutMs: number;
-  allowedHosts: string[];
 } | null {
   if (
     typeof input !== "object" ||
@@ -100,22 +98,12 @@ function extractInput(
       ? Math.min(value.timeoutMs, 30000)
       : 15000;
 
-  const allowedHosts =
-    Array.isArray(value.allowedHosts)
-      ? value.allowedHosts.filter(
-          (host): host is string =>
-            typeof host === "string" &&
-            host.trim().length > 0,
-        )
-      : [];
-
   return {
     method,
     url,
     headers,
     body,
     timeoutMs,
-    allowedHosts,
   };
 }
 
@@ -123,9 +111,23 @@ export class ApiExecutionAdapter
   implements ExecutionAdapter
 {
   public readonly capability = "API" as const;
+  private readonly allowedHosts: readonly string[];
+
+  /**
+   * The allowlist is trusted server configuration, never request input.
+   * Production callers must use an egress-controlled network boundary that
+   * also blocks private/reserved destinations and DNS rebinding.
+   */
+  constructor(allowedHosts: readonly string[] = []) {
+    this.allowedHosts = allowedHosts
+      .map((host) => host.trim().toLowerCase())
+      .filter(Boolean);
+  }
 
   status(): AdapterStatus {
-    return "AVAILABLE";
+    return this.allowedHosts.length > 0
+      ? "AVAILABLE"
+      : "NOT_YET_CONNECTED";
   }
 
   canExecute(
@@ -230,9 +232,7 @@ export class ApiExecutionAdapter
       };
     }
 
-    if (
-      input.allowedHosts.length === 0
-    ) {
+    if (this.allowedHosts.length === 0) {
       return {
         ...baseResult(
           request,
@@ -245,8 +245,8 @@ export class ApiExecutionAdapter
     }
 
     if (
-      !input.allowedHosts.includes(
-        parsed.hostname,
+      !this.allowedHosts.includes(
+        parsed.hostname.toLowerCase(),
       )
     ) {
       return {

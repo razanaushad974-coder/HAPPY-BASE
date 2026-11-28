@@ -24,7 +24,6 @@ interface BrowserInput {
   url?: unknown;
   selector?: unknown;
   value?: unknown;
-  allowedHosts?: unknown;
   timeoutMs?: unknown;
   fullPage?: unknown;
 }
@@ -62,7 +61,6 @@ function parseInput(
   url?: string;
   selector?: string;
   value?: string;
-  allowedHosts: string[];
   timeoutMs: number;
   fullPage: boolean;
 } | null {
@@ -106,15 +104,6 @@ function parseInput(
       ? value.value
       : undefined;
 
-  const allowedHosts =
-    Array.isArray(value.allowedHosts)
-      ? value.allowedHosts.filter(
-          (host): host is string =>
-            typeof host === "string" &&
-            host.trim().length > 0,
-        )
-      : [];
-
   const timeoutMs =
     typeof value.timeoutMs === "number" &&
     Number.isFinite(value.timeoutMs) &&
@@ -127,7 +116,6 @@ function parseInput(
     url,
     selector,
     value: parsedValue,
-    allowedHosts,
     timeoutMs,
     fullPage:
       value.fullPage === true,
@@ -136,7 +124,7 @@ function parseInput(
 
 function validateUrl(
   url: string | undefined,
-  allowedHosts: string[],
+  allowedHosts: readonly string[],
 ): {
   ok: boolean;
   parsed?: URL;
@@ -198,9 +186,23 @@ export class BrowserExecutionAdapter
 {
   public readonly capability =
     "BROWSER" as const;
+  private readonly allowedHosts: readonly string[];
+
+  /**
+   * The allowlist is trusted server configuration, never request input.
+   * Production callers must additionally enforce egress isolation and
+   * DNS/IP destination checks in the browser worker/network boundary.
+   */
+  constructor(allowedHosts: readonly string[] = []) {
+    this.allowedHosts = allowedHosts
+      .map((host) => host.trim().toLowerCase())
+      .filter(Boolean);
+  }
 
   status(): AdapterStatus {
-    return "AVAILABLE";
+    return this.allowedHosts.length > 0
+      ? "AVAILABLE"
+      : "NOT_YET_CONNECTED";
   }
 
   canExecute(
@@ -274,7 +276,7 @@ export class BrowserExecutionAdapter
     const validation =
       validateUrl(
         input.url,
-        input.allowedHosts,
+        this.allowedHosts,
       );
 
     if (!validation.ok) {
@@ -319,7 +321,7 @@ export class BrowserExecutionAdapter
       await page.route("**/*", async (route) => {
         const destination = validateUrl(
           route.request().url(),
-          input.allowedHosts,
+          [...this.allowedHosts],
         );
 
         if (!destination.ok) {

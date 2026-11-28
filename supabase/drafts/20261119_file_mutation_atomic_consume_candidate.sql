@@ -219,6 +219,8 @@ declare
   v_executor_org private.organization_memberships%rowtype;
   v_approver_org private.organization_memberships%rowtype;
   v_executor_workspace private.workspace_memberships%rowtype;
+  v_approver_workspace private.workspace_memberships%rowtype;
+  v_workspace_member private.workspace_memberships%rowtype;
   v_grant private.file_mutation_approval_grants%rowtype;
   v_member private.organization_memberships%rowtype;
   v_now timestamptz;
@@ -251,8 +253,10 @@ begin
   end if;
 
   -- Global lock order: organization -> workspace -> execution request ->
-  -- organization memberships ordered by user UUID -> executor workspace
-  -- membership -> grant. Revocation/demotion updates the same membership row.
+  -- organization memberships ordered by user UUID -> workspace memberships
+  -- ordered by user UUID -> grant. Membership revocation/demotion updates the
+  -- same locked row. Approver authority is organization-role based, but the
+  -- approver must also remain an active member of this exact workspace.
   select o.* into v_organization
     from private.organizations o
    where o.organization_id = p_organization_id
@@ -305,13 +309,29 @@ begin
 
   -- Explicit role policy: FOUNDER is required for FOUNDER grants; ADMIN grants
   -- accept only the explicit FOUNDER/ADMIN allowlist. No lexical hierarchy.
-  select wm.* into v_executor_workspace
-    from private.workspace_memberships wm
-   where wm.organization_id = p_organization_id
-     and wm.workspace_id = p_workspace_id
-     and wm.user_id = v_executor_user_id
-   for update;
-  if not found or v_executor_workspace.status <> 'ACTIVE' then return false; end if;
+  for v_workspace_member in
+    select wm.*
+      from private.workspace_memberships wm
+     where wm.organization_id = p_organization_id
+       and wm.workspace_id = p_workspace_id
+       and wm.user_id in (v_executor_user_id, v_approver_user_id)
+     order by wm.user_id
+     for update
+  loop
+    if v_workspace_member.user_id = v_executor_user_id then
+      v_executor_workspace := v_workspace_member;
+    end if;
+    if v_workspace_member.user_id = v_approver_user_id then
+      v_approver_workspace := v_workspace_member;
+    end if;
+  end loop;
+
+  if v_executor_workspace.user_id is null
+     or v_executor_workspace.status <> 'ACTIVE'
+     or v_approver_workspace.user_id is null
+     or v_approver_workspace.status <> 'ACTIVE' then
+    return false;
+  end if;
 
   select g.* into v_grant
     from private.file_mutation_approval_grants g

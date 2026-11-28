@@ -57,10 +57,18 @@ export class ScopedStateRepository<T = unknown> {
         data: T,
         userId?: string,
     ): Promise<ScopedRecord<T>> {
+        if (
+            this.scope.userId !== undefined &&
+            userId !== undefined &&
+            userId !== this.scope.userId
+        ) {
+            throw new Error("USER_SCOPE_VIOLATION");
+        }
+
         const persisted = this.persistence.create<ScopedPayload<T>>(
             this.entityType,
             id,
-            toPersistedPayload(data, this.scope, userId),
+            toPersistedPayload(data, this.scope, userId ?? this.scope.userId),
         );
 
         return toScopedRecord(persisted);

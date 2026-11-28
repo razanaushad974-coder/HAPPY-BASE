@@ -48,3 +48,17 @@ This means the production consume client must be a server-side, user-scoped Supa
 ## Safety boundary
 
 No SQL has been executed against the connected Supabase project. No migration, schema, data, RLS policy, or production configuration was changed. No merge, production deployment, or main change was performed.
+
+## Follow-up hardening — approver workspace membership (2026-11-19)
+
+The first candidate validated the approver's active organization membership and organization-level FOUNDER/ADMIN role, but did not require the approver to remain a member of the exact workspace. The TypeScript `SupabasePersistedApproverMembershipProvider` resolves both organization and workspace membership, so the SQL candidate had a policy mismatch.
+
+The design is now made consistent:
+
+- The approver must have an ACTIVE organization membership in the exact organization.
+- The approver must also have an ACTIVE workspace membership in the exact organization/workspace.
+- Approval authority still comes only from the explicit **organization role** allowlist: FOUNDER grants require FOUNDER; ADMIN grants accept FOUNDER or ADMIN. A workspace role never grants organization approval authority.
+- Executor and approver workspace-membership rows are locked in deterministic user-ID order, matching the documented lock discipline for membership revocation/demotion.
+- The disposable PostgreSQL integration harness now seeds both workspace memberships and verifies that a revoked approver workspace membership denies consumption.
+
+This closes the scope-membership mismatch; it does not establish production integration. The candidate remains design-only, the test uses disposable PostgreSQL with a stubbed `auth.uid()`, and no live Supabase schema or data was changed.

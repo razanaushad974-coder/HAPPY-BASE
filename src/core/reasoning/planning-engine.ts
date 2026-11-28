@@ -1,5 +1,14 @@
 import type { ExecutionPlan, PlanStep } from "./types";
 
+const APPROVAL_REQUIRED_ACTIONS = new Set([
+  "POST", "PUT", "PATCH", "DELETE", "DEPLOY", "PUBLISH", "CONTROL",
+  "DB_INSERT", "DB_UPDATE", "DB_DELETE", "DB_TRANSACTION",
+]);
+
+function stepRequiresApproval(step: PlanStep): boolean {
+  return step.risk !== "LOW" || APPROVAL_REQUIRED_ACTIONS.has(step.action);
+}
+
 export class PlanningEngine {
   validate(plan: ExecutionPlan): {
     valid: boolean;
@@ -27,6 +36,12 @@ export class PlanningEngine {
         errors.push(`Step ${step.id} has no title.`);
       }
 
+      if (stepRequiresApproval(step) && !step.requiresApproval) {
+        errors.push(
+          `Step ${step.id} (${step.action}/${step.risk}) must require approval.`,
+        );
+      }
+
       if (step.verificationRequired === false && step.action === "VERIFY") {
         errors.push(`Verification step ${step.id} must require verification.`);
       }
@@ -39,11 +54,14 @@ export class PlanningEngine {
   }
 
   getExecutableSteps(plan: ExecutionPlan): PlanStep[] {
-    if (plan.status === "NEEDS_CLARIFICATION") {
+    // Only a validated READY plan is executable. Do not infer readiness from
+    // the absence of NEEDS_CLARIFICATION/WAITING_APPROVAL.
+    if (plan.status !== "READY") {
       return [];
     }
 
-    if (plan.status === "WAITING_APPROVAL") {
+    const validation = this.validate(plan);
+    if (!validation.valid) {
       return [];
     }
 

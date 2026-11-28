@@ -23,6 +23,10 @@ import {
     createHappyStateStore,
 } from "../../../core/state/factory";
 
+import {
+    InMemoryTenantPersistenceAdapter,
+} from "../../../core/persistence/adapters/in-memory-tenant-adapter";
+
 function assert(
     condition: boolean,
     message: string,
@@ -63,6 +67,54 @@ async function main(): Promise<void> {
         new HappyOrchestrator(
             stateFile,
         );
+
+    const disconnectedWorker = await happy.runMissionTaskDispatch({
+        tenantScope: {
+            workerPrincipalId: "worker-principal-test",
+            organizationId: "org-a",
+            workspaceId: "workspace-a",
+            userId: "user-a",
+        },
+        missionId: "mission-not-connected",
+        taskId: "task-not-connected",
+        ownerId: "worker-instance-test",
+        leaseMilliseconds: 30_000,
+        provider: {
+            providerId: "must-not-run",
+            supportsIdempotencyKeys: true,
+            async dispatch() {
+                throw new Error("disconnected worker must not call a provider");
+            },
+        },
+    });
+    assert(
+        disconnectedWorker.status === "NOT_CONNECTED",
+        "default orchestration facade must fail closed until trusted worker dependencies are composed.",
+    );
+
+    const disconnectedScheduler = await happy.runNextReadyMissionTaskDispatch({
+        scope: { organizationId: "org-a", workspaceId: "workspace-a", userId: "user-a" },
+        tenantScope: {
+            workerPrincipalId: "worker-principal-test",
+            organizationId: "org-a",
+            workspaceId: "workspace-a",
+            userId: "user-a",
+        },
+        ownerId: "worker-instance-test",
+        leaseMilliseconds: 30_000,
+        provider: {
+            providerId: "must-not-run",
+            supportsIdempotencyKeys: true,
+            async dispatch() {
+                throw new Error("scheduler without durable persistence must not call a provider");
+            },
+        },
+    });
+    assert(
+        disconnectedScheduler.status === "NOT_CONNECTED" &&
+            disconnectedScheduler.missing === "TENANT_PERSISTENCE",
+        "scheduler must distinguish missing durable persistence from an empty task queue.",
+    );
 
     const lowRisk =
         await happy.run({
@@ -178,6 +230,26 @@ async function main(): Promise<void> {
                 "EXECUTION",
         ),
         "Execution happened before approval.",
+    );
+
+    const mediumRiskCase = await happy.run({
+        id: "pipeline-medium-risk",
+        command: "query the customer database and summarize user data",
+        organizationId: "org-a",
+        workspaceId: "workspace-a",
+        userId: "user-a",
+        source: "TEXT",
+        approved: false,
+        createdAt: new Date().toISOString(),
+    });
+
+    assert(
+        mediumRiskCase.status === "WAITING_APPROVAL",
+        "MEDIUM-risk database/data operation did not require approval.",
+    );
+    assert(
+        !mediumRiskCase.trace.stages.some((stage) => stage.stage === "EXECUTION"),
+        "MEDIUM-risk operation executed before persisted approval.",
     );
 
     // ==============================================
@@ -401,10 +473,20 @@ async function main(): Promise<void> {
                     approvedCase.executionRequestId,
                 )
             : undefined;
+    const restoredTasks =
+        await restartedStore
+            .task()
+            .list();
 
     type PersistedExecutionRecord = {
         data?: {
             approved?: boolean;
+        };
+    };
+    type PersistedTaskRecord = {
+        data?: {
+            status?: string;
+            dependencyIds?: string[];
             targetReference?: {
                 entityId?: string;
                 entityType?: string;
@@ -415,41 +497,40 @@ async function main(): Promise<void> {
     const restoredExecutionRecord =
         restoredExecution as
             PersistedExecutionRecord | undefined;
-    const executionTaskTargetPreserved =
-        restoredExecutionRecord?.data?.targetReference?.entityId ===
-            "project-happy";
     const verifiedApprovalReachedExecution =
         restoredExecutionRecord?.data?.approved === true;
 
     assert(
         verifiedApprovalReachedExecution,
-        "Verified approval was not propagated to the downstream execution request.",
+        "Verified approval was not propagated to the execution request.",
+    );
+
+    const persistedTaskRecords =
+        restoredTasks.map(
+            (record) => record as PersistedTaskRecord,
+        );
+    const targetTask = persistedTaskRecords.find(
+        (record) =>
+            record.data?.targetReference?.entityId ===
+            "project-happy",
+    );
+    const rootTask = persistedTaskRecords.find(
+        (record) =>
+            (record.data?.dependencyIds ?? []).length === 0,
     );
 
     assert(
-        executionTaskTargetPreserved,
-        "Execution task selection lost the resolved project target.",
+        targetTask !== undefined,
+        "Resolved project target was not preserved in the persisted mission task graph.",
     );
-
-    console.log({
-        executionTaskTargetPreserved:
-            executionTaskTargetPreserved,
-    });
-
-
-    const executionTargetPreserved =
-        restoredExecutionRecord?.data?.targetReference?.entityId ===
-            "project-happy";
-
     assert(
-        executionTargetPreserved,
-        "Resolved project target was not persisted in ExecutionRequest.",
+        (rootTask?.data?.status === "BLOCKED" || rootTask?.data?.status === "FAILED"),
+        "The root task was not held after execution or verification failed.",
     );
-
-    console.log({
-        executionTargetPreserved:
-            executionTargetPreserved,
-    });
+    assert(
+        targetTask?.data?.status === "PENDING",
+        "A dependent task ran before its prerequisite passed verification.",
+    );
     const restoredVerification =
         approvedCase.verificationRequestId
             ? await restartedStore
@@ -493,11 +574,6 @@ async function main(): Promise<void> {
 
     const evidencePersisted =
         restoredEvidence.length > 0;
-
-    const restoredTasks =
-        await restartedStore
-            .task()
-            .list();
 
     const restoredAudits =
         await restartedStore
@@ -586,6 +662,82 @@ async function main(): Promise<void> {
     assert(
         crossTenantBlocked,
         "Cross-tenant direct read was not blocked.",
+    );
+
+    // ==============================================
+    // DURABLE PIPELINE MISSION + TASK INTEGRATION
+    // ==============================================
+
+    const durableTenantStore = new InMemoryTenantPersistenceAdapter();
+    const durableHappy = new HappyOrchestrator(
+        stateFile,
+        undefined,
+        durableTenantStore,
+    );
+    const durableResult = await durableHappy.run({
+        id: "pipeline-durable-mission",
+        command: "research the HAPPY platform architecture",
+        organizationId: "org-durable",
+        workspaceId: "workspace-durable",
+        userId: "user-durable",
+        source: "TEXT",
+        createdAt: new Date().toISOString(),
+    }, {
+        authenticatedActorUserId: "user-durable",
+        organizationId: "org-durable",
+        workspaceId: "workspace-durable",
+    });
+    const durableScope = {
+        organizationId: "org-durable",
+        workspaceId: "workspace-durable",
+        userId: "user-durable",
+    };
+    const durableMissions = await durableTenantStore.list<{ taskIds: string[] }>(
+        durableScope,
+        { entityType: "MISSION" },
+    );
+    const durableTasks = await durableTenantStore.list<{ missionId: string; status: string }>(
+        durableScope,
+        { entityType: "TASK" },
+    );
+
+    assert(
+        durableResult.missionId !== undefined &&
+        durableMissions.some((record) => record.id === durableResult.missionId),
+        "Main orchestration pipeline did not persist its mission through the durable tenant adapter.",
+    );
+    assert(
+        durableTasks.length > 0 &&
+        durableTasks.every((record) => record.data.missionId === durableResult.missionId),
+        "Main orchestration pipeline did not persist the complete task graph in the durable tenant adapter.",
+    );
+    assert(
+        durableTasks.some((record) => record.version > 1),
+        "Main orchestration pipeline did not persist task lifecycle transitions through the durable adapter.",
+    );
+
+    const missionCountBeforePrincipalMismatch = durableMissions.length;
+    const mismatchedPrincipalResult = await durableHappy.run({
+        id: "pipeline-durable-principal-mismatch",
+        command: "research the HAPPY platform architecture",
+        organizationId: "org-durable",
+        workspaceId: "workspace-durable",
+        userId: "user-durable",
+        source: "TEXT",
+        createdAt: new Date().toISOString(),
+    }, {
+        authenticatedActorUserId: "different-user",
+        organizationId: "org-durable",
+        workspaceId: "workspace-durable",
+    });
+    const durableMissionsAfterMismatch = await durableTenantStore.list(
+        durableScope,
+        { entityType: "MISSION" },
+    );
+    assert(
+        mismatchedPrincipalResult.status === "NOT_YET_CONNECTED" &&
+        durableMissionsAfterMismatch.length === missionCountBeforePrincipalMismatch,
+        "Durable pipeline did not fail closed on a request/verified-principal mismatch.",
     );
 
     // ==============================================

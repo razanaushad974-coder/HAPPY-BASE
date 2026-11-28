@@ -1,0 +1,258 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+: "${DATABASE_URL:?DATABASE_URL must point to a disposable PostgreSQL database}"
+
+psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 <<'SQL'
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon NOLOGIN; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role NOLOGIN BYPASSRLS; END IF;
+END $$;
+DROP TABLE IF EXISTS public.happy_tenant_records CASCADE;
+DROP SCHEMA IF EXISTS private CASCADE;
+DROP SCHEMA IF EXISTS auth CASCADE;
+DROP SCHEMA IF EXISTS extensions CASCADE;
+CREATE SCHEMA auth;
+CREATE SCHEMA extensions;
+CREATE TABLE auth.users (id uuid primary key);
+CREATE FUNCTION auth.uid() RETURNS uuid
+LANGUAGE sql STABLE
+AS $$ SELECT nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
+CREATE EXTENSION pgcrypto WITH SCHEMA extensions;
+DROP FUNCTION IF EXISTS public.consume_file_mutation_approval_grant(uuid,uuid,uuid,text,text,text,text,text,text,text,text);
+DROP FUNCTION IF EXISTS public.resolve_authenticated_execution_request(text);
+DROP FUNCTION IF EXISTS public.create_authenticated_execution_request(text,text,text,uuid,uuid,text,text,jsonb,jsonb,text);
+DROP FUNCTION IF EXISTS public.decide_authenticated_execution_request(text,text,text);
+SQL
+
+psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f supabase/drafts/20261119_file_mutation_atomic_consume_candidate.sql
+psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f supabase/drafts/20261119_async_tenant_persistence_schema_candidate.sql
+psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f supabase/drafts/20261121_authenticated_execution_request_rpc_candidate.sql
+psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f supabase/drafts/20261121_authenticated_execution_envelope_candidate.sql
+
+ORG='00000000-0000-4000-8000-000000000001'
+WS='00000000-0000-4000-8000-000000000011'
+REQUESTER='00000000-0000-4000-8000-000000000101'
+FOUNDER='00000000-0000-4000-8000-000000000102'
+OTHER='00000000-0000-4000-8000-000000000103'
+
+psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 <<SQL
+INSERT INTO auth.users(id) VALUES ('$REQUESTER'),('$FOUNDER'),('$OTHER');
+INSERT INTO private.organizations VALUES ('$ORG','ACTIVE');
+INSERT INTO private.workspaces VALUES ('$WS','$ORG','ACTIVE');
+INSERT INTO private.organization_memberships VALUES
+ ('$ORG','$REQUESTER','ACTIVE','MEMBER'),
+ ('$ORG','$FOUNDER','ACTIVE','FOUNDER'),
+ ('$ORG','$OTHER','ACTIVE','MEMBER');
+INSERT INTO private.workspace_memberships VALUES
+ ('$ORG','$WS','$REQUESTER','ACTIVE','MEMBER'),
+ ('$ORG','$WS','$FOUNDER','ACTIVE','OWNER'),
+ ('$ORG','$WS','$OTHER','ACTIVE','MEMBER');
+SQL
+
+expect() {
+  local expected="$1" actual="$2" label="$3"
+  if [[ "$actual" != "$expected" ]]; then
+    echo "FAIL: $label expected=$expected actual=$actual" >&2
+    exit 1
+  fi
+}
+
+create_request() {
+  local user="$1" request="$2" idem="$3" action="${4:-READ}" input="${5-}" task="${6:-task-$2}" mission="${7:-mission-$2}"
+  if [[ -z "$input" ]]; then
+    input='{"path":"README.md"}'
+  fi
+  psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+    INSERT INTO public.happy_tenant_records
+      (organization_id,workspace_id,user_id,entity_type,record_id,version,data)
+    VALUES
+      ('$ORG','$WS','$user','MISSION','$mission',1,
+        jsonb_build_object('id','$mission','status','READY','taskIds',jsonb_build_array('$task'))),
+      ('$ORG','$WS','$user','TASK','$task',1,
+        jsonb_build_object('id','$task','missionId','$mission','status','READY'))
+    ON CONFLICT (organization_id,workspace_id,user_id,entity_type,record_id) DO NOTHING;"
+  psql "$DATABASE_URL" -XqAt -v ON_ERROR_STOP=1 -c "
+    BEGIN;
+    SET LOCAL ROLE authenticated;
+    SET LOCAL request.jwt.claim.sub = '$user';
+    SELECT status || ':' || risk || ':' || approval_status || ':' ||
+           required_approval_role || ':' || requires_approval::text
+      FROM public.create_authenticated_execution_request(
+        '$request','$task','$mission','$ORG','$WS',
+        'FILE','$action','$input'::jsonb,NULL,'$idem'
+      );
+    COMMIT;" | grep -E '^(WAITING_APPROVAL|READY|CANCELLED):' | tail -n 1
+}
+
+resolve_request() {
+  local user="$1" request="$2"
+  psql "$DATABASE_URL" -XqAt -v ON_ERROR_STOP=1 -c "
+    BEGIN;
+    SET LOCAL ROLE authenticated;
+    SET LOCAL request.jwt.claim.sub = '$user';
+    SELECT status || ':' || capability || ':' || action || ':' || risk || ':' ||
+           approval_status || ':' || required_approval_role
+      FROM public.resolve_authenticated_execution_request('$request');
+    COMMIT;" | grep -E '^(WAITING_APPROVAL|READY|CANCELLED):' | tail -n 1 || true
+}
+
+decide_request() {
+  local user="$1" request="$2" decision="$3"
+  psql "$DATABASE_URL" -XqAt -v ON_ERROR_STOP=1 -c "
+    BEGIN;
+    SET LOCAL ROLE authenticated;
+    SET LOCAL request.jwt.claim.sub = '$user';
+    SELECT public.decide_authenticated_execution_request('$request','$decision','Reviewed by founder');
+    COMMIT;" | grep -E '^(t|f)$' | tail -n 1
+}
+
+actual="$(create_request "$REQUESTER" 'req-approve-1' 'idem-approve-1')"
+expect 'WAITING_APPROVAL:HIGH:PENDING:FOUNDER:true' "$actual" 'database-forced founder approval'
+actual="$(resolve_request "$REQUESTER" 'req-approve-1')"
+expect 'WAITING_APPROVAL:FILE:READ:HIGH:PENDING:FOUNDER' "$actual" 'executor receives full immutable envelope'
+actual="$(resolve_request "$OTHER" 'req-approve-1')"
+expect '' "$actual" 'non-executor cannot resolve request'
+
+# The request RPC must reject arbitrary mission/task selectors that are
+# not backed by exact same-user, same-tenant persisted records.
+if psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+  BEGIN;
+  SET LOCAL ROLE authenticated;
+  SET LOCAL request.jwt.claim.sub = '$REQUESTER';
+  SELECT * FROM public.create_authenticated_execution_request(
+    'req-unpersisted','task-unpersisted','mission-unpersisted','$ORG','$WS',
+    'FILE','READ','{\"path\":\"README.md\"}'::jsonb,NULL,'idem-unpersisted'
+  );
+  COMMIT;" >/dev/null 2>&1; then
+  echo "FAIL: execution request accepted unpersisted task/mission selectors" >&2
+  exit 1
+fi
+
+# A task record whose missionId disagrees with the selected mission is denied.
+psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+  INSERT INTO public.happy_tenant_records
+    (organization_id,workspace_id,user_id,entity_type,record_id,version,data)
+  VALUES
+    ('$ORG','$WS','$REQUESTER','MISSION','mission-mismatch',1,
+      jsonb_build_object('id','mission-mismatch','status','READY','taskIds',jsonb_build_array('task-mismatch'))),
+    ('$ORG','$WS','$REQUESTER','TASK','task-mismatch',1,
+      jsonb_build_object('id','task-mismatch','missionId','different-mission','status','READY'))
+  ON CONFLICT (organization_id,workspace_id,user_id,entity_type,record_id) DO NOTHING;";
+if psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+  BEGIN;
+  SET LOCAL ROLE authenticated;
+  SET LOCAL request.jwt.claim.sub = '$REQUESTER';
+  SELECT * FROM public.create_authenticated_execution_request(
+    'req-mismatched-task','task-mismatch','mission-mismatch','$ORG','$WS',
+    'FILE','READ','{\"path\":\"README.md\"}'::jsonb,NULL,'idem-mismatched-task'
+  );
+  COMMIT;" >/dev/null 2>&1; then
+  echo "FAIL: execution request accepted task linked to a different mission" >&2
+  exit 1
+fi
+
+# Same idempotency key and identical immutable intent returns the original row.
+actual="$(create_request "$REQUESTER" 'req-approve-1' 'idem-approve-1')"
+expect 'WAITING_APPROVAL:HIGH:PENDING:FOUNDER:true' "$actual" 'idempotent request retry'
+
+# Reusing the idempotency key for a different request/input must fail closed.
+if create_request "$REQUESTER" 'req-conflict' 'idem-approve-1' 'DELETE' '{"path":"secrets.txt"}' >/dev/null 2>&1; then
+  echo "FAIL: idempotency key accepted different execution intent" >&2
+  exit 1
+fi
+
+# Requester cannot approve their own request, and a non-founder cannot approve.
+actual="$(decide_request "$REQUESTER" 'req-approve-1' 'APPROVED')"
+expect f "$actual" 'requester cannot self-approve'
+actual="$(decide_request "$OTHER" 'req-approve-1' 'APPROVED')"
+expect f "$actual" 'non-founder cannot approve'
+actual="$(decide_request "$FOUNDER" 'req-approve-1' 'APPROVED')"
+expect t "$actual" 'active founder approves exact request'
+actual="$(resolve_request "$REQUESTER" 'req-approve-1')"
+expect 'READY:FILE:READ:HIGH:APPROVED:FOUNDER' "$actual" 'approved request moves to READY'
+event="$(psql "$DATABASE_URL" -XqAt -F ':' -c "SELECT actor_user_id::text || ':' || decision FROM private.execution_request_approval_events WHERE request_id='req-approve-1';")"
+expect "$FOUNDER:APPROVED" "$event" 'append-only approval event records founder decision'
+actual="$(create_request "$REQUESTER" 'new-generated-id-1' 'idem-approve-1' 'READ' '{"path":"README.md"}' 'task-req-approve-1' 'mission-req-approve-1')"
+expect 'READY:HIGH:APPROVED:FOUNDER:true' "$actual" 'idempotent retry after approval returns existing READY state'
+actual="$(decide_request "$FOUNDER" 'req-approve-1' 'APPROVED')"
+expect f "$actual" 'approval decision cannot be replayed'
+
+actual="$(create_request "$REQUESTER" 'req-reject-1' 'idem-reject-1')"
+expect 'WAITING_APPROVAL:HIGH:PENDING:FOUNDER:true' "$actual" 'second request awaits approval'
+actual="$(decide_request "$FOUNDER" 'req-reject-1' 'REJECTED')"
+expect t "$actual" 'founder rejects request'
+actual="$(resolve_request "$REQUESTER" 'req-reject-1')"
+expect 'CANCELLED:FILE:READ:HIGH:REJECTED:FOUNDER' "$actual" 'rejected request is cancelled'
+event="$(psql "$DATABASE_URL" -XqAt -F ':' -c "SELECT actor_user_id::text || ':' || decision FROM private.execution_request_approval_events WHERE request_id='req-reject-1';")"
+expect "$FOUNDER:REJECTED" "$event" 'append-only rejection event records founder decision'
+actual="$(create_request "$REQUESTER" 'new-generated-id-2' 'idem-reject-1' 'READ' '{"path":"README.md"}' 'task-req-reject-1' 'mission-req-reject-1')"
+expect 'CANCELLED:HIGH:REJECTED:FOUNDER:true' "$actual" 'idempotent retry after rejection returns existing cancelled state'
+
+# A founder-created request cannot be approved by that same founder.
+actual="$(create_request "$FOUNDER" 'req-self-1' 'idem-self-1')"
+expect 'WAITING_APPROVAL:HIGH:PENDING:FOUNDER:true' "$actual" 'founder request awaits a different approver'
+actual="$(decide_request "$FOUNDER" 'req-self-1' 'APPROVED')"
+expect f "$actual" 'founder cannot self-approve'
+
+# Membership revocation before the decision wins; the RPC denies approval.
+actual="$(create_request "$REQUESTER" 'req-revoked-founder-1' 'idem-revoked-founder-1')"
+expect 'WAITING_APPROVAL:HIGH:PENDING:FOUNDER:true' "$actual" 'revocation test request awaits approval'
+psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+  UPDATE private.organization_memberships SET status='REVOKED'
+   WHERE organization_id='$ORG' AND user_id='$FOUNDER';"
+actual="$(decide_request "$FOUNDER" 'req-revoked-founder-1' 'APPROVED')"
+expect f "$actual" 'revoked founder cannot approve'
+
+# service_role cannot directly rewrite an existing request.
+if psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+  SET ROLE service_role;
+  UPDATE private.execution_requests SET input='{"path":"tampered"}'::jsonb
+   WHERE request_id='req-approve-1';" >/dev/null 2>&1; then
+  echo "FAIL: service_role directly updated an execution request" >&2
+  exit 1
+fi
+
+# Even a privileged RPC owner cannot rewrite immutable intent through direct DML.
+if psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+  SET ROLE happy_execution_request_decision_rpc_owner;
+  UPDATE private.execution_requests SET input='{"path":"tampered"}'::jsonb
+   WHERE request_id='req-approve-1';" >/dev/null 2>&1; then
+  echo "FAIL: immutable execution envelope trigger allowed mutation" >&2
+  exit 1
+fi
+
+# Approval evidence cannot be rewritten or deleted, even by the migration owner.
+if psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+  UPDATE private.execution_request_approval_events SET reason='rewritten'
+   WHERE request_id='req-approve-1';" >/dev/null 2>&1; then
+  echo "FAIL: approval event was rewritten" >&2
+  exit 1
+fi
+if psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+  DELETE FROM private.execution_request_approval_events
+   WHERE request_id='req-approve-1';" >/dev/null 2>&1; then
+  echo "FAIL: approval event was deleted" >&2
+  exit 1
+fi
+
+# service_role cannot insert a pre-approved execution envelope.
+if psql "$DATABASE_URL" -Xq -v ON_ERROR_STOP=1 -c "
+  SET ROLE service_role;
+  INSERT INTO private.execution_requests (
+    request_id,task_id,mission_id,requester_user_id,executor_user_id,
+    organization_id,workspace_id,status,capability,action,input,
+    requires_approval,risk,approval_status,required_approval_role,
+    input_digest,idempotency_key
+  ) VALUES (
+    'forged-ready','task-forged','mission-forged','$REQUESTER','$REQUESTER',
+    '$ORG','$WS','READY','FILE','DELETE','{"path":"x"}'::jsonb,
+    true,'HIGH','APPROVED','FOUNDER',
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','forged-idem'
+  );" >/dev/null 2>&1; then
+  echo "FAIL: service_role inserted a pre-approved execution request" >&2
+  exit 1
+fi
+
+echo "Authenticated execution request + founder approval PostgreSQL integration: PASS"

@@ -24,7 +24,8 @@ export type ExecutionStatus =
   | "COMPLETED"
   | "FAILED"
   | "BLOCKED"
-  | "NOT_YET_CONNECTED";
+  | "NOT_YET_CONNECTED"
+  | "CANCELLED";
 
 export type ExecutionRisk =
   | "LOW"

@@ -2,6 +2,9 @@ import {
     HappyOrchestrationEngine,
 } from "./engine";
 
+import type { AsyncTenantPersistenceAdapter } from "../persistence/async-tenant-repository";
+import type { WorkerRuntimeCompositionDependencies } from "../mission/worker-runtime-composition";
+
 import type {
     HappyPipelineRequest,
     HappyPipelineResult,
@@ -16,12 +19,28 @@ export class HappyOrchestrator {
     constructor(
         persistenceFile?: string,
         approvalVerifier?: PipelineApprovalVerifier,
+        tenantPersistence?: AsyncTenantPersistenceAdapter,
+        workerRuntimeDependencies?: WorkerRuntimeCompositionDependencies,
     ) {
         this.engine =
             new HappyOrchestrationEngine(
                 persistenceFile,
                 approvalVerifier,
+                tenantPersistence,
+                workerRuntimeDependencies,
             );
+    }
+
+    runMissionTaskDispatch(
+        input: Parameters<HappyOrchestrationEngine["runMissionTaskDispatch"]>[0],
+    ): ReturnType<HappyOrchestrationEngine["runMissionTaskDispatch"]> {
+        return this.engine.runMissionTaskDispatch(input);
+    }
+
+    runNextReadyMissionTaskDispatch(
+        input: Parameters<HappyOrchestrationEngine["runNextReadyMissionTaskDispatch"]>[0],
+    ): ReturnType<HappyOrchestrationEngine["runNextReadyMissionTaskDispatch"]> {
+        return this.engine.runNextReadyMissionTaskDispatch(input);
     }
 
     run(

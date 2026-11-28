@@ -87,8 +87,14 @@ async function main(): Promise<void> {
     await startServer();
 
   try {
+    const disconnectedAdapter = new ApiExecutionAdapter();
+    assert(
+      disconnectedAdapter.status() === "NOT_YET_CONNECTED",
+      "API adapter without server-owned network policy must remain disconnected.",
+    );
+
     const adapter =
-      new ApiExecutionAdapter();
+      new ApiExecutionAdapter(["127.0.0.1"]);
 
     assert(
       adapter.status() ===
@@ -176,7 +182,7 @@ async function main(): Promise<void> {
           url:
             `http://localhost:${port}/health`,
           allowedHosts: [
-            "127.0.0.1",
+            "localhost",
           ],
         },
         requiresApproval: false,

@@ -4,6 +4,7 @@ import {
   readFileSync,
   rmSync,
   symlinkSync,
+  linkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,6 +24,17 @@ function assert(
 }
 
 function main(): void {
+  let missingRootRejected = false;
+  try {
+    new WorkspaceCodeExecutor(undefined as unknown as string);
+  } catch {
+    missingRootRejected = true;
+  }
+  assert(
+    missingRootRejected,
+    "WorkspaceCodeExecutor accepted a missing workspace root.",
+  );
+
   const root =
     mkdtempSync(
       join(tmpdir(), "happy-workspace-"),
@@ -110,6 +122,32 @@ function main(): void {
         "Workspace symlink escape modified an outside file.",
       );
 
+      const hardlinkSource = join(outsideRoot, "hardlink-protected.txt");
+      const hardlinkPath = join(root, "linked-hardlink.txt");
+      writeFileSync(hardlinkSource, "hardlink-must-stay-protected", "utf8");
+      linkSync(hardlinkSource, hardlinkPath);
+      const hardlinkModify = executor.executeOperation({
+        action: "MODIFY",
+        path: "linked-hardlink.txt",
+        content: "attacker-controlled",
+      });
+      assert(
+        hardlinkModify.status === "FAILED",
+        "Workspace hard-link mutation was not blocked.",
+      );
+      assert(
+        readFileSync(hardlinkSource, "utf8") === "hardlink-must-stay-protected",
+        "Workspace hard-link mutation changed an outside inode.",
+      );
+      const hardlinkRead = executor.executeOperation({
+        action: "READ",
+        path: "linked-hardlink.txt",
+      });
+      assert(
+        hardlinkRead.status === "FAILED",
+        "Workspace hard-link read was not blocked.",
+      );
+
       const danglingTarget = join(outsideRoot, "created-through-dangling-link.txt");
       const danglingLink = join(root, "dangling-outside.txt");
       symlinkSync(danglingTarget, danglingLink, "file");
@@ -177,6 +215,7 @@ function main(): void {
       safeRelativePaths: true,
       pathTraversalBlocked: true,
       symlinkEscapeBlocked: true,
+      hardlinkEscapeBlocked: true,
       batchPreflightAtomicity: true,
       missingModifyBlocked: true,
       noShellExecution: true,
